@@ -1,0 +1,28 @@
+# Fork-only helper: build the qbzd binary for aarch64 from any ref, for
+# on-device testing. Mirrors upstream's release-linux-aarch64.yml build-qbzd
+# job. Not intended for upstream.
+name: build-qbzd-arm64
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or ref to build"
+        required: true
+        type: string
+jobs:
+  build-qbzd:
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: system deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libjack-jackd2-dev libdbus-1-dev libssl-dev
+      - name: tests (qbzd + models + prefs)
+        run: cargo test --manifest-path crates/Cargo.toml -p qbzd -p qbz-models -p qbz-app
+      - name: build
+        run: cargo build --release --manifest-path crates/Cargo.toml -p qbzd
+      - uses: actions/upload-artifact@v4
+        with: { name: qbzd-linux-aarch64, path: crates/target/release/qbzd }
