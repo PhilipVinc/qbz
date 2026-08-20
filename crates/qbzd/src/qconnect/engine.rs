@@ -84,6 +84,12 @@ pub struct DaemonRendererEngine {
     runtime: Arc<AppRuntime<DaemonAdapter>>,
     /// T10 (OD4): resolved volume policy for this session (from the KV at connect).
     volume_mode: VolumeMode,
+    /// DAEMON-ONLY: the current track's progressive-download feeder. A track
+    /// change MUST abort the previous feeder — left alone it downloads the
+    /// full file at line speed to the very end, and a few quick skips stack
+    /// concurrent hi-res downloads that starve the new track's startup buffer
+    /// (5-8 s starts observed on a Pi).
+    current_feeder: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl DaemonRendererEngine {
@@ -91,6 +97,18 @@ impl DaemonRendererEngine {
         Self {
             runtime,
             volume_mode,
+            current_feeder: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Abort the previous track's feeder (no-op when none). The dropped
+    /// FailGuard marks the OLD writer errored, which is correct — that buffer
+    /// belongs to the abandoned source.
+    fn abort_current_feeder(&self) {
+        if let Ok(mut guard) = self.current_feeder.lock() {
+            if let Some(prev) = guard.take() {
+                prev.abort();
+            }
         }
     }
 
@@ -219,6 +237,10 @@ impl QconnectRendererEngine for DaemonRendererEngine {
             .await
             .map_err(|err| format!("resolve stream url for remote track {track_id}: {err}"))?;
 
+        // DAEMON-ONLY: stop the previous track's download before starting the
+        // next one (see `current_feeder`).
+        self.abort_current_feeder();
+
         let player = self.core().player();
         let stream_result = super::remote_stream::stream_remote_track_into_player(
             &player,
@@ -230,8 +252,14 @@ impl QconnectRendererEngine for DaemonRendererEngine {
         )
         .await;
 
-        let Err(stream_err) = stream_result else {
-            return Ok(());
+        let stream_err = match stream_result {
+            Ok(feeder) => {
+                if let Ok(mut guard) = self.current_feeder.lock() {
+                    *guard = Some(feeder);
+                }
+                return Ok(());
+            }
+            Err(err) => err,
         };
 
         // Akamai small-object header flood: SMALL raw-url objects come back

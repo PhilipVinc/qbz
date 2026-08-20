@@ -38,6 +38,10 @@ pub struct RemoteStreamInfo {
 /// start audio once the initial buffer fills; the body download runs in a
 /// spawned task. Errors here mean the caller should fall back to a full
 /// download (the probe or the sink open failed).
+///
+/// DAEMON-ONLY divergence from the desktop copy: returns the feeder's
+/// JoinHandle so the caller can abort a superseded download on track change
+/// (the qconnect engine keeps exactly one feeder alive).
 pub async fn stream_remote_track_into_player(
     player: &Player,
     track_id: u64,
@@ -45,7 +49,7 @@ pub async fn stream_remote_track_into_player(
     start_position_secs: u64,
     url: &str,
     log_tag: &str,
-) -> Result<(), String> {
+) -> Result<tokio::task::JoinHandle<()>, String> {
     let stream_info = probe_remote_stream_info(url).await?;
     log::info!(
         "[{}/STREAMING] Track {} - {:.2} MB, {}Hz, {} ch, {}-bit, {:.1} MB/s",
@@ -74,7 +78,7 @@ pub async fn stream_remote_track_into_player(
     let url = url.to_string();
     let content_length = stream_info.content_length;
     let log_tag = log_tag.to_string();
-    tokio::spawn(async move {
+    let feeder = tokio::spawn(async move {
         if let Err(err) =
             download_and_stream_remote_track(&url, writer, track_id, content_length, &log_tag).await
         {
@@ -87,7 +91,7 @@ pub async fn stream_remote_track_into_player(
         }
     });
 
-    Ok(())
+    Ok(feeder)
 }
 
 /// HEAD for content-length, then a small `Range: bytes=0-65535` GET to (a)
