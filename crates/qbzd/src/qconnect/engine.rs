@@ -104,37 +104,72 @@ pub struct DaemonRendererEngine {
 /// audio — on a deep resume that is several seconds of downloading plus a
 /// sample pre-skip, during which the controller deserves a loading state.
 #[derive(Default)]
-pub struct BufferingLatch(std::sync::Mutex<Option<u64>>);
+pub struct BufferingLatch(std::sync::Mutex<Option<Buffering>>);
+
+struct Buffering {
+    track_id: u64,
+    /// Where the stream was opened. The playback clock sits here until audio
+    /// flows, so a position past it is the audible edge.
+    start_position_secs: u64,
+    since: std::time::Instant,
+}
+
+/// A load that never becomes audible must not report BUFFERING forever.
+const BUFFERING_MAX: std::time::Duration = std::time::Duration::from_secs(90);
 
 impl BufferingLatch {
-    /// Mark `track_id` as buffering (replacing any previous track).
-    pub fn begin(&self, track_id: u64) {
+    /// Mark `track_id` as buffering from `start_position_secs` (replacing any
+    /// previous track).
+    pub fn begin(&self, track_id: u64, start_position_secs: u64) {
         if let Ok(mut guard) = self.0.lock() {
-            *guard = Some(track_id);
+            *guard = Some(Buffering {
+                track_id,
+                start_position_secs,
+                since: std::time::Instant::now(),
+            });
         }
     }
 
-    /// Clear the latch once `track_id` is audible. Ignores a stale clear for a
-    /// track that has already been superseded.
+    /// Clear the latch for `track_id`. Ignores a stale clear for a track that
+    /// has already been superseded.
     pub fn finish(&self, track_id: u64) {
         if let Ok(mut guard) = self.0.lock() {
-            if *guard == Some(track_id) {
+            if guard.as_ref().map(|b| b.track_id) == Some(track_id) {
                 *guard = None;
             }
         }
     }
 
-    pub fn is_buffering(&self, track_id: u64) -> bool {
-        self.0
-            .lock()
-            .map(|guard| *guard == Some(track_id))
-            .unwrap_or(false)
+    /// Whether `track_id` is still filling its buffer, judged against the
+    /// player's current position. Self-clearing on the audible edge.
+    ///
+    /// `is_playing` is NOT that edge: the player reports playing as soon as the
+    /// streaming session is initiated, seconds before the first sample, so
+    /// clearing on it cut the controller's loading state short — a spinner for
+    /// a second or two, then a play indicator sitting still until audio finally
+    /// arrived. The playback clock only advances once audio actually flows, so
+    /// a position past where the stream opened is the honest signal.
+    pub fn is_buffering(&self, track_id: u64, position_secs: u64) -> bool {
+        let Ok(mut guard) = self.0.lock() else {
+            return false;
+        };
+        match guard.as_ref() {
+            Some(b) if b.track_id == track_id => {
+                if position_secs > b.start_position_secs || b.since.elapsed() > BUFFERING_MAX {
+                    *guard = None;
+                    false
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        }
     }
 
     /// The track currently buffering, for report sites that have no track id of
     /// their own (the active-renderer-ready report).
     pub fn current(&self) -> Option<u64> {
-        self.0.lock().ok().and_then(|guard| *guard)
+        self.0.lock().ok().and_then(|guard| guard.as_ref().map(|b| b.track_id))
     }
 }
 
@@ -308,7 +343,7 @@ impl QconnectRendererEngine for DaemonRendererEngine {
         // audible until the feeder reaches `start_position_secs` and the
         // pre-skip completes; the report scheduler clears this once the player
         // starts producing audio.
-        self.buffering.begin(track_id);
+        self.buffering.begin(track_id, start_position_secs);
         self.report_notify.notify_one();
 
         let player = self.core().player();
@@ -418,20 +453,47 @@ mod tests {
     #[test]
     fn buffering_latch_tracks_one_track_at_a_time() {
         let latch = BufferingLatch::default();
-        assert!(!latch.is_buffering(7), "nothing is buffering initially");
+        assert!(!latch.is_buffering(7, 0), "nothing is buffering initially");
 
-        latch.begin(7);
-        assert!(latch.is_buffering(7));
-        assert!(!latch.is_buffering(8), "only the loading track buffers");
+        latch.begin(7, 0);
+        assert!(latch.is_buffering(7, 0));
+        assert!(!latch.is_buffering(8, 0), "only the loading track buffers");
 
         // A track change supersedes: the old track's late clear must not
         // release the new track's buffering state.
-        latch.begin(8);
+        latch.begin(8, 0);
         latch.finish(7);
-        assert!(latch.is_buffering(8), "stale clear must be ignored");
+        assert!(latch.is_buffering(8, 0), "stale clear must be ignored");
 
         latch.finish(8);
-        assert!(!latch.is_buffering(8), "audible track is no longer buffering");
+        assert!(!latch.is_buffering(8, 0), "explicit clear releases it");
+    }
+
+    #[test]
+    fn buffering_latch_clears_only_once_the_clock_moves() {
+        // A resume at 80s: the player parks the clock at 80 while it downloads
+        // to that offset and pre-skips, and reports itself "playing" long
+        // before the first sample — so only a position PAST 80 means audible.
+        let latch = BufferingLatch::default();
+        latch.begin(9, 80);
+        assert!(latch.is_buffering(9, 80), "still filling at the start offset");
+        assert!(latch.is_buffering(9, 80), "repeated ticks stay buffering");
+        assert!(!latch.is_buffering(9, 81), "clock moved: audio is flowing");
+        assert!(!latch.is_buffering(9, 81), "and it stays cleared");
+    }
+
+    #[test]
+    fn buffering_latch_gives_up_on_a_load_that_never_starts() {
+        let latch = BufferingLatch::default();
+        latch.begin(9, 0);
+        // Backdate past the safety window: a load that never becomes audible
+        // must not report BUFFERING forever.
+        if let Ok(mut guard) = latch.0.lock() {
+            if let Some(b) = guard.as_mut() {
+                b.since = std::time::Instant::now() - (BUFFERING_MAX + std::time::Duration::from_secs(1));
+            }
+        }
+        assert!(!latch.is_buffering(9, 0));
     }
 
     #[test]

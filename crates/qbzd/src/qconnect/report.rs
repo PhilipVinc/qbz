@@ -247,10 +247,7 @@ pub async fn run_report_scheduler(
         // not-playing: the report must still go out (that IS the buffering
         // signal the controller needs). Cleared as soon as audio starts, which
         // is also the edge that flips the report back to OK.
-        let is_buffering = buffering.is_buffering(ev.track_id);
-        if ev.is_playing {
-            buffering.finish(ev.track_id);
-        }
+        let is_buffering = buffering.is_buffering(ev.track_id, ev.position);
 
         // The periodic floor only fires while actually playing (or buffering);
         // edge notifications (transitions + the driver's periodic) always report.
