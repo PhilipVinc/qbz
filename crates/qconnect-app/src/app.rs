@@ -301,6 +301,16 @@ where
         state.renderer.current_position_ms = Some(position_ms);
     }
 
+    /// Publish the duration of the track this renderer is on, so the SetState
+    /// echo can state one. Without it that echo reports `duration: null`, which
+    /// controllers read as "blank the progress display": every play/pause wiped
+    /// the elapsed time and total length until the renderer's own report loop
+    /// came round again.
+    pub async fn update_renderer_duration(&self, duration_ms: u64) {
+        let mut state = self.state.lock().await;
+        state.renderer.current_duration_ms = Some(duration_ms);
+    }
+
     pub async fn handle_transport_event(
         &self,
         event: TransportEvent,
@@ -689,7 +699,14 @@ where
                             // the buffer — stays authoritative.
                             "buffer_state": Option::<i32>::None,
                             "current_position": renderer.current_position_ms,
-                            "duration": Option::<u64>::None,
+                            // The renderer publishes this (update_renderer_duration).
+                            // It used to be a hardcoded None, and controllers treat a
+                            // null duration as "blank the progress display" — so every
+                            // play/pause flicked the elapsed time and total length to
+                            // 0:00 until the next report from the renderer's own loop.
+                            // Racing that echo with a faster follow-up only shortened
+                            // the flash; stating the duration removes it.
+                            "duration": renderer.current_duration_ms,
                             "queue_version": {
                                 "major": queue_version_ref.major,
                                 "minor": queue_version_ref.minor

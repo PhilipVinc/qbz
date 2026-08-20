@@ -7,6 +7,14 @@ pub struct QConnectRendererState {
     pub active: Option<bool>,
     pub playing_state: Option<i32>,
     pub current_position_ms: Option<u64>,
+    /// Duration of the track this renderer is on. NOT part of the cloud's
+    /// renderer view — no session or command payload carries it — but the
+    /// renderer itself knows, and the SetState echo has to be able to state a
+    /// duration instead of reporting null and blanking the controller display.
+    /// Written only by the renderer (`update_renderer_duration`); the reducer
+    /// never touches it.
+    #[serde(default)]
+    pub current_duration_ms: Option<u64>,
     pub current_track: Option<QueueItem>,
     pub next_track: Option<QueueItem>,
     pub volume: Option<i32>,
@@ -24,6 +32,7 @@ impl Default for QConnectRendererState {
             active: None,
             playing_state: None,
             current_position_ms: None,
+            current_duration_ms: None,
             current_track: None,
             next_track: None,
             volume: None,

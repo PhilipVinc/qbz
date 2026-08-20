@@ -421,6 +421,10 @@ pub fn build_session_renderer_snapshot(
         active: renderer_state.active,
         playing_state: renderer_state.playing_state,
         current_position_ms: renderer_state.current_position_ms,
+        // Projection of the CLOUD's view of a renderer, which never carries a
+        // duration. Only a local renderer knows its own, and it publishes that
+        // separately (`update_renderer_duration`).
+        current_duration_ms: None,
         current_track,
         next_track,
         volume: renderer_state.volume,

@@ -96,6 +96,12 @@ pub async fn report_playback_state(
     if position_ms >= 0 && buffer_state != BUFFER_STATE_BUFFERING {
         app.update_renderer_position(position_ms as u64).await;
     }
+    // The duration IS published while buffering, unlike the position: it belongs
+    // to the track being loaded and is what the SetState echo needs in order to
+    // avoid blanking the controller's display. Nothing seeks on a duration.
+    if duration_ms > 0 {
+        app.update_renderer_duration(duration_ms as u64).await;
+    }
 
     // Report the live output format so the controller shows the correct quality
     // badge (CD / Hi-Res). Reads the player's current output (sample_rate/
