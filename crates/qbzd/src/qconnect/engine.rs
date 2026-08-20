@@ -111,6 +111,9 @@ struct Buffering {
     /// Where the stream was opened. The playback clock sits here until audio
     /// flows, so a position past it is the audible edge.
     start_position_secs: u64,
+    /// The loading track's duration, so a report sent BEFORE the player has
+    /// switched to it can still describe it.
+    duration_secs: u64,
     since: std::time::Instant,
 }
 
@@ -120,11 +123,12 @@ const BUFFERING_MAX: std::time::Duration = std::time::Duration::from_secs(90);
 impl BufferingLatch {
     /// Mark `track_id` as buffering from `start_position_secs` (replacing any
     /// previous track).
-    pub fn begin(&self, track_id: u64, start_position_secs: u64) {
+    pub fn begin(&self, track_id: u64, start_position_secs: u64, duration_secs: u64) {
         if let Ok(mut guard) = self.0.lock() {
             *guard = Some(Buffering {
                 track_id,
                 start_position_secs,
+                duration_secs,
                 since: std::time::Instant::now(),
             });
         }
@@ -140,30 +144,35 @@ impl BufferingLatch {
         }
     }
 
-    /// Whether `track_id` is still filling its buffer, judged against the
-    /// player's current position. Self-clearing on the audible edge.
+    /// The load in flight, as `(track_id, start_position_secs, duration_secs)`,
+    /// or `None` once audio is flowing. Self-clearing on the audible edge.
     ///
-    /// `is_playing` is NOT that edge: the player reports playing as soon as the
-    /// streaming session is initiated, seconds before the first sample, so
-    /// clearing on it cut the controller's loading state short — a spinner for
-    /// a second or two, then a play indicator sitting still until audio finally
-    /// arrived. The playback clock only advances once audio actually flows, so
-    /// a position past where the stream opened is the honest signal.
-    pub fn is_buffering(&self, track_id: u64, position_secs: u64) -> bool {
+    /// Deliberately NOT keyed on the player's track id: the player keeps
+    /// reporting the OUTGOING track until the new stream produces audio, so a
+    /// check keyed on it saw "not buffering" for the whole load and only turned
+    /// true once audio had already started — the controller got no loading
+    /// state during the wait and a stray spinner just after playback began.
+    ///
+    /// Nor on `is_playing`: the player reports playing as soon as the streaming
+    /// session is initiated, seconds before the first sample.
+    ///
+    /// The audible edge is the player arriving on the loading track AND its
+    /// clock moving past where the stream opened — the clock only advances once
+    /// audio actually flows.
+    pub fn in_flight(&self, player_track_id: u64, position_secs: u64) -> Option<(u64, u64, u64)> {
         let Ok(mut guard) = self.0.lock() else {
-            return false;
+            return None;
         };
-        match guard.as_ref() {
-            Some(b) if b.track_id == track_id => {
-                if position_secs > b.start_position_secs || b.since.elapsed() > BUFFERING_MAX {
-                    *guard = None;
-                    false
-                } else {
-                    true
-                }
-            }
-            _ => false,
+        let Some(b) = guard.as_ref() else {
+            return None;
+        };
+        let audible =
+            player_track_id == b.track_id && position_secs > b.start_position_secs;
+        if audible || b.since.elapsed() > BUFFERING_MAX {
+            *guard = None;
+            return None;
         }
+        Some((b.track_id, b.start_position_secs, b.duration_secs))
     }
 
     /// The track currently buffering, for report sites that have no track id of
@@ -343,7 +352,8 @@ impl QconnectRendererEngine for DaemonRendererEngine {
         // audible until the feeder reaches `start_position_secs` and the
         // pre-skip completes; the report scheduler clears this once the player
         // starts producing audio.
-        self.buffering.begin(track_id, start_position_secs);
+        self.buffering
+            .begin(track_id, start_position_secs, duration_secs);
         self.report_notify.notify_one();
 
         let player = self.core().player();
@@ -453,20 +463,49 @@ mod tests {
     #[test]
     fn buffering_latch_tracks_one_track_at_a_time() {
         let latch = BufferingLatch::default();
-        assert!(!latch.is_buffering(7, 0), "nothing is buffering initially");
+        assert!(
+            latch.in_flight(7, 0).is_none(),
+            "nothing is buffering initially"
+        );
 
-        latch.begin(7, 0);
-        assert!(latch.is_buffering(7, 0));
-        assert!(!latch.is_buffering(8, 0), "only the loading track buffers");
+        latch.begin(7, 0, 200);
+        assert_eq!(latch.in_flight(7, 0), Some((7, 0, 200)));
 
         // A track change supersedes: the old track's late clear must not
         // release the new track's buffering state.
-        latch.begin(8, 0);
+        latch.begin(8, 0, 300);
         latch.finish(7);
-        assert!(latch.is_buffering(8, 0), "stale clear must be ignored");
+        assert_eq!(
+            latch.in_flight(8, 0),
+            Some((8, 0, 300)),
+            "stale clear must be ignored"
+        );
 
         latch.finish(8);
-        assert!(!latch.is_buffering(8, 0), "explicit clear releases it");
+        assert!(
+            latch.in_flight(8, 0).is_none(),
+            "explicit clear releases it"
+        );
+    }
+
+    #[test]
+    fn buffering_latch_reports_the_loading_track_not_the_players() {
+        // The whole point of the latch: during a load the PLAYER still names the
+        // outgoing track (11) — or nothing at all, right after a hand-off — while
+        // the load in flight is track 12 at 139s. The report must describe 12, or
+        // the controller names the previous song and draws 0:00 of 0:00.
+        let latch = BufferingLatch::default();
+        latch.begin(12, 139, 254);
+        assert_eq!(
+            latch.in_flight(11, 42),
+            Some((12, 139, 254)),
+            "outgoing track playing: still the new track's load"
+        );
+        assert_eq!(
+            latch.in_flight(0, 0),
+            Some((12, 139, 254)),
+            "player empty after a hand-off: still the new track's load"
+        );
     }
 
     #[test]
@@ -475,17 +514,26 @@ mod tests {
         // to that offset and pre-skips, and reports itself "playing" long
         // before the first sample — so only a position PAST 80 means audible.
         let latch = BufferingLatch::default();
-        latch.begin(9, 80);
-        assert!(latch.is_buffering(9, 80), "still filling at the start offset");
-        assert!(latch.is_buffering(9, 80), "repeated ticks stay buffering");
-        assert!(!latch.is_buffering(9, 81), "clock moved: audio is flowing");
-        assert!(!latch.is_buffering(9, 81), "and it stays cleared");
+        latch.begin(9, 80, 200);
+        assert!(
+            latch.in_flight(9, 80).is_some(),
+            "still filling at the start offset"
+        );
+        assert!(
+            latch.in_flight(9, 80).is_some(),
+            "repeated ticks stay buffering"
+        );
+        assert!(
+            latch.in_flight(9, 81).is_none(),
+            "clock moved: audio is flowing"
+        );
+        assert!(latch.in_flight(9, 81).is_none(), "and it stays cleared");
     }
 
     #[test]
     fn buffering_latch_gives_up_on_a_load_that_never_starts() {
         let latch = BufferingLatch::default();
-        latch.begin(9, 0);
+        latch.begin(9, 0, 200);
         // Backdate past the safety window: a load that never becomes audible
         // must not report BUFFERING forever.
         if let Ok(mut guard) = latch.0.lock() {
@@ -493,7 +541,7 @@ mod tests {
                 b.since = std::time::Instant::now() - (BUFFERING_MAX + std::time::Duration::from_secs(1));
             }
         }
-        assert!(!latch.is_buffering(9, 0));
+        assert!(latch.in_flight(9, 0).is_none());
     }
 
     #[test]

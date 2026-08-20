@@ -38,7 +38,8 @@ use super::engine::VolumeMode; // T10 (OD4): join-time volume report honors the 
 use super::sink::{DaemonEventSink, DaemonQconnectApp};
 use super::transport::{
     default_qconnect_device_info, default_qconnect_device_info_with_name, resolve_transport_config,
-    QconnectJoinSessionRequest, AUDIO_QUALITY_HIRES_LEVEL2, BUFFER_STATE_OK,
+    QconnectJoinSessionRequest, AUDIO_QUALITY_HIRES_LEVEL2, BUFFER_STATE_BUFFERING,
+    BUFFER_STATE_OK,
 };
 use super::{update_lifecycle_state_if_running, DaemonQconnectInner};
 
@@ -305,26 +306,48 @@ pub async fn deferred_renderer_join(
     // volume. Position is MILLISECONDS on the wire; the player reports seconds.
     let live = runtime.core().get_playback_state();
     let live_is_current = live.track_id != 0 && Some(live.track_id) == current_track_id;
-    let report_playing_state = if live_is_current && live.is_playing {
-        qconnect_app::renderer::PLAYING_STATE_PLAYING
+    // FIX (c2) (daemon-copy only): a PAIRING HANDOFF joins as active with no
+    // renderer state at all — the controller's SetState is still in flight — so
+    // `live_is_current` is false and the old code announced "STOPPED, 0:00 of
+    // 0:00". That is the first thing the phone/desktop draws after you pick this
+    // player, and it drew a PAUSE icon at zero for the whole load. We are taking
+    // over precisely because the user selected us and a load is imminent, so say
+    // so: PLAYING + BUFFERING, the same pair the official client sends while it
+    // fills. The real position and duration follow ~200ms later from the report
+    // scheduler, off the buffering latch.
+    let (report_playing_state, report_buffer_state) = if live_is_current && live.is_playing {
+        (
+            qconnect_app::renderer::PLAYING_STATE_PLAYING,
+            BUFFER_STATE_OK,
+        )
+    } else if force_active {
+        (
+            qconnect_app::renderer::PLAYING_STATE_PLAYING,
+            BUFFER_STATE_BUFFERING,
+        )
     } else {
-        PLAYING_STATE_STOPPED
-    };
-    let report_position_ms = if live_is_current {
-        (live.position as i64) * 1000
-    } else {
-        0
+        (PLAYING_STATE_STOPPED, BUFFER_STATE_OK)
     };
     let mut state_report_payload = json!({
         "playing_state": report_playing_state,
-        "buffer_state": BUFFER_STATE_OK,
-        "current_position": report_position_ms,
-        "duration": duration_secs,
+        "buffer_state": report_buffer_state,
         "queue_version": {
             "major": queue_version_ref.major,
             "minor": queue_version_ref.minor
         }
     });
+    // Only state what we actually know. Sending a zero here reads as "seek to
+    // 0:00 / a zero-length track" and made the controller wipe the position it
+    // was already showing (handing off at 2:19 flashed 0:00 of 0:00); leaving
+    // the field out lets it keep that until our first real report. `duration`
+    // is MILLISECONDS on the wire like `current_position` — it was sent in
+    // seconds here, so even a known duration rendered as 0:00.
+    if live_is_current {
+        state_report_payload["current_position"] = json!((live.position as i64) * 1000);
+    }
+    if duration_secs > 0 {
+        state_report_payload["duration"] = json!((duration_secs as i64) * 1000);
+    }
     if let Some(qid) = current_qid {
         state_report_payload["current_queue_item_id"] = json!(qid);
     }

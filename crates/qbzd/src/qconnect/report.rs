@@ -236,16 +236,18 @@ pub async fn run_report_scheduler(
         // Reset so the periodic floor only fires after 2 s of edge silence.
         interval.reset();
 
-        // Read the live player state. Nothing loaded -> nothing to report.
+        // Read the live player state.
         let ev = runtime.core().player().get_playback_event();
-        if ev.track_id == 0 {
+        // The load in flight, if any. Asked of the latch rather than of the
+        // player: until the new stream produces audio the player still reports
+        // the OUTGOING track, so anything keyed on ev.track_id missed the whole
+        // load window and only noticed once audio had started.
+        let in_flight = buffering.in_flight(ev.track_id, ev.position);
+        let is_buffering = in_flight.is_some();
+        // Nothing loaded and nothing loading -> nothing to report.
+        if ev.track_id == 0 && !is_buffering {
             continue;
         }
-        // A loading stream is not audible yet, so the player reports
-        // not-playing: the report must still go out (that IS the buffering
-        // signal the controller needs). Cleared as soon as audio starts, which
-        // is also the edge that flips the report back to OK.
-        let is_buffering = buffering.is_buffering(ev.track_id, ev.position);
 
         // The periodic floor only fires while actually playing (or buffering);
         // edge notifications (transitions + the driver's periodic) always report.
@@ -299,9 +301,23 @@ pub async fn run_report_scheduler(
         } else {
             BUFFER_STATE_OK
         };
+        // While a load is in flight the report must describe the track being
+        // loaded, taken from the latch — the player is still on the OUTGOING
+        // track (or on nothing at all, freshly after a hand-off, where it has
+        // neither a duration nor a track id). Reporting `ev` there named the
+        // previous song during a next-track load, and showed "0:00 of 0:00"
+        // for the whole wait when switching output from another device.
+        //
+        // The offset the stream opened at is the honest position: on a resume
+        // at 2:19 the controller should draw the scrubber there while it fills,
+        // not at zero.
+        let (report_track_id, position_secs, duration_secs) = match in_flight {
+            Some((track_id, start_secs, duration_secs)) => (track_id, start_secs, duration_secs),
+            None => (ev.track_id, ev.position, ev.duration),
+        };
         // `report_playback_state` wants MILLISECONDS; the player reports seconds.
-        let position_ms = (ev.position as i64) * 1000;
-        let duration_ms = (ev.duration as i64) * 1000;
+        let position_ms = (position_secs as i64) * 1000;
+        let duration_ms = (duration_secs as i64) * 1000;
         report_playback_state(
             &app,
             &sync_state,
@@ -309,7 +325,7 @@ pub async fn run_report_scheduler(
             playing_state,
             position_ms,
             duration_ms,
-            ev.track_id,
+            report_track_id,
             buffer_state,
         )
         .await;
