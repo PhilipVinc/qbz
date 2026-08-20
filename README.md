@@ -270,7 +270,8 @@ official Qobuz apps like a hardware streamer.
   (last cast wins, exactly like a Spotify Connect box). A logged-in account is
   optional: when present the daemon streams with its own account, otherwise it
   streams with the token the casting app handed over. Toggle with
-  `qbzd settings set qconnect.pairing on|off` (port: `qconnect.pairing_port`, default 8183)
+  `qbzd settings set qconnect.pairing on|off` (port: `qconnect.pairing_port`, default 8183);
+  both apply on the next daemon start
 
 Full manual: **[Headless Daemon (qbzd) — Wiki](https://github.com/vicrodh/qbz/wiki/Headless-Daemon)**
 

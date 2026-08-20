@@ -101,7 +101,8 @@ pub struct QconnectStatus {
     pub session_active: bool,
     pub device_name: String,
     pub last_transport_reconnect: Option<String>,
-    /// Local pairing surface (mDNS + /streamcore listener) actually serving.
+    /// The /streamcore pairing listener is serving (mDNS advertisement is
+    /// best-effort and may have failed independently).
     pub pairing: bool,
     /// The pairing listener's port, when serving.
     pub pairing_port: Option<u16>,

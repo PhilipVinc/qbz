@@ -496,18 +496,24 @@ impl QconnectControl {
     }
 
     pub async fn disconnect(&self) -> Result<(), String> {
-        // Operator intent (`qbzd qconnect disable`): also drop any handed-over
-        // pairing token, so a later enable reconnects with the daemon account
-        // instead of silently re-joining the last LAN caster's session. The
-        // internal disconnect() must NOT do this — reconnect_for_pairing
-        // depends on the token surviving its own disconnect step.
+        // Operator intent (`qbzd qconnect disable`): drop any handed-over
+        // pairing credentials, so a later enable reconnects with the daemon
+        // account instead of silently re-joining the last LAN caster's
+        // session. Abort any in-flight takeover FIRST and do the clearing
+        // under the ops lock — otherwise a takeover that already read the
+        // tokens re-installs the caster's Bearer right after we cleared it.
+        // The internal disconnect() must NOT clear anything —
+        // reconnect_for_pairing depends on the token surviving its own
+        // disconnect step.
+        self.0.abort_takeover_task();
+        let _ops = self.0.ops.lock().await;
         if let Ok(mut guard) = self.0.pairing_store.lock() {
             *guard = None;
         }
         if let Some(client) = self.0.runtime.core().client().read().await.clone() {
             client.set_bearer_api_token(None).await;
         }
-        self.0.disconnect().await
+        self.0.disconnect_locked().await
     }
 
     /// Re-cache the device-name override from the daemon-root KV (§ see
@@ -625,7 +631,8 @@ pub fn start(
     // Local pairing surface (KV `pairing` = on|off, default on; port from KV
     // `pairing_port`). Fail-open on error: the account-bound cloud path above
     // is independent of it, so a bind conflict must not take the daemon down.
-    let (pairing, refresh_task) = if transport::load_pairing_enabled_at(&settings_db) {
+    let (pairing, refresh_task, pairing_port) = if transport::load_pairing_enabled_at(&settings_db)
+    {
         let port = transport::load_pairing_port_at(&settings_db);
         match pairing::spawn(
             port,
@@ -638,24 +645,25 @@ pub fn start(
                     service.pairing_store(),
                     Arc::clone(&service.runtime),
                 );
-                (Some(handle), Some(refresh))
+                (Some(handle), Some(refresh), Some(port))
             }
             Err(err) => {
                 log::warn!("[QConnect/Pairing] disabled for this run: {err}");
-                (None, None)
+                (None, None, None)
             }
         }
     } else {
         log::info!("[QConnect/Pairing] disabled by settings (pairing = off)");
-        (None, None)
+        (None, None, None)
     };
     // Reflect the pairing surface in `/api/status` (static for the process
-    // lifetime — the listener is boot-time-only).
+    // lifetime — the listener is boot-time-only). `pairing_port` is the port
+    // the listener actually BOUND, never a re-read of the KV (a settings set
+    // racing the boot window must not make status report a port nothing
+    // listens on).
     if let Ok(mut s) = service.shared.lock() {
         s.qconnect.pairing = pairing.is_some();
-        s.qconnect.pairing_port = pairing
-            .is_some()
-            .then(|| transport::load_pairing_port_at(&settings_db));
+        s.qconnect.pairing_port = pairing_port;
     }
 
     let watcher = if should_auto_connect {

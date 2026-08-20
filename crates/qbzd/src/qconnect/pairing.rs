@@ -49,7 +49,7 @@ use super::DaemonQconnectService;
 // a pure serializer, so reusing it does not couple the two listeners.
 use crate::api::json;
 
-pub const MDNS_SERVICE_TYPE: &str = "_qobuz-connect._tcp.local.";
+const MDNS_SERVICE_TYPE: &str = "_qobuz-connect._tcp.local.";
 const SDK_VERSION: &str = concat!("qbz-", env!("CARGO_PKG_VERSION"));
 /// Treat a token expiring within this window as already expired (clock skew +
 /// time to finish the WS handshake).
@@ -354,9 +354,14 @@ fn parse_refresh_payload(payload: &Value) -> Option<(String, u64, Option<String>
     Some((jwt, exp, endpoint))
 }
 
+/// Identity of a handoff: session + the ws credential it arrived with (which
+/// no refresh arm has touched yet within a tick).
+fn same_handoff(a: &PairingTokens, b: &PairingTokens) -> bool {
+    a.session_id == b.session_id && a.ws_jwt == b.ws_jwt
+}
+
 /// Write a refreshed token back ONLY if the store still holds the handoff the
-/// refresh was computed from (same session + same ws_jwt, which no refresh arm
-/// has touched yet this tick). Guards two races across the HTTP await: a new
+/// refresh was computed from. Guards two races across the HTTP await: a new
 /// `connect-to-qconnect` handoff replacing the store (a stale refresh must not
 /// corrupt the new caster's tokens), and the operator disconnect clearing it
 /// (a stale refresh must not resurrect anything). Returns whether it landed.
@@ -369,9 +374,7 @@ fn install_refreshed(
         return false;
     };
     match guard.as_mut() {
-        Some(tokens)
-            if tokens.session_id == snapshot.session_id && tokens.ws_jwt == snapshot.ws_jwt =>
-        {
+        Some(tokens) if same_handoff(tokens, snapshot) => {
             update(tokens);
             true
         }
@@ -413,6 +416,26 @@ async fn refresh_if_needed(store: &PairingStore, runtime: &Runtime) {
                         // store changing under us means a newer handoff or an
                         // operator disconnect owns the Bearer slot now.
                         client.set_bearer_api_token(Some(api_jwt.clone())).await;
+                        // Re-check after that await: a handoff landing in this
+                        // exact window owns the Bearer slot — hand back its
+                        // credential instead of leaving ours installed.
+                        let hijacked = store
+                            .lock()
+                            .map(|guard| match guard.as_ref() {
+                                Some(tokens) => !same_handoff(tokens, &snapshot),
+                                None => true,
+                            })
+                            .unwrap_or(true);
+                        if hijacked {
+                            let current = store.lock().ok().and_then(|guard| {
+                                guard.as_ref().and_then(|tokens| tokens.api_jwt.clone())
+                            });
+                            client.set_bearer_api_token(current).await;
+                            log::info!(
+                                "[QConnect/Pairing] yielded the Bearer slot to a newer handoff"
+                            );
+                            return;
+                        }
                         log::info!("[QConnect/Pairing] refreshed jwt_api (exp {exp})");
                     } else {
                         log::info!("[QConnect/Pairing] dropped stale jwt_api refresh (store changed)");
