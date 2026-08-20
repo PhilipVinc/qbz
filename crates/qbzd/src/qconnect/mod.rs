@@ -19,6 +19,7 @@
 //! from qbzd.toml — only the daemon-root `qconnect_settings.db`.
 
 pub mod engine;
+pub mod pairing;
 pub mod publish;
 pub mod remote_stream;
 pub mod report;
@@ -147,6 +148,9 @@ pub struct DaemonQconnectService {
     #[allow(dead_code)] // T11 (settings reload) re-reads the KV through this path.
     settings_db: PathBuf,
     custom_device_name: Arc<tokio::sync::RwLock<Option<String>>>,
+    /// Tokens handed over by a Qobuz app via the local pairing surface
+    /// (pairing.rs). `connect()` prefers a live entry over `/qws/createToken`.
+    pairing_store: pairing::PairingStore,
 }
 
 impl DaemonQconnectService {
@@ -177,17 +181,26 @@ impl DaemonQconnectService {
         }
         latch_lifecycle_into_shared(&self.shared, QconnectLifecycleState::Connecting);
 
-        let config = match transport::resolve_transport_config(&self.runtime).await {
-            Ok(config) => config,
-            Err(err) => {
-                let mut guard = self.inner.lock().await;
-                if guard.runtime.is_none() {
-                    guard.lifecycle_state = QconnectLifecycleState::Off;
-                }
-                drop(guard);
-                latch_lifecycle_into_shared(&self.shared, QconnectLifecycleState::Off);
-                return Err(err);
+        // A live locally-paired credential (pairing.rs handoff) wins over the
+        // account-bound `/qws/createToken` discovery: it carries the CASTER's
+        // session, which is the whole point of the pairing surface.
+        let config = match pairing::valid_ws_tokens(&self.pairing_store) {
+            Some(tokens) => {
+                log::info!("[QConnect] connecting with locally paired credentials");
+                pairing::transport_config_from(&tokens)
             }
+            None => match transport::resolve_transport_config(&self.runtime).await {
+                Ok(config) => config,
+                Err(err) => {
+                    let mut guard = self.inner.lock().await;
+                    if guard.runtime.is_none() {
+                        guard.lifecycle_state = QconnectLifecycleState::Off;
+                    }
+                    drop(guard);
+                    latch_lifecycle_into_shared(&self.shared, QconnectLifecycleState::Off);
+                    return Err(err);
+                }
+            },
         };
 
         let transport = Arc::new(NativeWsTransport::new());
@@ -243,6 +256,7 @@ impl DaemonQconnectService {
             runtime: Arc::clone(&self.runtime),
             shared: Arc::clone(&self.shared),
             volume_mode, // T10 (OD4): join-time volume report honors the mode
+            pairing_store: Arc::clone(&self.pairing_store),
         });
         let app_for_loop = Arc::clone(&app);
         let event_loop = tokio::spawn(async move {
@@ -328,6 +342,26 @@ impl DaemonQconnectService {
         *self.custom_device_name.write().await = name;
     }
 
+    /// Shared handle onto the pairing-token store (pairing.rs is the writer,
+    /// the connect/reconnect paths are the readers).
+    pub(crate) fn pairing_store(&self) -> pairing::PairingStore {
+        Arc::clone(&self.pairing_store)
+    }
+
+    /// The bundle app id for `get-connect-info`, when the API client exists.
+    pub(crate) async fn current_app_id(&self) -> Option<String> {
+        let client = self.runtime.core().client().read().await.clone()?;
+        client.app_id().await.ok()
+    }
+
+    /// Handoff takeover: force-drop whatever session is live, then connect —
+    /// which now picks up the freshly stored pairing tokens. `disconnect` is a
+    /// no-op when nothing is connected, so this is safe from any state.
+    pub(crate) async fn reconnect_for_pairing(&self) -> Result<(), String> {
+        let _ = self.disconnect().await;
+        self.connect().await
+    }
+
     /// Wait until the daemon is Ready (logged in + API initialized), then attempt
     /// `connect()` with the bounded [2s, 5s, 15s, 30s] retry schedule. Each
     /// `connect()` re-resolves the transport config internally, so a transient
@@ -375,6 +409,10 @@ impl DaemonQconnectService {
 pub struct QconnectHandle {
     service: Arc<DaemonQconnectService>,
     watcher: Option<JoinHandle<()>>,
+    /// The local pairing surface (mDNS + /streamcore listener). Shut down FIRST
+    /// so no handoff can land while the session is being torn down, and joined
+    /// so its `Arc<DaemonQconnectService>` clone drops before `drop(booted)`.
+    pairing: Option<pairing::PairingHandle>,
     /// T10: the report-tick scheduler task. Held so shutdown can abort+join it
     /// (it clones `Arc<AppRuntime>`, so it must drop before `drop(booted)` per the
     /// #521 clock-release ordering, exactly like the watcher).
@@ -439,6 +477,9 @@ impl QconnectHandle {
     /// every `Arc<AppRuntime>` clone this handle owns drops ahead of
     /// `drop(booted)` (the #521 clock-release ordering).
     pub async fn shutdown(&mut self) {
+        if let Some(mut pairing) = self.pairing.take() {
+            pairing.shutdown();
+        }
         if let Some(watcher) = self.watcher.take() {
             watcher.abort();
             let _ = watcher.await;
@@ -485,7 +526,7 @@ pub fn start(
     // Latch the initial status so `/api/status` reflects the config before Ready.
     if let Ok(mut s) = shared.lock() {
         s.qconnect.enabled = should_auto_connect;
-        s.qconnect.device_name = effective_name;
+        s.qconnect.device_name = effective_name.clone();
         s.qconnect.state = "off".to_string();
         s.qconnect.session_active = false;
     }
@@ -494,9 +535,32 @@ pub fn start(
         inner: Arc::new(Mutex::new(DaemonQconnectInner::default())),
         runtime,
         shared,
-        settings_db,
+        settings_db: settings_db.clone(),
         custom_device_name: Arc::new(tokio::sync::RwLock::new(custom_name)),
+        pairing_store: Arc::new(std::sync::Mutex::new(None)),
     });
+
+    // Local pairing surface (KV `pairing` = on|off, default on; port from KV
+    // `pairing_port`). Fail-open on error: the account-bound cloud path above
+    // is independent of it, so a bind conflict must not take the daemon down.
+    let pairing = if transport::load_pairing_enabled_at(&settings_db) {
+        let port = transport::load_pairing_port_at(&settings_db);
+        match pairing::spawn(
+            port,
+            &effective_name,
+            Arc::clone(&service),
+            tokio::runtime::Handle::current(),
+        ) {
+            Ok(handle) => Some(handle),
+            Err(err) => {
+                log::warn!("[QConnect/Pairing] disabled for this run: {err}");
+                None
+            }
+        }
+    } else {
+        log::info!("[QConnect/Pairing] disabled by settings (pairing = off)");
+        None
+    };
 
     let watcher = if should_auto_connect {
         log::info!(
@@ -536,6 +600,7 @@ pub fn start(
     QconnectHandle {
         service,
         watcher,
+        pairing,
         report_task,
         publish_task,
     }

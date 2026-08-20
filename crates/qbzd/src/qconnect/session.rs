@@ -59,6 +59,9 @@ pub struct DaemonSessionLoopHost {
     /// T10 (OD4): resolved volume policy — the deferred renderer join reports 100
     /// in `Locked` mode, the real player volume in `Software`.
     pub volume_mode: VolumeMode,
+    /// DAEMON-ONLY (pairing): reconnect credential re-resolve prefers a live
+    /// handed-over token, mirroring the preference in `connect()`.
+    pub pairing_store: super::pairing::PairingStore,
 }
 
 #[async_trait::async_trait]
@@ -74,7 +77,15 @@ impl SessionLoopHost for DaemonSessionLoopHost {
         // credentials (fresh `/qws/createToken`) and latch the new config into the
         // runtime so a subsequent full reconnect uses valid credentials. The
         // desktop copy does NOT do this.
-        match resolve_transport_config(&self.runtime).await {
+        // DAEMON-ONLY (pairing): same source order as `connect()` — a live
+        // handed-over token outranks a fresh `/qws/createToken` (the paired
+        // session must survive its own reconnects, not fall back to the
+        // daemon account's session).
+        let fresh = match super::pairing::valid_ws_tokens(&self.pairing_store) {
+            Some(tokens) => Ok(super::pairing::transport_config_from(&tokens)),
+            None => resolve_transport_config(&self.runtime).await,
+        };
+        match fresh {
             Ok(fresh) => {
                 let mut guard = self.inner.lock().await;
                 if let Some(rt) = guard.runtime.as_mut() {

@@ -457,6 +457,63 @@ pub fn save_volume_mode_at(path: &Path, mode: &str) {
     );
 }
 
+/// Load the pairing-surface switch (`pairing` = "on" | "off"; pairing.rs). NEW
+/// daemon key (the desktop never reads it). Fail-open: ON when unset/invalid —
+/// local pairing is the daemon's reason to exist on a shared-household box.
+pub fn load_pairing_enabled_at(path: &Path) -> bool {
+    let Some(conn) = open_qconnect_settings_conn_at(path) else {
+        return true;
+    };
+    let value: Option<String> = conn
+        .query_row("SELECT value FROM settings WHERE key = 'pairing'", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .ok();
+    !matches!(value.as_deref(), Some("off"))
+}
+
+/// Persist the pairing-surface switch.
+pub fn save_pairing_enabled_at(path: &Path, enabled: bool) {
+    let Some(conn) = open_qconnect_settings_conn_at(path) else {
+        return;
+    };
+    let value = if enabled { "on" } else { "off" };
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('pairing', ?1)",
+        rusqlite::params![value],
+    );
+}
+
+/// Default port for the pairing listener — one above the control plane's 8182.
+pub const DEFAULT_PAIRING_PORT: u16 = 8183;
+
+/// Load the pairing listener port (`pairing_port`). Fail-open to the default.
+pub fn load_pairing_port_at(path: &Path) -> u16 {
+    let Some(conn) = open_qconnect_settings_conn_at(path) else {
+        return DEFAULT_PAIRING_PORT;
+    };
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = 'pairing_port'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.trim().parse::<u16>().ok())
+    .filter(|p| *p != 0)
+    .unwrap_or(DEFAULT_PAIRING_PORT)
+}
+
+/// Persist the pairing listener port.
+pub fn save_pairing_port_at(path: &Path, port: u16) {
+    let Some(conn) = open_qconnect_settings_conn_at(path) else {
+        return;
+    };
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('pairing_port', ?1)",
+        rusqlite::params![port.to_string()],
+    );
+}
+
 /// Build the WS transport config: env overrides first, then auto-discovery via
 /// `qws/createToken`. Mirrors the Tauri `resolve_transport_config` (the per-option
 /// knobs are deferred — the connect path uses defaults + env). `require_jwt =
