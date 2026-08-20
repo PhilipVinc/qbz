@@ -77,9 +77,11 @@ pub fn resolve_qconnect_software_version() -> String {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| {
+            // Build id when stamped, so the controller (and Qobuz-side logs)
+            // name the exact build rather than a bare upstream version.
             format!(
                 "{DEFAULT_QCONNECT_SOFTWARE_PREFIX}/{}",
-                env!("CARGO_PKG_VERSION")
+                crate::VERSION
             )
         })
 }

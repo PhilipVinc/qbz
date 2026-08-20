@@ -73,7 +73,14 @@ jobs:
                  | grep -E '\b(slint|qbz-ui|qbz-slint-common|qbz-dac-wizard) v' || true)
           [ -z "$hits" ] || { echo "::error::qbzd graph resolves Slint:"; echo "$hits"; exit 1; }
 
+      # QBZD_BUILD_ID stamps the release version into the binary, so
+      # `qbzd version`, `--version`, /api/status and the Connect device's
+      # softwareVersion all report e.g. 2.0.2.moode7 instead of the bare Cargo
+      # version. A four-part id like that is not valid semver and so cannot live
+      # in Cargo.toml.
       - name: build
+        env:
+          QBZD_BUILD_ID: ${{ steps.release.outputs.version }}
         run: cargo build --release --manifest-path crates/Cargo.toml -p qbzd
 
       # Same empirical gate as upstream: the binary must run on glibc 2.35

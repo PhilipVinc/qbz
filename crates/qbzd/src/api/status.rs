@@ -80,7 +80,7 @@ pub fn info(state: &super::ApiState) -> Response<Cursor<Vec<u8>>> {
         200,
         serde_json::json!({
             "app": "qbzd",
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": crate::VERSION,
             "api_version": crate::API_VERSION,
             "bind": state.bind,
             "uptime_secs": uptime,
@@ -175,7 +175,7 @@ fn assemble_live(state: &super::ApiState) -> StatusDoc {
     };
 
     StatusDoc {
-        version: env!("CARGO_PKG_VERSION").to_string(),
+        version: crate::VERSION.to_string(),
         api_version: crate::API_VERSION,
         uptime_secs: uptime,
         data_root: state.roots.data.display().to_string(),
