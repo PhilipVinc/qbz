@@ -87,7 +87,13 @@ pub async fn report_playback_state(
         log::warn!("[QConnect] Failed to report playback state: {err}");
     }
 
-    if position_ms >= 0 {
+    // Not while buffering: `renderer.current_position_ms` is the HIGHER-priority
+    // input to the renderer's load-offset and seek decisions, so publishing the
+    // offset a stream is still filling toward makes a later state-only SetState
+    // (a bare pause/resume, carrying no position of its own) compare the player's
+    // real clock against it and fire a seek to a track that is not playing yet.
+    // The in-flight offset is for the CONTROLLER's benefit only.
+    if position_ms >= 0 && buffer_state != BUFFER_STATE_BUFFERING {
         app.update_renderer_position(position_ms as u64).await;
     }
 
@@ -223,10 +229,13 @@ pub async fn run_report_scheduler(
     runtime: Arc<AppRuntime<DaemonAdapter>>,
     buffering: Arc<super::engine::BufferingLatch>,
 ) {
-    use qconnect_app::renderer::{PLAYING_STATE_PAUSED, PLAYING_STATE_PLAYING};
+    use qconnect_app::renderer::{
+        PLAYING_STATE_PAUSED, PLAYING_STATE_PLAYING, PLAYING_STATE_STOPPED,
+    };
 
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(2_000));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut was_buffering = false;
 
     loop {
         let via_interval = tokio::select! {
@@ -244,14 +253,20 @@ pub async fn run_report_scheduler(
         // load window and only noticed once audio had started.
         let in_flight = buffering.in_flight(ev.track_id, ev.position);
         let is_buffering = in_flight.is_some();
-        // Nothing loaded and nothing loading -> nothing to report.
-        if ev.track_id == 0 && !is_buffering {
+        // Whether the last report we sent claimed BUFFERING. A load that FAILS
+        // clears the latch without the player ever adopting the track, so
+        // without this the falling edge fell into the `continue` below and the
+        // controller was left spinning on a load that had already given up.
+        let falling_edge = was_buffering && !is_buffering;
+        was_buffering = is_buffering;
+        // Nothing loaded, nothing loading, and nothing to retract.
+        if ev.track_id == 0 && !is_buffering && !falling_edge {
             continue;
         }
 
         // The periodic floor only fires while actually playing (or buffering);
         // edge notifications (transitions + the driver's periodic) always report.
-        if via_interval && !ev.is_playing && !is_buffering {
+        if via_interval && !ev.is_playing && !is_buffering && !falling_edge {
             continue;
         }
 
@@ -293,6 +308,11 @@ pub async fn run_report_scheduler(
         // buffer_state; the playing state's job is to say we intend to play.
         let playing_state = if ev.is_playing || is_buffering {
             PLAYING_STATE_PLAYING
+        } else if ev.track_id == 0 {
+            // Nothing loaded at all — only reachable on the falling edge of a
+            // load that failed, where PAUSED would invite the controller to
+            // offer a resume for audio that was never there.
+            PLAYING_STATE_STOPPED
         } else {
             PLAYING_STATE_PAUSED
         };

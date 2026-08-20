@@ -153,8 +153,8 @@ impl BufferingLatch {
     /// true once audio had already started — the controller got no loading
     /// state during the wait and a stray spinner just after playback began.
     ///
-    /// Nor on `is_playing`: the player reports playing as soon as the streaming
-    /// session is initiated, seconds before the first sample.
+    /// Nor on `is_playing`: during a next-track load it is simply still `true`
+    /// from the OUTGOING track, so it says nothing about the new stream.
     ///
     /// The audible edge is the player arriving on the loading track AND its
     /// clock moving past where the stream opened — the clock only advances once
@@ -198,19 +198,23 @@ impl DaemonRendererEngine {
         }
     }
 
-    /// Abort the previous track's feeder (no-op when none). The dropped
-    /// FailGuard marks the OLD writer errored, which is correct — that buffer
-    /// belongs to the abandoned source.
     /// Buffer state to report right now: BUFFERING while a stream is still
-    /// filling, else OK.
+    /// filling, else OK. Goes through the same `in_flight` evaluation as the
+    /// report scheduler — asking the latch whether it merely HOLDS something
+    /// gave a second, staler answer to the same question, one that ignored both
+    /// the audible edge and the safety expiry.
     pub fn buffer_state(&self) -> i32 {
-        if self.buffering.current().is_some() {
+        let ev = self.core().player().get_playback_event();
+        if self.buffering.in_flight(ev.track_id, ev.position).is_some() {
             super::transport::BUFFER_STATE_BUFFERING
         } else {
             super::transport::BUFFER_STATE_OK
         }
     }
 
+    /// Abort the previous track's feeder (no-op when none). The dropped
+    /// FailGuard marks the OLD writer errored, which is correct — that buffer
+    /// belongs to the abandoned source.
     fn abort_current_feeder(&self) {
         if let Ok(mut guard) = self.current_feeder.lock() {
             if let Some(prev) = guard.take() {
@@ -377,6 +381,22 @@ impl QconnectRendererEngine for DaemonRendererEngine {
             Err(err) => err,
         };
 
+        // DAEMON-ONLY: past this point the raw stream is gone and the latch,
+        // armed above, no longer necessarily describes what is happening. Its
+        // only other exits are the audible edge and a 90 s safety expiry, so a
+        // stale entry means a minute and a half of spinner for audio that will
+        // never arrive. Clear it whenever a fallback ends in Err.
+        //
+        // The CMAF fallback keeps the latch on success: it streams the same
+        // track from the same offset, so the audible edge still fits.
+        let clear_on_failure = |result: Result<(), String>| {
+            if result.is_err() {
+                self.buffering.finish(track_id);
+                self.report_notify.notify_one();
+            }
+            result
+        };
+
         // Akamai small-object header flood: SMALL raw-url objects come back
         // with ~106 headers, over hyper's hard-coded 100-header h1 cap, so
         // EVERY reqwest fetch of this URL fails — the full download would die
@@ -385,9 +405,10 @@ impl QconnectRendererEngine for DaemonRendererEngine {
             log::warn!(
                 "[QConnect] Raw-URL streaming hit the CDN header flood for track {track_id}: {stream_err}. Skipping full download; last resort: CMAF."
             );
-            return self
-                .play_via_cmaf(track_id, quality, start_position_secs)
-                .await;
+            return clear_on_failure(
+                self.play_via_cmaf(track_id, quality, start_position_secs)
+                    .await,
+            );
         }
 
         log::warn!(
@@ -397,20 +418,30 @@ impl QconnectRendererEngine for DaemonRendererEngine {
         );
         match download_remote_audio(&stream_url.url).await {
             Ok(audio_data) => {
-                self.core()
+                let played = self
+                    .core()
                     .player()
                     .play_data(audio_data, track_id)
-                    .map_err(|err| format!("play remote track {track_id}: {err}"))?;
-                Ok(())
+                    .map(|_| ())
+                    .map_err(|err| format!("play remote track {track_id}: {err}"));
+                // Clear either way: on success the complete file is in hand, so
+                // nothing is filling — and `play_data` restarts from 0, so the
+                // latch's start offset (82 s on a resume) would never be passed
+                // and it would sit on BUFFERING until the safety expiry.
+                self.buffering.finish(track_id);
+                self.report_notify.notify_one();
+                played
             }
             Err(download_err) if super::remote_stream::is_header_flood_error(&download_err) => {
                 log::warn!(
                     "[QConnect] Full download hit the CDN header flood for track {track_id}: {download_err}. Last resort: CMAF."
                 );
-                self.play_via_cmaf(track_id, quality, start_position_secs)
-                    .await
+                clear_on_failure(
+                    self.play_via_cmaf(track_id, quality, start_position_secs)
+                        .await,
+                )
             }
-            Err(download_err) => Err(download_err),
+            Err(download_err) => clear_on_failure(Err(download_err)),
         }
     }
 

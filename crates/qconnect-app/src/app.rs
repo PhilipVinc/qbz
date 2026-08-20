@@ -675,7 +675,19 @@ where
                         queue_version_ref,
                         serde_json::json!({
                             "playing_state": renderer.playing_state,
-                            "buffer_state": infer_buffer_state(renderer.playing_state),
+                            // No buffer state: this handler cannot know one. It
+                            // runs immediately AFTER the command was applied —
+                            // i.e. right after a load opened its stream — and it
+                            // used to infer OK from "we have a playing_state",
+                            // which announced "done buffering" while the buffer
+                            // was in fact still filling. Milliseconds after the
+                            // renderer raised BUFFERING, this overwrote it with
+                            // OK, so the controller's loading spinner blinked out
+                            // and only came back on the next report tick. Omitted
+                            // (like `duration` below) it leaves the field alone,
+                            // and the report loop — the only place that watches
+                            // the buffer — stays authoritative.
+                            "buffer_state": Option::<i32>::None,
                             "current_position": renderer.current_position_ms,
                             "duration": Option::<u64>::None,
                             "queue_version": {
@@ -742,19 +754,6 @@ where
         self.transport.send(envelope).await?;
         Ok(())
     }
-}
-
-/// Buffer health to accompany a state echo. This report mirrors a SetState back
-/// to the cloud and has no view of the feeder, so it can only say "nothing is
-/// wrong with the buffer" — the real BUFFERING signal comes from the renderer's
-/// own report path, which knows whether a stream is still filling.
-///
-/// It used to pass the playing-state number straight through for STOPPED,
-/// which happens to be `BUFFER_STATE_BUFFERING` on the wire: a stopped
-/// renderer was telling controllers it was buffering.
-fn infer_buffer_state(playing_state: Option<i32>) -> Option<i32> {
-    const BUFFER_STATE_OK: i32 = 2;
-    playing_state.map(|_| BUFFER_STATE_OK)
 }
 
 /// BLOCKING OPEN QUESTION: the Qobuz `queue_hash` (field #100) algorithm is
