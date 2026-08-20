@@ -382,6 +382,17 @@ impl DaemonQconnectService {
     /// interleave between our disconnect and connect.
     pub(crate) async fn reconnect_for_pairing(&self) -> Result<(), String> {
         let _ops = self.ops.lock().await;
+        // Login-free path: the API client may still be missing after an
+        // offline-tolerant boot (no-op when initialized), and the handed-over
+        // jwt_api is the client's credential when no account is logged in
+        // (stream URLs via `Authorization: Bearer` — the user session, when
+        // present, still outranks it inside the client).
+        let _ = self.runtime.core().try_init_api().await;
+        if let Some(tokens) = pairing::valid_ws_tokens(&self.pairing_store) {
+            if let Some(client) = self.runtime.core().client().read().await.clone() {
+                client.set_bearer_api_token(tokens.api_jwt.clone()).await;
+            }
+        }
         let _ = self.disconnect_locked().await;
         self.connect_locked().await
     }
@@ -465,6 +476,8 @@ pub struct QconnectHandle {
     /// The queue-publish subscriber (publish.rs). Same #521 ordering contract as
     /// `report_task` — it clones `Arc<AppRuntime>` + the qconnect inner.
     publish_task: Option<JoinHandle<()>>,
+    /// The pairing token-refresh heartbeat (pairing.rs). Same #521 contract.
+    refresh_task: Option<JoinHandle<()>>,
 }
 
 /// T11: a `Clone`-able, `Send + Sync` handle onto the running
@@ -490,6 +503,9 @@ impl QconnectControl {
         // depends on the token surviving its own disconnect step.
         if let Ok(mut guard) = self.0.pairing_store.lock() {
             *guard = None;
+        }
+        if let Some(client) = self.0.runtime.core().client().read().await.clone() {
+            client.set_bearer_api_token(None).await;
         }
         self.0.disconnect().await
     }
@@ -554,6 +570,11 @@ impl QconnectHandle {
             publish_task.abort();
             let _ = publish_task.await;
         }
+        // And the pairing token-refresh heartbeat.
+        if let Some(refresh_task) = self.refresh_task.take() {
+            refresh_task.abort();
+            let _ = refresh_task.await;
+        }
         let _ = self.service.disconnect().await;
     }
 }
@@ -604,7 +625,7 @@ pub fn start(
     // Local pairing surface (KV `pairing` = on|off, default on; port from KV
     // `pairing_port`). Fail-open on error: the account-bound cloud path above
     // is independent of it, so a bind conflict must not take the daemon down.
-    let pairing = if transport::load_pairing_enabled_at(&settings_db) {
+    let (pairing, refresh_task) = if transport::load_pairing_enabled_at(&settings_db) {
         let port = transport::load_pairing_port_at(&settings_db);
         match pairing::spawn(
             port,
@@ -612,15 +633,21 @@ pub fn start(
             Arc::clone(&service),
             tokio::runtime::Handle::current(),
         ) {
-            Ok(handle) => Some(handle),
+            Ok(handle) => {
+                let refresh = pairing::spawn_token_refresh(
+                    service.pairing_store(),
+                    Arc::clone(&service.runtime),
+                );
+                (Some(handle), Some(refresh))
+            }
             Err(err) => {
                 log::warn!("[QConnect/Pairing] disabled for this run: {err}");
-                None
+                (None, None)
             }
         }
     } else {
         log::info!("[QConnect/Pairing] disabled by settings (pairing = off)");
-        None
+        (None, None)
     };
 
     let watcher = if should_auto_connect {
@@ -664,5 +691,6 @@ pub fn start(
         pairing,
         report_task,
         publish_task,
+        refresh_task,
     }
 }

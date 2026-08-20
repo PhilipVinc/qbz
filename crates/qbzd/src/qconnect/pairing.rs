@@ -301,6 +301,144 @@ fn register_mdns(port: u16, friendly_name: &str) -> Result<(ServiceDaemon, Strin
 }
 
 // ---------------------------------------------------------------------------
+// Token refresh (StreamCore32 parity): `POST /qws/refreshToken` with the
+// Bearer api credential renews jwt_api (body `jwt=jwt_api`) and jwt_qws (body
+// `jwt=jwt_qws`), so a paired, account-less device can outlive its handed-over
+// tokens' expiry without the app re-casting.
+// ---------------------------------------------------------------------------
+
+type Runtime = Arc<qbz_app::shell::AppRuntime<crate::adapter::DaemonAdapter>>;
+
+const REFRESH_CHECK_SECS: u64 = 30;
+/// Refresh once a token is within this window of its expiry.
+const REFRESH_LEAD_SECS: u64 = 300;
+
+/// Daemon-lifetime refresh heartbeat: a no-op until a handoff populates the
+/// store. Held by `QconnectHandle` and abort+joined at shutdown (it clones
+/// `Arc<AppRuntime>` — #521 ordering, same contract as the report scheduler).
+pub fn spawn_token_refresh(store: PairingStore, runtime: Runtime) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut tick =
+            tokio::time::interval(std::time::Duration::from_secs(REFRESH_CHECK_SECS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            refresh_if_needed(&store, &runtime).await;
+        }
+    })
+}
+
+async fn refresh_if_needed(store: &PairingStore, runtime: &Runtime) {
+    let Some(snapshot) = store.lock().ok().and_then(|guard| guard.clone()) else {
+        return;
+    };
+    let now = now_secs();
+    let due = |exp: u64| exp != 0 && exp <= now + REFRESH_LEAD_SECS;
+    let api_due = snapshot.api_jwt.is_some() && due(snapshot.api_exp);
+    let ws_due = due(snapshot.ws_exp);
+    if !api_due && !ws_due {
+        return;
+    }
+    // The refresh endpoint itself authenticates with the Bearer api credential;
+    // without one (degenerate handoff) there is nothing we can renew.
+    let Some(mut api_jwt) = snapshot.api_jwt.clone() else {
+        return;
+    };
+    let Some(client) = runtime.core().client().read().await.clone() else {
+        return;
+    };
+
+    if api_due {
+        match refresh_jwt(&client, &api_jwt, "jwt_api").await {
+            Ok(payload) => {
+                let jwt = payload.get("jwt").and_then(Value::as_str).unwrap_or_default();
+                if !jwt.is_empty() {
+                    qbz_log::register_secret(jwt.to_string());
+                    api_jwt = jwt.to_string();
+                    let exp = payload.get("exp").and_then(Value::as_u64).unwrap_or(0);
+                    if let Ok(mut guard) = store.lock() {
+                        if let Some(tokens) = guard.as_mut() {
+                            tokens.api_jwt = Some(api_jwt.clone());
+                            tokens.api_exp = exp;
+                        }
+                    }
+                    client.set_bearer_api_token(Some(api_jwt.clone())).await;
+                    log::info!("[QConnect/Pairing] refreshed jwt_api (exp {exp})");
+                }
+            }
+            Err(err) => log::warn!("[QConnect/Pairing] jwt_api refresh failed: {err}"),
+        }
+    }
+
+    if ws_due {
+        match refresh_jwt(&client, &api_jwt, "jwt_qws").await {
+            Ok(payload) => {
+                let jwt = payload.get("jwt").and_then(Value::as_str).unwrap_or_default();
+                if !jwt.is_empty() {
+                    qbz_log::register_secret(jwt.to_string());
+                    let exp = payload.get("exp").and_then(Value::as_u64).unwrap_or(0);
+                    let endpoint = payload
+                        .get("endpoint")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
+                    if let Ok(mut guard) = store.lock() {
+                        if let Some(tokens) = guard.as_mut() {
+                            tokens.ws_jwt = jwt.to_string();
+                            tokens.ws_exp = exp;
+                            if let Some(endpoint) = endpoint {
+                                tokens.ws_endpoint = endpoint;
+                            }
+                        }
+                    }
+                    // The LIVE WS connection keeps its old token; the fresh one
+                    // is what the reconnect credential re-resolve picks up.
+                    log::info!("[QConnect/Pairing] refreshed jwt_qws (exp {exp})");
+                }
+            }
+            Err(err) => log::warn!("[QConnect/Pairing] jwt_qws refresh failed: {err}"),
+        }
+    }
+}
+
+/// One `POST /qws/refreshToken` round-trip; returns the renewed token payload
+/// (`{jwt, exp[, endpoint]}`). Status-before-decode like the createToken path.
+async fn refresh_jwt(
+    client: &qbz_qobuz::QobuzClient,
+    bearer: &str,
+    kind: &str,
+) -> Result<Value, String> {
+    let app_id = client
+        .app_id()
+        .await
+        .map_err(|err| format!("refreshToken requires initialized API client: {err}"))?;
+    let url = qbz_qobuz::endpoints::build_url("/qws/refreshToken");
+    let response = client
+        .get_http()
+        .post(&url)
+        .header("X-App-Id", app_id)
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("jwt", kind)])
+        .send()
+        .await
+        .map_err(|err| format!("refreshToken HTTP request failed: {err}"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("refreshToken response read failed: {err}"))?;
+    if !status.is_success() {
+        let preview = body.trim().chars().take(300).collect::<String>();
+        return Err(format!("refreshToken status {status}: {preview}"));
+    }
+    let payload: Value = serde_json::from_str(&body)
+        .map_err(|err| format!("refreshToken response decode failed: {err}"))?;
+    payload
+        .get(kind)
+        .cloned()
+        .ok_or_else(|| format!("refreshToken response missing {kind} payload"))
+}
+
+// ---------------------------------------------------------------------------
 // Request handling (runs on the qbzd-pairing thread; async work reaches the
 // tokio runtime through the captured Handle, same pattern as ApiState.rt).
 // ---------------------------------------------------------------------------

@@ -51,6 +51,11 @@ pub struct QobuzClient {
     http: Client,
     tokens: Arc<RwLock<Option<BundleTokens>>>,
     session: Arc<RwLock<Option<UserSession>>>,
+    /// Bearer credential for account-less operation (a Qobuz Connect pairing
+    /// handoff's `jwt_api`). Used ONLY when no user session exists: everywhere
+    /// a request would carry `X-User-Auth-Token`, it carries
+    /// `Authorization: Bearer <jwt>` instead.
+    bearer_api_jwt: Arc<RwLock<Option<String>>>,
     validated_secret: Arc<RwLock<Option<String>>>,
     locale: Arc<RwLock<String>>,
     cmaf_session: Arc<RwLock<Option<CmafSession>>>,
@@ -66,6 +71,7 @@ impl Clone for QobuzClient {
             http: self.http.clone(),
             tokens: Arc::clone(&self.tokens),
             session: Arc::clone(&self.session),
+            bearer_api_jwt: Arc::clone(&self.bearer_api_jwt),
             validated_secret: Arc::clone(&self.validated_secret),
             locale: Arc::clone(&self.locale),
             cmaf_session: Arc::clone(&self.cmaf_session),
@@ -90,6 +96,7 @@ impl QobuzClient {
             http,
             tokens: Arc::new(RwLock::new(None)),
             session: Arc::new(RwLock::new(None)),
+            bearer_api_jwt: Arc::new(RwLock::new(None)),
             validated_secret: Arc::new(RwLock::new(None)),
             locale: Arc::new(RwLock::new("en".to_string())),
             cmaf_session: Arc::new(RwLock::new(None)),
@@ -517,8 +524,20 @@ impl QobuzClient {
 
     // === Header helpers ===
 
+    /// Set (or clear) the Bearer credential for account-less operation. The
+    /// user session, when present, always outranks it.
+    pub async fn set_bearer_api_token(&self, jwt: Option<String>) {
+        *self.bearer_api_jwt.write().await = jwt;
+    }
+
+    /// Whether a Bearer credential is currently installed.
+    pub async fn has_bearer_api_token(&self) -> bool {
+        self.bearer_api_jwt.read().await.is_some()
+    }
+
     /// Build standard API headers.
-    /// Always includes X-App-Id. Includes X-User-Auth-Token when logged in.
+    /// Always includes X-App-Id. Includes X-User-Auth-Token when logged in,
+    /// else `Authorization: Bearer` when a pairing credential is installed.
     async fn api_headers(&self) -> Result<reqwest::header::HeaderMap> {
         use reqwest::header::{HeaderMap, HeaderValue};
         let mut headers = HeaderMap::new();
@@ -533,12 +552,18 @@ impl QobuzClient {
             if let Ok(val) = HeaderValue::from_str(&token) {
                 headers.insert("X-User-Auth-Token", val);
             }
+        } else if let Some(jwt) = self.bearer_api_jwt.read().await.as_deref() {
+            if let Ok(val) = HeaderValue::from_str(&format!("Bearer {jwt}")) {
+                headers.insert("Authorization", val);
+            }
         }
 
         Ok(headers)
     }
 
-    /// Build headers that REQUIRE authentication. Fails if not logged in.
+    /// Build headers that REQUIRE a credential: the user session's
+    /// X-User-Auth-Token, or the pairing Bearer token when not logged in.
+    /// Fails when neither exists.
     pub(crate) async fn authenticated_headers(&self) -> Result<reqwest::header::HeaderMap> {
         use reqwest::header::{HeaderMap, HeaderValue};
         let mut headers = HeaderMap::new();
@@ -549,12 +574,25 @@ impl QobuzClient {
             HeaderValue::from_str(&app_id).map_err(|_| ApiError::InvalidAppId)?,
         );
 
-        let token = self.auth_token().await?;
-        headers.insert(
-            "X-User-Auth-Token",
-            HeaderValue::from_str(&token)
-                .map_err(|_| ApiError::AuthenticationError("Invalid auth token format".into()))?,
-        );
+        match self.auth_token().await {
+            Ok(token) => {
+                headers.insert(
+                    "X-User-Auth-Token",
+                    HeaderValue::from_str(&token).map_err(|_| {
+                        ApiError::AuthenticationError("Invalid auth token format".into())
+                    })?,
+                );
+            }
+            Err(err) => {
+                let jwt = self.bearer_api_jwt.read().await.clone().ok_or(err)?;
+                headers.insert(
+                    "Authorization",
+                    HeaderValue::from_str(&format!("Bearer {jwt}")).map_err(|_| {
+                        ApiError::AuthenticationError("Invalid bearer token format".into())
+                    })?,
+                );
+            }
+        }
 
         Ok(headers)
     }
