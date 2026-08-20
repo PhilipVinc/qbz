@@ -1,0 +1,138 @@
+# Fork-only qbzd standalone release.
+#
+# The upstream tag workflows (release-linux*.yml, `v*` tags) can't publish
+# from this fork: their package jobs hard-require upstream's AppImage signing
+# secrets on tag refs. This workflow exists so a fork branch (e.g. the Qobuz
+# Connect pairing work) can ship a testable qbzd binary without touching the
+# upstream release machinery:
+#   - triggers on `qbzd-v*` tags only, which the upstream `v*` filters never
+#     match, so tagging here fires exactly one workflow;
+#   - builds ONLY the slint-free qbzd binary (same steps, gates, and tarball
+#     layout as the upstream build-qbzd/qbzd-tarball jobs, so consumers like
+#     moOde's qobuz-installer.sh see the identical asset shape:
+#     qbzd-<version>-linux-<arch>.tar.gz containing qbzd-<version>-linux-<arch>/qbzd);
+#   - publishes a PRERELEASE GitHub Release on the tag.
+#
+# Tag `qbzd-v2.0.2-pairing.1` -> version `2.0.2-pairing.1`.
+
+name: "qbzd standalone release (fork)"
+
+on:
+  push:
+    tags:
+      - "qbzd-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. qbzd-v2.0.2-pairing.1). Empty = build HEAD with the Cargo.toml version, no Release publish."
+        required: false
+        type: string
+
+concurrency:
+  group: fork-qbzd-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+          - runner: ubuntu-22.04
+            arch: amd64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve version
+        id: release
+        run: |
+          VERSION=""
+          if [[ "${GITHUB_REF}" == refs/tags/qbzd-v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/qbzd-v}"
+          elif [[ -n "${{ inputs.tag }}" ]]; then
+            VERSION="${{ inputs.tag }}"
+            VERSION="${VERSION#qbzd-v}"
+          else
+            VERSION="$(grep -m1 '^version = ' crates/Cargo.toml | sed 's/version = \"\(.*\)\"/\1/')"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: system deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libjack-jackd2-dev libdbus-1-dev libssl-dev
+
+      # Mirrors the upstream build-qbzd job: qbzd must never resolve Slint.
+      - name: slint-free dep-graph gate
+        run: |
+          set -euo pipefail
+          hits=$(cargo tree --manifest-path crates/Cargo.toml -p qbzd -e normal \
+                 | grep -E '\b(slint|qbz-ui|qbz-slint-common|qbz-dac-wizard) v' || true)
+          [ -z "$hits" ] || { echo "::error::qbzd graph resolves Slint:"; echo "$hits"; exit 1; }
+
+      - name: build
+        run: cargo build --release --manifest-path crates/Cargo.toml -p qbzd
+
+      # Same empirical gate as upstream: the binary must run on glibc 2.35
+      # boxes (Ubuntu 22.04 / Bookworm-era moOde images).
+      - name: glibc floor gate (objdump)
+        run: |
+          set -euo pipefail
+          floor=$(objdump -T crates/target/release/qbzd \
+                  | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu | tail -1)
+          echo "glibc floor: $floor"
+          highest=$(printf '%s\n' "$floor" "GLIBC_2.35" | sort -V | tail -1)
+          [ "$highest" = "GLIBC_2.35" ] || { echo "::error::floor $floor exceeds 2.35"; exit 1; }
+
+      # Byte-identical layout to the upstream qbzd-tarball step.
+      - name: qbzd tarball
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cp crates/target/release/qbzd ./qbzd
+          QBZD_DIR="qbzd-${VERSION}-linux-${ARCH}"
+          mkdir -p "qbzd-tarball-staging/${QBZD_DIR}/completions"
+          cp qbzd "qbzd-tarball-staging/${QBZD_DIR}/qbzd"
+          chmod +x "qbzd-tarball-staging/${QBZD_DIR}/qbzd"
+          cp crates/qbzd/service/qbzd.service "qbzd-tarball-staging/${QBZD_DIR}/qbzd.service"
+          ./qbzd completions bash > "qbzd-tarball-staging/${QBZD_DIR}/completions/qbzd.bash"
+          ./qbzd completions zsh  > "qbzd-tarball-staging/${QBZD_DIR}/completions/qbzd.zsh"
+          ./qbzd completions fish > "qbzd-tarball-staging/${QBZD_DIR}/completions/qbzd.fish"
+          cp packaging/linux/qbzd-standalone-README.md "qbzd-tarball-staging/${QBZD_DIR}/README.md"
+          mkdir -p dist
+          tar -czvf "dist/qbzd-${VERSION}-linux-${ARCH}.tar.gz" -C qbzd-tarball-staging "${QBZD_DIR}"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qbzd-fork-${{ matrix.arch }}
+          path: dist/*
+
+  # Single publisher so the two matrix legs never race on Release creation.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/qbzd-v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: qbzd-fork-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          prerelease: true
+          make_latest: false
+          body: |
+            Fork test build of the standalone qbzd daemon (Qobuz Connect
+            local pairing branch). Not an official QBZ release.
