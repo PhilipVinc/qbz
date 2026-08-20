@@ -15,7 +15,7 @@ mod streaming_source;
 
 pub use streaming_source::{
     max_initial_buffer_bytes, set_max_initial_buffer_bytes, BufferWriter, BufferedMediaSource,
-    InMemorySource, IncrementalStreamingSource, StreamingConfig,
+    FetchPlan, InMemorySource, IncrementalStreamingSource, StreamSeekMode, StreamingConfig,
 };
 
 use rodio::buffer::SamplesBuffer;
@@ -2451,15 +2451,29 @@ impl Player {
                             apply_engine_volume(&stream_opt, &engine, volume);
 
                             // Wait for minimum buffer before starting playback.
-                            // When start_position_secs > 0 (session resume),
-                            // also wait for enough buffer to cover the resume
-                            // offset plus an 8s headroom — the eager pre-skip
-                            // below decodes-and-discards up to the offset and
-                            // needs the bytes available without blocking the
-                            // audio device on the first pull.
+                            //
+                            // A session resume (start_position_secs > 0) needs
+                            // the bytes AT the resume offset, and how we get
+                            // them depends on the feeder. A range-capable
+                            // feeder only needs the file header here — format
+                            // plus seek table — because the jump below turns
+                            // the offset into one HTTP request. A sequential
+                            // feeder has no such option: the eager pre-skip
+                            // decodes-and-discards from byte zero up to the
+                            // offset, so it has to wait for the offset plus an
+                            // 8s headroom to be downloaded before the audio
+                            // device can be fed without underrunning.
                             log::info!("Streaming: waiting for initial buffer...");
                             let start_wait = Instant::now();
                             let max_wait = Duration::from_secs(60);
+
+                            // Smallest window that reliably holds a FLAC
+                            // STREAMINFO plus SEEKTABLE — the same
+                            // format-detection floor StreamingConfig uses.
+                            const HEADER_PROBE_BYTES: u64 = 256 * 1024;
+
+                            let ranged_resume =
+                                start_position_secs > 0 && source.supports_range_requests();
 
                             let bytes_per_sec_estimate: u64 = if duration_secs > 0
                                 && content_length > 0
@@ -2468,14 +2482,22 @@ impl Player {
                             } else {
                                 200_000
                             };
-                            let resume_buffer_target: u64 = if start_position_secs > 0 {
-                                bytes_per_sec_estimate
-                                    .saturating_mul(start_position_secs.saturating_add(8))
-                            } else {
-                                0
-                            };
+                            let resume_buffer_target: u64 =
+                                if start_position_secs > 0 && !ranged_resume {
+                                    bytes_per_sec_estimate
+                                        .saturating_mul(start_position_secs.saturating_add(8))
+                                } else {
+                                    0
+                                };
 
                             let buffer_sufficient = |src: &Arc<BufferedMediaSource>| -> bool {
+                                if ranged_resume {
+                                    // Enough to probe the format and read the
+                                    // seek table; the playback buffer is filled
+                                    // after the jump, at the resume point.
+                                    return src.head_bytes() >= HEADER_PROBE_BYTES
+                                        || src.is_complete();
+                                }
                                 if !src.has_min_buffer() {
                                     return false;
                                 }
@@ -2492,6 +2514,7 @@ impl Player {
                             {
                                 std::thread::sleep(Duration::from_millis(50));
                             }
+                            let buffer_ready = buffer_sufficient(&source);
 
                             // A newer play intent superseded this one while we
                             // were waiting (user clicked another track). Bail
@@ -2510,7 +2533,7 @@ impl Player {
                                 return;
                             }
 
-                            if !source.has_min_buffer() {
+                            if !buffer_ready && !source.has_min_buffer() {
                                 // #595 attributes feeder-death vs plain timeout;
                                 // #594 clears the transport state so the UI does
                                 // not sit on a phantom "playing" with no engine.
@@ -2555,7 +2578,7 @@ impl Player {
 
                             // Create incremental streaming source - this starts playback IMMEDIATELY
                             // while continuing to decode/download in background
-                            let incremental_source =
+                            let mut incremental_source =
                                 match IncrementalStreamingSource::new(source.clone()) {
                                     Ok(s) => s,
                                     Err(e) => {
@@ -2582,6 +2605,81 @@ impl Player {
                                 "Streaming: detected format {}Hz/{}ch differs from expected {}Hz/{}ch",
                                 actual_sr, actual_ch, sample_rate, channels
                             );
+                            }
+
+                            // Session resume over a range-capable feeder: ask
+                            // Symphonia to land on the offset directly. The
+                            // FLAC seek table turns the timestamp into a byte
+                            // offset, the buffer turns that into a `Range`
+                            // request, and the decoder starts there — instead
+                            // of downloading every byte before the offset and
+                            // then decoding-and-discarding all of it.
+                            let mut resumed_by_seek = false;
+                            if ranged_resume {
+                                let seek_start = Instant::now();
+                                match incremental_source
+                                    .seek_to(Duration::from_secs(start_position_secs))
+                                {
+                                    Ok(()) => {
+                                        resumed_by_seek = true;
+                                        log::info!(
+                                            "Resume: landed on {}s in {}ms (byte offset {}, {} bytes held)",
+                                            start_position_secs,
+                                            seek_start.elapsed().as_millis(),
+                                            source.primary_offset(),
+                                            source.buffer_size()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        // No usable seek table, or the request
+                                        // failed. Fall back to the pre-skip
+                                        // below, which only needs bytes in
+                                        // order — slow, but it always works.
+                                        log::warn!(
+                                            "Resume: native seek to {}s failed ({}); falling back to pre-skip",
+                                            start_position_secs,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+
+                            // The jump moved playback to a part of the file
+                            // nothing has buffered yet: refill there before
+                            // handing the source to the engine, or the first
+                            // pull underruns the device.
+                            if resumed_by_seek {
+                                let refill = Instant::now();
+                                while !source.has_min_buffer()
+                                    && source.download_error().is_none()
+                                    && refill.elapsed() < Duration::from_secs(30)
+                                    && thread_state.is_current_play(play_gen)
+                                {
+                                    std::thread::sleep(Duration::from_millis(20));
+                                }
+                                if !thread_state.is_current_play(play_gen) {
+                                    log::info!(
+                                        "Streaming: play of track {} superseded while refilling after the resume seek",
+                                        track_id
+                                    );
+                                    return;
+                                }
+                                if let Some(err) = source.download_error() {
+                                    log::error!("Resume: feeder failed after the seek: {}", err);
+                                    *current_streaming_source = None;
+                                    *current_audio_data = None;
+                                    thread_state.set_loaded_audio(false);
+                                    thread_state.is_playing.store(false, Ordering::SeqCst);
+                                    thread_state.record_stream_error(format!(
+                                        "Stream feeder failed after the resume seek: {err}"
+                                    ));
+                                    return;
+                                }
+                                log::info!(
+                                    "Resume: buffered {} bytes from the resume point in {}ms",
+                                    source.buffer_size(),
+                                    refill.elapsed().as_millis()
+                                );
                             }
 
                             // Set duration from track metadata (passed from frontend)
@@ -2644,7 +2742,7 @@ impl Player {
                             // would underrun the audio device for multi-second
                             // offsets. The buffer wait above guarantees
                             // there's enough downloaded data to feed this loop.
-                            if start_position_secs > 0 {
+                            if start_position_secs > 0 && !resumed_by_seek {
                                 let target_samples: u64 = (start_position_secs)
                                     .saturating_mul(actual_sr as u64)
                                     .saturating_mul(actual_ch as u64);
@@ -3047,26 +3145,46 @@ impl Player {
                         AudioCommand::Resume => {
                             *pause_suspend_deadline = None;
                             if current_engine.is_none() {
-                                // Try to get audio data from regular storage or streaming source
-                                let audio_data: Vec<u8> = if let Some(ref data) =
-                                    *current_audio_data
-                                {
-                                    data.clone()
+                                // Where the rebuilt engine gets its samples.
+                                // A pause longer than PAUSE_SUSPEND_DELAY_MS
+                                // dropped the engine to release the device, so
+                                // resuming means decoding from the start of
+                                // something and landing on the paused position
+                                // again.
+                                enum ResumeInput {
+                                    /// Full file in memory: cache hit, local
+                                    /// library, or a stream that finished
+                                    /// downloading.
+                                    Memory(Vec<u8>),
+                                    /// A still-streaming source whose feeder
+                                    /// serves range requests, so the resume
+                                    /// position is one request away instead of
+                                    /// a whole-file download away.
+                                    Ranged(Arc<BufferedMediaSource>),
+                                }
+
+                                let resume_input = if let Some(ref data) = *current_audio_data {
+                                    ResumeInput::Memory(data.clone())
                                 } else if let Some(ref streaming_src) = *current_streaming_source {
-                                    // Try to get complete data from streaming source
                                     if streaming_src.is_complete() {
                                         match streaming_src.take_complete_data() {
                                             Some(data) => {
                                                 log::info!("Resume: using complete streaming data ({} bytes)", data.len());
                                                 // Store it in current_audio_data for future use
                                                 *current_audio_data = Some(data.clone());
-                                                data
+                                                ResumeInput::Memory(data)
                                             }
                                             None => {
                                                 log::warn!("Audio thread: cannot resume - streaming source complete but data unavailable");
                                                 return;
                                             }
                                         }
+                                    } else if streaming_src.supports_range_requests() {
+                                        log::info!(
+                                            "Resume: streaming incomplete ({} bytes buffered) but the feeder serves ranges - seeking instead of waiting",
+                                            streaming_src.buffer_size()
+                                        );
+                                        ResumeInput::Ranged(streaming_src.clone())
                                     } else {
                                         log::warn!("Audio thread: cannot resume - streaming not complete yet ({} bytes buffered)",
                                         streaming_src.buffer_size());
@@ -3134,37 +3252,98 @@ impl Player {
                                     f32::from_bits(thread_state.volume.load(Ordering::SeqCst));
                                 apply_engine_volume(&stream_opt, &engine, volume);
 
-                                let source = match decode_with_fallback(&audio_data) {
-                                    Ok(s) => s,
-                                    Err(e) => {
-                                        log::error!("Failed to decode audio for resume: {}", e);
-                                        return;
-                                    }
-                                };
-
-                                // A Resume that rebuilds from completed streaming data
-                                // can run after a PlayStreaming that failed BEFORE
-                                // storing the duration. Backfill from the decoded
-                                // source so the position clamp (current_position)
-                                // doesn't pin the bar at 0:00 (#508). Same derivation
-                                // the Play handler uses. Must read total_duration()
-                                // BEFORE skip_duration consumes `source` below.
-                                if thread_state.duration.load(Ordering::SeqCst) == 0 {
-                                    if let Some(d) = source.total_duration() {
-                                        thread_state
-                                            .duration
-                                            .store(d.as_secs(), Ordering::SeqCst);
-                                    }
-                                }
-
                                 let resume_pos = thread_state.position.load(Ordering::SeqCst);
                                 let skipped_source: Box<dyn Source<Item = f32> + Send> =
-                                    if resume_pos > 0 {
-                                        Box::new(
-                                            source.skip_duration(Duration::from_secs(resume_pos)),
-                                        )
-                                    } else {
-                                        source
+                                    match resume_input {
+                                        ResumeInput::Memory(audio_data) => {
+                                            let source = match decode_with_fallback(&audio_data) {
+                                                Ok(s) => s,
+                                                Err(e) => {
+                                                    log::error!(
+                                                        "Failed to decode audio for resume: {}",
+                                                        e
+                                                    );
+                                                    return;
+                                                }
+                                            };
+
+                                            // A Resume that rebuilds from completed streaming data
+                                            // can run after a PlayStreaming that failed BEFORE
+                                            // storing the duration. Backfill from the decoded
+                                            // source so the position clamp (current_position)
+                                            // doesn't pin the bar at 0:00 (#508). Same derivation
+                                            // the Play handler uses. Must read total_duration()
+                                            // BEFORE skip_duration consumes `source` below.
+                                            if thread_state.duration.load(Ordering::SeqCst) == 0 {
+                                                if let Some(d) = source.total_duration() {
+                                                    thread_state
+                                                        .duration
+                                                        .store(d.as_secs(), Ordering::SeqCst);
+                                                }
+                                            }
+
+                                            if resume_pos > 0 {
+                                                let skip = Duration::from_secs(resume_pos);
+                                                Box::new(source.skip_duration(skip))
+                                            } else {
+                                                source
+                                            }
+                                        }
+                                        ResumeInput::Ranged(streaming_src) => {
+                                            // Rebuild the incremental decoder over the
+                                            // same buffer and let Symphonia's native
+                                            // seek land on the paused position: the
+                                            // FLAC seek table gives the byte offset and
+                                            // the range request fetches it. No
+                                            // whole-file download to wait out, and no
+                                            // decode-and-discard pass over everything
+                                            // before the position.
+                                            let buffer = streaming_src.clone();
+                                            let rebuilt =
+                                                IncrementalStreamingSource::new(streaming_src);
+                                            let mut source = match rebuilt {
+                                                Ok(s) => s,
+                                                Err(e) => {
+                                                    log::error!(
+                                                        "Resume: failed to rebuild the streaming decoder: {}",
+                                                        e
+                                                    );
+                                                    return;
+                                                }
+                                            };
+                                            if resume_pos > 0 {
+                                                if let Err(e) =
+                                                    source.seek_to(Duration::from_secs(resume_pos))
+                                                {
+                                                    log::error!(
+                                                        "Resume: streaming seek to {}s failed: {}",
+                                                        resume_pos,
+                                                        e
+                                                    );
+                                                    return;
+                                                }
+                                            }
+                                            // The seek returns as soon as the
+                                            // first ranged bytes land. Give the
+                                            // feeder a moment to build a real
+                                            // buffer there before the engine
+                                            // starts pulling, or the resume
+                                            // stutters on its first samples.
+                                            let refill = Instant::now();
+                                            while !buffer.has_min_buffer()
+                                                && buffer.download_error().is_none()
+                                                && refill.elapsed() < Duration::from_secs(10)
+                                            {
+                                                std::thread::sleep(Duration::from_millis(20));
+                                            }
+                                            log::info!(
+                                                "Resume: {} bytes buffered at {}s in {}ms",
+                                                buffer.buffer_size(),
+                                                resume_pos,
+                                                refill.elapsed().as_millis()
+                                            );
+                                            Box::new(source)
+                                        }
                                     };
 
                                 // Wrap source with diagnostic, normalization, and visualizer
@@ -3263,14 +3442,18 @@ impl Player {
                             thread_state.set_gapless_ready(false);
                             thread_state.set_gapless_next_track_id(0);
 
-                            // Three cases reach this handler:
+                            // Four cases reach this handler:
                             //   * full-file playback (current_audio_data set)
-                            //   * CMAF streaming, download complete (buffered
+                            //   * streaming, download complete (buffered
                             //     source holds the full file)
-                            //   * CMAF streaming, download IN PROGRESS — only
-                            //     allowed if the target position falls inside
-                            //     the already-buffered region. skip_duration
-                            //     reads samples sequentially, so seeking past
+                            //   * streaming over a range-capable feeder —
+                            //     anywhere in the track is one HTTP request
+                            //     away, so no watermark applies
+                            //   * sequential streaming (CMAF segment assembly),
+                            //     download IN PROGRESS — only allowed if the
+                            //     target position falls inside the
+                            //     already-buffered region. Such a feeder can
+                            //     only produce bytes in order, so seeking past
                             //     the watermark would block the audio thread
                             //     waiting for the rest of the download.
                             //     Cache, offline-cache, and local-library
@@ -3283,37 +3466,45 @@ impl Player {
                             }
                             if let Some(ref stream_src) = *current_streaming_source {
                                 if !stream_src.is_complete() {
-                                    // Approximate bytes-to-seconds mapping via
-                                    // download fraction × total duration. Exact
-                                    // for CBR, close-enough for FLAC/VBR; the
-                                    // 0.90 margin covers the error band so the
-                                    // decoder never reads past the watermark.
-                                    let duration_secs = thread_state.duration();
-                                    let progress = stream_src.progress().unwrap_or(0.0);
-                                    if duration_secs == 0 || progress <= 0.0 {
-                                        log::warn!(
-                                            "Audio thread: seek to {}s ignored — streaming progress unknown",
-                                            position_secs
+                                    if stream_src.supports_range_requests() {
+                                        log::info!(
+                                            "Audio thread: seek to {}s over a range-capable stream ({} bytes held)",
+                                            position_secs,
+                                            stream_src.buffer_size()
                                         );
-                                        return;
-                                    }
-                                    let max_seekable_secs =
-                                        (progress * 0.90 * duration_secs as f32) as u64;
-                                    if position_secs > max_seekable_secs {
-                                        log::warn!(
-                                            "Audio thread: seek to {}s ignored — past buffered watermark ({}s, progress {:.1}%)",
+                                    } else {
+                                        // Approximate bytes-to-seconds mapping via
+                                        // download fraction × total duration. Exact
+                                        // for CBR, close-enough for FLAC/VBR; the
+                                        // 0.90 margin covers the error band so the
+                                        // decoder never reads past the watermark.
+                                        let duration_secs = thread_state.duration();
+                                        let progress = stream_src.progress().unwrap_or(0.0);
+                                        if duration_secs == 0 || progress <= 0.0 {
+                                            log::warn!(
+                                                "Audio thread: seek to {}s ignored — streaming progress unknown",
+                                                position_secs
+                                            );
+                                            return;
+                                        }
+                                        let max_seekable_secs =
+                                            (progress * 0.90 * duration_secs as f32) as u64;
+                                        if position_secs > max_seekable_secs {
+                                            log::warn!(
+                                                "Audio thread: seek to {}s ignored — past buffered watermark ({}s, progress {:.1}%)",
+                                                position_secs,
+                                                max_seekable_secs,
+                                                progress * 100.0
+                                            );
+                                            return;
+                                        }
+                                        log::info!(
+                                            "Audio thread: seek to {}s within buffered zone (watermark {}s, progress {:.1}%)",
                                             position_secs,
                                             max_seekable_secs,
                                             progress * 100.0
                                         );
-                                        return;
                                     }
-                                    log::info!(
-                                        "Audio thread: seek to {}s within buffered zone (watermark {}s, progress {:.1}%)",
-                                        position_secs,
-                                        max_seekable_secs,
-                                        progress * 100.0
-                                    );
                                 }
                             }
 
@@ -4189,6 +4380,9 @@ impl Player {
                     speed_mbps,
                     duration_secs,
                     start_position_secs, // session-resume offset (0 = from start)
+                    // CMAF frames are decrypted and concatenated in segment
+                    // order, so the feeder cannot start mid-file.
+                    StreamSeekMode::Sequential,
                 )?;
 
                 // Spawn the background task that fetches + decrypts + pushes
@@ -5088,6 +5282,15 @@ impl Player {
 
     /// Play from streaming source with dynamic buffer based on measured speed.
     /// `start_position_secs` > 0 signals session resume (see `play_streaming`).
+    ///
+    /// `seek_mode` describes what the caller's feeder can do. Pass
+    /// [`StreamSeekMode::RangeRequests`] only when it honors the buffer's
+    /// range requests (see `BufferWriter::next_plan`): that is what lets a
+    /// resume or a seek fetch from the offset instead of downloading
+    /// everything before it. A feeder that assembles its bytes in order —
+    /// CMAF segments, DSD-to-WAV — must pass
+    /// [`StreamSeekMode::Sequential`].
+    #[allow(clippy::too_many_arguments)]
     pub fn play_streaming_dynamic(
         &self,
         track_id: u64,
@@ -5098,6 +5301,7 @@ impl Player {
         speed_mbps: f64,
         duration_secs: u64,
         start_position_secs: u64,
+        seek_mode: StreamSeekMode,
     ) -> Result<BufferWriter, String> {
         let _gen = self.begin_play();
         self.apply_play_streaming_dynamic(
@@ -5109,6 +5313,7 @@ impl Player {
             speed_mbps,
             duration_secs,
             start_position_secs,
+            seek_mode,
         )
     }
 
@@ -5116,6 +5321,7 @@ impl Player {
     /// `play_track`'s CMAF path, which already holds a generation token; a
     /// mid-intent bump here would invalidate a strictly newer play that
     /// started in the meantime).
+    #[allow(clippy::too_many_arguments)]
     fn apply_play_streaming_dynamic(
         &self,
         track_id: u64,
@@ -5126,9 +5332,10 @@ impl Player {
         speed_mbps: f64,
         duration_secs: u64,
         start_position_secs: u64,
+        seek_mode: StreamSeekMode,
     ) -> Result<BufferWriter, String> {
         log::info!(
-            "Player: Starting dynamic streaming for track {} ({}Hz, {}ch, {}-bit, {:.2} MB, {:.1} MB/s, {}s, start={}s)",
+            "Player: Starting dynamic streaming for track {} ({}Hz, {}ch, {}-bit, {:.2} MB, {:.1} MB/s, {}s, start={}s, {:?})",
             track_id,
             sample_rate,
             channels,
@@ -5136,7 +5343,8 @@ impl Player {
             content_length as f64 / (1024.0 * 1024.0),
             speed_mbps,
             duration_secs,
-            start_position_secs
+            start_position_secs,
+            seek_mode
         );
 
         // Update shared state with actual stream quality
@@ -5174,7 +5382,14 @@ impl Player {
             );
         }
 
-        let (source, writer) = BufferedMediaSource::new(config, Some(content_length));
+        let (source, writer) = match seek_mode {
+            StreamSeekMode::RangeRequests => {
+                BufferedMediaSource::new_seekable(config, Some(content_length))
+            }
+            StreamSeekMode::Sequential => {
+                BufferedMediaSource::new(config, Some(content_length))
+            }
+        };
         let source = Arc::new(source);
 
         self.tx

@@ -2,11 +2,15 @@
 // do not fix bugs here without fixing the source, and vice versa.
 //! Shared HTTP streaming feeder.
 //!
-//! Ports the Tauri `track_loading.rs` progressive feeder verbatim: probe a
-//! remote audio URL for size + FLAC format, open the player's progressive
-//! streaming sink (`Player::play_streaming_dynamic`), then push the body to the
-//! returned `BufferWriter` chunk-by-chunk as it arrives. Playback starts as soon
-//! as the initial buffer fills — not after the whole file lands.
+//! Probe a remote audio URL for size + FLAC format, open the player's
+//! progressive streaming sink (`Player::play_streaming_dynamic`), then push the
+//! body to the returned `BufferWriter` chunk-by-chunk as it arrives. Playback
+//! starts as soon as the initial buffer fills — not after the whole file lands.
+//!
+//! The feeder is range-aware: it opens the body wherever the buffer asks and
+//! re-opens with a `Range` header when a reader jumps, so a seek or a session
+//! resume costs one request instead of a download of everything before the
+//! offset. See `download_and_stream_remote_track`.
 //!
 //! `reqwest + BufferWriter` bound only, so it stays frontend-side and never
 //! crosses the qconnect-app boundary. Used by BOTH the QConnect renderer
@@ -21,7 +25,7 @@
 
 use std::time::Duration;
 
-use qbz_player::{BufferWriter, Player};
+use qbz_player::{BufferWriter, FetchPlan, Player, StreamSeekMode};
 
 /// Format/size facts sniffed from a remote audio URL before streaming.
 pub struct RemoteStreamInfo {
@@ -72,6 +76,10 @@ pub async fn stream_remote_track_into_player(
             stream_info.speed_mbps,
             duration_secs,
             start_position_secs,
+            // The feeder below re-opens the body wherever the buffer asks, so
+            // the decoder may seek anywhere in the track for the cost of one
+            // request.
+            StreamSeekMode::RangeRequests,
         )
         .map_err(|err| format!("start streaming remote track {track_id}: {err}"))?;
 
@@ -178,9 +186,38 @@ pub async fn probe_remote_stream_info(url: &str) -> Result<RemoteStreamInfo, Str
     })
 }
 
-/// Plain full-body GET → `bytes_stream()` loop → `writer.push_chunk` →
-/// `writer.complete()`. No HTTP Range on the main GET (the `BufferedMediaSource`
-/// buffers every pushed byte and serves seeks from the growing buffer).
+/// Why the body loop stopped.
+enum BodyEnd {
+    /// The body ran out: the plan is filled, or the server closed early.
+    Ended,
+    /// A reader wants a different offset.
+    Restart(FetchPlan),
+    /// The body broke mid-flight.
+    Failed(String),
+}
+
+/// Range-aware body pump: open the body at the offset the buffer asks for,
+/// push it chunk-by-chunk, and re-open somewhere else the moment a reader
+/// jumps.
+///
+/// `BufferWriter::take_request` fires when the decoder seeks — a session
+/// resume, a scrub, the engine rebuild after a long pause — and the body is
+/// re-opened with `Range: bytes=<offset>-` instead of walking there from
+/// wherever we are. When a body ends, `next_plan` hands back either a
+/// pending request or the first hole an earlier jump left behind, so the
+/// track still ends up whole (and promotable to the in-memory cache) even
+/// though it was not downloaded in order.
+///
+/// Two consequences of being able to re-open anywhere:
+///
+/// * A broken body is no longer fatal. It is re-opened at the byte it died
+///   on, so a CDN dropping a long-lived connection costs a round trip
+///   instead of the track. Only a streak of bodies that yield nothing at
+///   all gives up.
+/// * A server that ignores `Range` and answers `200` with the whole file is
+///   handled: the write head is re-pointed at byte 0 and the stream
+///   degrades to the old sequential behavior, rather than filling the
+///   buffer with bytes attributed to the wrong offsets.
 pub async fn download_and_stream_remote_track(
     url: &str,
     writer: BufferWriter,
@@ -216,62 +253,216 @@ pub async fn download_and_stream_remote_track(
         .build()
         .map_err(|err| format!("create remote streaming client: {err}"))?;
 
-    let response = client
-        .get(url)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await
-        .map_err(|err| {
+    let mut plan = writer.initial_plan();
+    let mut bytes_received = 0u64;
+    let start_time = Instant::now();
+    let mut last_log_time = Instant::now();
+    // Bodies that produced nothing since the last one that did. A single
+    // one is a hiccup worth re-opening for; a streak means the offset is
+    // not being served and we would spin forever.
+    let mut barren_bodies = 0u32;
+
+    'plans: loop {
+        let mut request = client.get(url).header("User-Agent", "Mozilla/5.0");
+        if !plan.is_whole_file() {
+            request = request.header("Range", plan.range_header());
+        }
+
+        let response = request.send().await.map_err(|err| {
             format!(
                 "start remote streaming request failed: {}",
                 describe_reqwest_error(&err)
             )
         })?;
 
-    if !response.status().is_success() {
-        return Err(format!(
-            "remote streaming request failed with status {}",
-            response.status()
-        ));
-    }
-
-    let mut bytes_received = 0u64;
-    let mut stream = response.bytes_stream();
-    let start_time = Instant::now();
-    let mut last_log_time = Instant::now();
-
-    while let Some(chunk_result) = stream.next().await {
-        let chunk = chunk_result
-            .map_err(|err| format!("remote streaming chunk failed: {}", describe_reqwest_error(&err)))?;
-        bytes_received += chunk.len() as u64;
-
-        if let Err(err) = writer.push_chunk(&chunk) {
-            log::error!(
-                "[{}/STREAMING] Failed to push chunk for track {}: {}",
-                log_tag,
-                track_id,
-                err
-            );
-            guard.armed = false;
-            let _ = writer.error(format!("push_chunk failed: {err}"));
-            return Err(format!("push_chunk failed: {err}"));
+        if !response.status().is_success() {
+            return Err(format!(
+                "remote streaming request failed with status {}",
+                response.status()
+            ));
         }
 
-        let now = Instant::now();
-        if now.duration_since(last_log_time) >= Duration::from_secs(2) && content_length > 0 {
-            let progress = (bytes_received as f64 / content_length as f64) * 100.0;
-            let avg_speed =
-                (bytes_received as f64 / start_time.elapsed().as_secs_f64()) / (1024.0 * 1024.0);
-            log::info!(
-                "[{}/STREAMING] Track {} {:.1}% ({:.2}/{:.2} MB) @ {:.2} MB/s",
+        // Only a 206 actually starts where we asked. Anything else is the
+        // whole file, so its bytes belong at 0.
+        let honors_range =
+            plan.is_whole_file() || response.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+        if !honors_range {
+            log::warn!(
+                "[{}/STREAMING] Track {} asked for {} and got {} (not partial content) - feeding from byte 0",
                 log_tag,
                 track_id,
-                progress,
-                bytes_received as f64 / (1024.0 * 1024.0),
-                content_length as f64 / (1024.0 * 1024.0),
-                avg_speed
+                plan.range_header(),
+                response.status()
             );
-            last_log_time = now;
+            writer
+                .begin_at(0)
+                .map_err(|err| format!("re-point write head to 0: {err}"))?;
+        }
+        let body_start = if honors_range { plan.offset } else { 0 };
+        // A bounded plan is a gap fill; stop once it is filled. A body that
+        // came back unranged has no such bound - it is the whole file.
+        let plan_limit = if honors_range { plan.byte_len() } else { None };
+
+        if !plan.is_whole_file() {
+            log::info!(
+                "[{}/STREAMING] Track {} body open at byte {} ({})",
+                log_tag,
+                track_id,
+                plan.offset,
+                plan.range_header()
+            );
+        }
+
+        let mut body_bytes = 0u64;
+        let mut stream = response.bytes_stream();
+
+        let body_end = loop {
+            let chunk = tokio::select! {
+                biased;
+                // A reader jumped. Honor it now rather than after the next
+                // chunk: on a stalled connection that wait is the whole
+                // latency the range request exists to remove.
+                _ = writer.request_notified() => {
+                    match writer.take_request() {
+                        Some(next) => break BodyEnd::Restart(next),
+                        None => continue,
+                    }
+                }
+                item = stream.next() => match item {
+                    Some(Ok(chunk)) => chunk,
+                    Some(Err(err)) => {
+                        break BodyEnd::Failed(describe_reqwest_error(&err));
+                    }
+                    None => break BodyEnd::Ended,
+                },
+            };
+
+            bytes_received += chunk.len() as u64;
+            body_bytes += chunk.len() as u64;
+
+            if let Err(err) = writer.push_chunk(&chunk) {
+                log::error!(
+                    "[{}/STREAMING] Failed to push chunk for track {}: {}",
+                    log_tag,
+                    track_id,
+                    err
+                );
+                guard.armed = false;
+                let _ = writer.error(format!("push_chunk failed: {err}"));
+                return Err(format!("push_chunk failed: {err}"));
+            }
+
+            if let Some(limit) = plan_limit {
+                if body_bytes >= limit {
+                    break BodyEnd::Ended;
+                }
+            }
+
+            if let Some(next) = writer.take_request() {
+                break BodyEnd::Restart(next);
+            }
+
+            let now = Instant::now();
+            if now.duration_since(last_log_time) >= Duration::from_secs(2) && content_length > 0 {
+                let held = writer.buffer_size() as f64;
+                let avg_speed = (bytes_received as f64 / start_time.elapsed().as_secs_f64())
+                    / (1024.0 * 1024.0);
+                log::info!(
+                    "[{}/STREAMING] Track {} {:.1}% ({:.2}/{:.2} MB) @ {:.2} MB/s",
+                    log_tag,
+                    track_id,
+                    (held / content_length as f64) * 100.0,
+                    held / (1024.0 * 1024.0),
+                    content_length as f64 / (1024.0 * 1024.0),
+                    avg_speed
+                );
+                last_log_time = now;
+            }
+        };
+
+        if body_bytes > 0 {
+            barren_bodies = 0;
+        } else {
+            barren_bodies += 1;
+        }
+
+        match body_end {
+            BodyEnd::Restart(next) => {
+                log::info!(
+                    "[{}/STREAMING] Track {} seek re-opens the body at byte {} ({} bytes read from the previous one)",
+                    log_tag,
+                    track_id,
+                    next.offset,
+                    body_bytes
+                );
+                plan = next;
+                continue 'plans;
+            }
+            BodyEnd::Failed(err) => {
+                if barren_bodies >= 3 {
+                    return Err(format!(
+                        "remote streaming body failed at byte {} with no progress: {err}",
+                        plan.offset
+                    ));
+                }
+                // Pick up where it died. A reader jump still wins over
+                // resuming a body nobody is waiting on.
+                let resume_from = body_start + body_bytes;
+                let filled = plan.end.is_some_and(|end| resume_from >= end);
+                if !filled {
+                    log::warn!(
+                        "[{}/STREAMING] Track {} body broke at byte {} ({}) - re-opening there",
+                        log_tag,
+                        track_id,
+                        resume_from,
+                        err
+                    );
+                    plan = match writer.take_request() {
+                        Some(next) => next,
+                        None => {
+                            let resumed = FetchPlan {
+                                offset: resume_from,
+                                end: plan.end,
+                            };
+                            writer
+                                .begin_at(resumed.offset)
+                                .map_err(|err| format!("re-point write head: {err}"))?;
+                            resumed
+                        }
+                    };
+                    continue 'plans;
+                }
+                log::warn!(
+                    "[{}/STREAMING] Track {} body broke at byte {} after filling its range ({})",
+                    log_tag,
+                    track_id,
+                    resume_from,
+                    err
+                );
+            }
+            BodyEnd::Ended => {
+                if barren_bodies > 0 && barren_bodies < 3 {
+                    log::warn!(
+                        "[{}/STREAMING] Track {} body at byte {} closed without data - retrying",
+                        log_tag,
+                        track_id,
+                        plan.offset
+                    );
+                    continue 'plans;
+                }
+                if barren_bodies >= 3 {
+                    return Err(format!(
+                        "remote stream made no progress at byte {} after {} empty bodies",
+                        plan.offset, barren_bodies
+                    ));
+                }
+            }
+        }
+
+        match writer.next_plan() {
+            Some(next) => plan = next,
+            // Nothing left to fetch, or no reader left to fetch it for.
+            None => break 'plans,
         }
     }
 
@@ -288,7 +479,7 @@ pub async fn download_and_stream_remote_track(
     }
 
     log::info!(
-        "[{}/STREAMING] Track {} complete: {:.2} MB in {:.1}s",
+        "[{}/STREAMING] Track {} complete: {:.2} MB fetched in {:.1}s",
         log_tag,
         track_id,
         bytes_received as f64 / (1024.0 * 1024.0),
