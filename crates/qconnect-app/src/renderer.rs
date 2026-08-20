@@ -35,6 +35,12 @@ pub const PLAYING_STATE_PAUSED: i32 = 3;
 /// `track_id` comparison would re-fire during that buffer/decode gap.
 const LOAD_ATTEMPT_DEDUP_WINDOW: Duration = Duration::from_secs(5);
 
+/// A STOPPED command that lands within this window of our own load of that same
+/// track, at position ~0, is the previous renderer's handoff echo rather than a
+/// user intent — see the `PLAYING_STATE_STOPPED` arm of `apply_renderer_command`.
+/// Kept tight so a real stop shortly after a track starts is still honored.
+const HANDOFF_STOP_ECHO_WINDOW: Duration = Duration::from_millis(1_500);
+
 /// Source tag stamped on remote queue tracks materialized from a QConnect cloud
 /// queue. Matches the Tauri adapter's prior `QCONNECT_REMOTE_QUEUE_SOURCE`.
 pub const QCONNECT_REMOTE_QUEUE_SOURCE: &str = "qobuz_connect_remote";
@@ -426,7 +432,39 @@ pub async fn apply_renderer_command(
                         engine.pause()?;
                     }
                     PLAYING_STATE_STOPPED => {
-                        engine.stop()?;
+                        // Handoff echo: claiming the render from a peer (the
+                        // phone/desktop Qobuz app) makes that peer stop ITS
+                        // local playback, and the cloud relays the resulting
+                        // stopped@0 to whoever is now the active renderer —
+                        // us, ~300ms after it told us to play the very same
+                        // track. Honoring it stopped the stream we had just
+                        // started, leaving the controller at 0:00 in silence
+                        // until the user pressed play a second time.
+                        let stop_is_handoff_echo = {
+                            let command_track_id = current_track.as_ref().map(|t| t.track_id);
+                            let just_loaded = {
+                                let state = sync_state.lock().await;
+                                match (state.last_load_attempt, command_track_id) {
+                                    (Some((tid, ts)), Some(cmd_tid)) => {
+                                        tid == cmd_tid
+                                            && ts.elapsed() < HANDOFF_STOP_ECHO_WINDOW
+                                    }
+                                    _ => false,
+                                }
+                            };
+                            just_loaded
+                                && (*current_position_ms)
+                                    .or(renderer_state.current_position_ms)
+                                    .map(|ms| ms <= 1_000)
+                                    .unwrap_or(false)
+                        };
+                        if stop_is_handoff_echo {
+                            log::info!(
+                                "[QConnect] SetState stop ignored: handoff echo for the track just started"
+                            );
+                        } else {
+                            engine.stop()?;
+                        }
                     }
                     PLAYING_STATE_UNKNOWN => {}
                     _ => {
@@ -1235,6 +1273,61 @@ mod tests {
         assert_eq!(calls.start_track_streams, vec![8], "loads the new track");
         assert_eq!(calls.start_positions, vec![0]);
         assert!(calls.seeks.is_empty(), "no redundant seek after the load");
+    }
+
+    /// The peer whose render we just took over stops its own local playback,
+    /// and the cloud relays that stopped@0 to us right after telling us to
+    /// play. Honoring it killed the stream we had just started.
+    #[tokio::test]
+    async fn apply_renderer_command_ignores_the_handoff_stop_echo() {
+        let engine = MockEngine::new();
+        let sync = sync();
+        // Play the track: records the load attempt the echo check keys on.
+        let play = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PLAYING),
+            current_position_ms: Some(60_000),
+            current_track: Some(qi(9, 0)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &play, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        // The peer's stop lands milliseconds later: same track, position 0.
+        let echo = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_STOPPED),
+            current_position_ms: Some(0),
+            current_track: Some(qi(9, 0)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &echo, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        let calls = engine.calls();
+        assert_eq!(calls.start_track_streams, vec![9], "the play still loads");
+        assert_eq!(calls.stops, 0, "the handoff stop echo must not stop us");
+    }
+
+    /// A stop for a track we did NOT just load is a real stop.
+    #[tokio::test]
+    async fn apply_renderer_command_honors_a_genuine_stop() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 9,
+            position: 45,
+            ..Default::default()
+        };
+        engine.loaded_audio = true;
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_STOPPED),
+            current_position_ms: Some(0),
+            current_track: Some(qi(9, 0)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        assert_eq!(engine.calls().stops, 1, "a real stop must reach the engine");
     }
 
     /// A genuine mid-track seek (no load this command) still reaches the engine.
