@@ -252,6 +252,9 @@ pub async fn run_report_scheduler(
     let mut floor = IDLE_FLOOR;
     let mut interval = period_from(floor);
     let mut was_buffering = false;
+    // (playing_state, buffer_state, track) of the last report we sent, so a
+    // transition can be told from a routine position update.
+    let mut last_signature: Option<(i32, i32, u64)> = None;
 
     loop {
         let via_interval = tokio::select! {
@@ -374,6 +377,24 @@ pub async fn run_report_scheduler(
             buffer_state,
         )
         .await;
+
+        // A state TRANSITION just went out (play/pause, a new track, buffering
+        // starting or ending). Schedule a prompt follow-up rather than waiting
+        // out the 2 s floor.
+        //
+        // Every controller command is echoed by the shared SetState handler,
+        // which cannot know a duration — there is none in the renderer state to
+        // read — so it reports `duration: null`. The controller blanks its
+        // progress display on that, which is why hitting pause or play made the
+        // time and total length flick to 0:00 and stay there until our next
+        // report. That echo lands a few milliseconds AFTER ours, so being fast
+        // is not enough; the fix is to speak again right behind it.
+        let signature = (playing_state, buffer_state, report_track_id);
+        if last_signature != Some(signature) {
+            last_signature = Some(signature);
+            floor = LOADING_FLOOR;
+            interval = period_from(floor);
+        }
     }
 }
 
