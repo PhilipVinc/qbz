@@ -394,22 +394,25 @@ pub async fn apply_renderer_command(
             // Honoring either killed the stream we had just started, leaving
             // the controller spinning until the user pressed play again.
             //
-            // Keyed on our OWN load having just happened (not on the command's
-            // contents, which the state-only shape leaves empty), and only
-            // while the command does not name a real position to hold at. The
-            // window is deliberately tight, so pausing a second or more after
-            // a track starts still works normally.
+            // Keyed on our OWN load having just happened, and on the command
+            // not naming a real position to hold at (position 0, or absent in
+            // the state-only shape). Deliberately NOT keyed on the track: the
+            // peer resets its own cursor to the head of the queue as it stops,
+            // so the echo can name a different track than the one we just
+            // started — observed naming queue item 0 while we were loading
+            // item 4, which killed the stream ("play superseded, abandoning").
+            // A stop naming a track we are not playing is not a coherent
+            // instruction to stop our playback anyway.
+            //
+            // The window is deliberately tight, so stopping or pausing a
+            // second or more after a track starts still works normally.
             let is_handoff_echo = {
-                let command_track_id = current_track.as_ref().map(|t| t.track_id);
                 let just_loaded = {
                     let state = sync_state.lock().await;
-                    match state.last_load_attempt {
-                        Some((tid, ts)) => {
-                            ts.elapsed() < HANDOFF_ECHO_WINDOW
-                                && command_track_id.map(|cmd| cmd == tid).unwrap_or(true)
-                        }
-                        None => false,
-                    }
+                    state
+                        .last_load_attempt
+                        .map(|(_, ts)| ts.elapsed() < HANDOFF_ECHO_WINDOW)
+                        .unwrap_or(false)
                 };
                 just_loaded
                     && (*current_position_ms).map(|ms| ms <= 1_000).unwrap_or(true)
@@ -1315,6 +1318,41 @@ mod tests {
         let calls = engine.calls();
         assert_eq!(calls.start_track_streams, vec![9], "the play still loads");
         assert_eq!(calls.stops, 0, "the handoff stop echo must not stop us");
+    }
+
+    /// The echo can also name a DIFFERENT track than the one we just started:
+    /// the peer resets its own cursor to the head of the queue as it stops.
+    /// Observed naming queue item 0 while item 4 was loading, which killed the
+    /// stream ("play superseded, abandoning") and left the app silent.
+    #[tokio::test]
+    async fn apply_renderer_command_ignores_a_handoff_stop_naming_another_track() {
+        let engine = MockEngine::new();
+        let sync = sync();
+        let play = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PLAYING),
+            current_position_ms: Some(168_000),
+            current_track: Some(qi(442682701, 4)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &play, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        // The peer stops, reporting the queue head rather than our track.
+        let echo = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_STOPPED),
+            current_position_ms: Some(0),
+            current_track: Some(qi(442682697, 0)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &echo, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        let calls = engine.calls();
+        assert_eq!(calls.start_track_streams, vec![442682701]);
+        assert_eq!(
+            calls.stops, 0,
+            "a stop naming a track we are not playing must not stop us mid-handoff"
+        );
     }
 
     /// The same echo also arrives as a STATE-ONLY pause (no track, no
