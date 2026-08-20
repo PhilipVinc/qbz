@@ -351,6 +351,30 @@ fn cached_quality_below_requested(data: &[u8], requested: Quality) -> bool {
     }
 }
 
+/// Decode fully-buffered audio and land on `position` using Symphonia's
+/// native seek, so the cost is a seek-table lookup (or, for the Qobuz FLACs
+/// that ship STREAMINFO and nothing else, an in-memory bisection) rather
+/// than decoding and discarding every sample before it — which for a 124s
+/// offset at 96kHz is 23.8M samples and seconds of CPU on a Pi.
+///
+/// `None` when Symphonia cannot probe the format (rodio-only MP4/AAC) or
+/// the seek fails; the caller then falls back to `decode_with_fallback` +
+/// `skip_duration`, which always works.
+fn seek_in_memory(data: &[u8], position: Duration) -> Option<Box<dyn Source<Item = f32> + Send>> {
+    let mut source = match InMemorySource::new(data.to_vec()) {
+        Ok(source) => source,
+        Err(err) => {
+            log::warn!("Native seek: InMemorySource probe failed ({err})");
+            return None;
+        }
+    };
+    if let Err(err) = source.seek_to(position) {
+        log::warn!("Native seek: in-memory seek to {position:?} failed ({err})");
+        return None;
+    }
+    Some(Box::new(source))
+}
+
 fn decode_with_fallback(data: &[u8]) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
     if is_isomp4(data) {
         return decode_with_symphonia(data).map(|specs| {
@@ -3256,37 +3280,63 @@ impl Player {
                                 let skipped_source: Box<dyn Source<Item = f32> + Send> =
                                     match resume_input {
                                         ResumeInput::Memory(audio_data) => {
-                                            let source = match decode_with_fallback(&audio_data) {
-                                                Ok(s) => s,
-                                                Err(e) => {
-                                                    log::error!(
-                                                        "Failed to decode audio for resume: {}",
-                                                        e
-                                                    );
-                                                    return;
-                                                }
-                                            };
-
                                             // A Resume that rebuilds from completed streaming data
                                             // can run after a PlayStreaming that failed BEFORE
-                                            // storing the duration. Backfill from the decoded
-                                            // source so the position clamp (current_position)
-                                            // doesn't pin the bar at 0:00 (#508). Same derivation
-                                            // the Play handler uses. Must read total_duration()
-                                            // BEFORE skip_duration consumes `source` below.
-                                            if thread_state.duration.load(Ordering::SeqCst) == 0 {
-                                                if let Some(d) = source.total_duration() {
-                                                    thread_state
-                                                        .duration
-                                                        .store(d.as_secs(), Ordering::SeqCst);
-                                                }
-                                            }
+                                            // storing the duration, and only the decoded source
+                                            // knows what it is (#508) — InMemorySource reports no
+                                            // total_duration, so that case has to take the
+                                            // decode_with_fallback path below.
+                                            let needs_duration =
+                                                thread_state.duration.load(Ordering::SeqCst) == 0;
 
-                                            if resume_pos > 0 {
-                                                let skip = Duration::from_secs(resume_pos);
-                                                Box::new(source.skip_duration(skip))
-                                            } else {
-                                                source
+                                            // Otherwise seek natively, the way the Seek handler
+                                            // already does: skip_duration decodes and discards
+                                            // every sample before the position, which for a 124s
+                                            // offset at 96kHz is 23.8M samples and ~2.8s of Pi CPU
+                                            // between "device ready" and audible.
+                                            let seeked = (resume_pos > 0 && !needs_duration)
+                                                .then(|| {
+                                                    seek_in_memory(
+                                                        &audio_data,
+                                                        Duration::from_secs(resume_pos),
+                                                    )
+                                                })
+                                                .flatten();
+
+                                            match seeked {
+                                                Some(source) => source,
+                                                None => {
+                                                    let source = match decode_with_fallback(
+                                                        &audio_data,
+                                                    ) {
+                                                        Ok(s) => s,
+                                                        Err(e) => {
+                                                            log::error!(
+                                                                "Failed to decode audio for resume: {}",
+                                                                e
+                                                            );
+                                                            return;
+                                                        }
+                                                    };
+
+                                                    // Must read total_duration() BEFORE
+                                                    // skip_duration consumes `source`.
+                                                    if needs_duration {
+                                                        if let Some(d) = source.total_duration() {
+                                                            thread_state.duration.store(
+                                                                d.as_secs(),
+                                                                Ordering::SeqCst,
+                                                            );
+                                                        }
+                                                    }
+
+                                                    if resume_pos > 0 {
+                                                        let skip = Duration::from_secs(resume_pos);
+                                                        Box::new(source.skip_duration(skip))
+                                                    } else {
+                                                        source
+                                                    }
+                                                }
                                             }
                                         }
                                         ResumeInput::Ranged(streaming_src) => {
