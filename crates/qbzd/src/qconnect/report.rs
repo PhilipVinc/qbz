@@ -107,12 +107,30 @@ pub async fn report_playback_state(
         {
             log::warn!("[QConnect] Failed to report file audio quality: {err}");
         }
+        // FIX (daemon-copy only): the DEVICE report must describe what the DAC
+        // is actually receiving, not the source file. Both reports used to
+        // carry the stream format, so a device resampling 24/96 down to 24/48
+        // still told the controller it was running 24/96 — the protocol has
+        // separate File and Device messages precisely to distinguish them.
+        // /proc/asound carries the negotiated hardware rate; fall back to the
+        // stream format when nothing is open (nothing better to say).
+        let device = qbz_audio::dac_probe::negotiated_active_rate();
+        let (device_rate, device_channels) = match &device {
+            Some(negotiated) => (
+                negotiated.sample_rate as i32,
+                negotiated.channels as i32,
+            ),
+            None => (snapshot.sampling_rate, snapshot.nb_channels),
+        };
+        // ALSA reports a container format (24-bit audio commonly rides in
+        // S32_LE), so the container width would overstate the real depth —
+        // keep the stream's bit depth, which is the honest number.
         if let Err(err) = app
             .report_device_audio_quality_if_changed(
                 queue_version,
-                snapshot.sampling_rate,
+                device_rate,
                 snapshot.bit_depth,
-                snapshot.nb_channels,
+                device_channels,
             )
             .await
         {
