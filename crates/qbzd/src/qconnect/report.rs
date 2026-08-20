@@ -233,8 +233,24 @@ pub async fn run_report_scheduler(
         PLAYING_STATE_PAUSED, PLAYING_STATE_PLAYING, PLAYING_STATE_STOPPED,
     };
 
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(2_000));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // The periodic floor. It tightens to LOADING_FLOOR while a stream is
+    // filling, because the two things that end a load — audio becoming audible,
+    // and the real position/duration replacing the blank ones in the shared
+    // SetState echo — have no event of their own and can only go out on a tick.
+    // At the 2 s floor the spinner ran on for up to two seconds past the first
+    // sample, and the controller sat on a 0:00 duration just as long.
+    const IDLE_FLOOR: std::time::Duration = std::time::Duration::from_millis(2_000);
+    const LOADING_FLOOR: std::time::Duration = std::time::Duration::from_millis(300);
+
+    // A fresh interval fires its first tick immediately; start one period out.
+    let period_from = |floor: std::time::Duration| {
+        let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + floor, floor);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval
+    };
+
+    let mut floor = IDLE_FLOOR;
+    let mut interval = period_from(floor);
     let mut was_buffering = false;
 
     loop {
@@ -242,17 +258,26 @@ pub async fn run_report_scheduler(
             _ = notify.notified() => false,
             _ = interval.tick() => true,
         };
-        // Reset so the periodic floor only fires after 2 s of edge silence.
-        interval.reset();
 
         // Read the live player state.
         let ev = runtime.core().player().get_playback_event();
         // The load in flight, if any. Asked of the latch rather than of the
         // player: until the new stream produces audio the player still reports
         // the OUTGOING track, so anything keyed on ev.track_id missed the whole
-        // load window and only noticed once audio had started.
-        let in_flight = buffering.in_flight(ev.track_id, ev.position);
+        // load window and only noticed once audio had started. The MILLISECOND
+        // clock is what makes the audible edge prompt — see `in_flight`.
+        let player = runtime.core().player();
+        let in_flight = buffering.in_flight(ev.track_id, player.state.current_position_ms());
         let is_buffering = in_flight.is_some();
+        // Re-arm the floor for whichever phase we are now in, and reset it either
+        // way so the floor only elapses after a full period of edge silence.
+        let wanted = if is_buffering { LOADING_FLOOR } else { IDLE_FLOOR };
+        if wanted == floor {
+            interval.reset();
+        } else {
+            floor = wanted;
+            interval = period_from(floor);
+        }
         // Whether the last report we sent claimed BUFFERING. A load that FAILS
         // clears the latch without the player ever adopting the track, so
         // without this the falling edge fell into the `continue` below and the

@@ -159,15 +159,20 @@ impl BufferingLatch {
     /// The audible edge is the player arriving on the loading track AND its
     /// clock moving past where the stream opened — the clock only advances once
     /// audio actually flows.
-    pub fn in_flight(&self, player_track_id: u64, position_secs: u64) -> Option<(u64, u64, u64)> {
+    ///
+    /// `position_ms` is MILLISECONDS on purpose. With whole seconds, a track
+    /// loading at 0 needed the clock to reach a full 1 s before it counted as
+    /// audible, so the controller kept a spinner up for a second of music it
+    /// was already playing.
+    pub fn in_flight(&self, player_track_id: u64, position_ms: u64) -> Option<(u64, u64, u64)> {
         let Ok(mut guard) = self.0.lock() else {
             return None;
         };
         let Some(b) = guard.as_ref() else {
             return None;
         };
-        let audible =
-            player_track_id == b.track_id && position_secs > b.start_position_secs;
+        let audible = player_track_id == b.track_id
+            && position_ms > b.start_position_secs.saturating_mul(1000);
         if audible || b.since.elapsed() > BUFFERING_MAX {
             *guard = None;
             return None;
@@ -175,11 +180,6 @@ impl BufferingLatch {
         Some((b.track_id, b.start_position_secs, b.duration_secs))
     }
 
-    /// The track currently buffering, for report sites that have no track id of
-    /// their own (the active-renderer-ready report).
-    pub fn current(&self) -> Option<u64> {
-        self.0.lock().ok().and_then(|guard| guard.as_ref().map(|b| b.track_id))
-    }
 }
 
 impl DaemonRendererEngine {
@@ -195,20 +195,6 @@ impl DaemonRendererEngine {
             current_feeder: std::sync::Mutex::new(None),
             buffering,
             report_notify,
-        }
-    }
-
-    /// Buffer state to report right now: BUFFERING while a stream is still
-    /// filling, else OK. Goes through the same `in_flight` evaluation as the
-    /// report scheduler — asking the latch whether it merely HOLDS something
-    /// gave a second, staler answer to the same question, one that ignored both
-    /// the audible edge and the safety expiry.
-    pub fn buffer_state(&self) -> i32 {
-        let ev = self.core().player().get_playback_event();
-        if self.buffering.in_flight(ev.track_id, ev.position).is_some() {
-            super::transport::BUFFER_STATE_BUFFERING
-        } else {
-            super::transport::BUFFER_STATE_OK
         }
     }
 
@@ -528,7 +514,7 @@ mod tests {
         let latch = BufferingLatch::default();
         latch.begin(12, 139, 254);
         assert_eq!(
-            latch.in_flight(11, 42),
+            latch.in_flight(11, 42_000),
             Some((12, 139, 254)),
             "outgoing track playing: still the new track's load"
         );
@@ -547,18 +533,20 @@ mod tests {
         let latch = BufferingLatch::default();
         latch.begin(9, 80, 200);
         assert!(
-            latch.in_flight(9, 80).is_some(),
+            latch.in_flight(9, 80_000).is_some(),
             "still filling at the start offset"
         );
         assert!(
-            latch.in_flight(9, 80).is_some(),
+            latch.in_flight(9, 80_000).is_some(),
             "repeated ticks stay buffering"
         );
+        // Milliseconds, so the very first sample past the offset counts —
+        // whole seconds kept the spinner up for a second of audible music.
         assert!(
-            latch.in_flight(9, 81).is_none(),
+            latch.in_flight(9, 80_050).is_none(),
             "clock moved: audio is flowing"
         );
-        assert!(latch.in_flight(9, 81).is_none(), "and it stays cleared");
+        assert!(latch.in_flight(9, 80_050).is_none(), "and it stays cleared");
     }
 
     #[test]
