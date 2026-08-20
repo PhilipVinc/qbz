@@ -21,11 +21,13 @@
 //! land in the in-memory [`PairingStore`]; `DaemonQconnectService::connect`
 //! prefers a live pairing token over `/qws/createToken` discovery.
 //!
-//! P0 limits (hybrid mode): `jwt_api` is stored but NOT yet used — stream URLs
-//! still come from the daemon's logged-in account (`get_stream_url`), so a
-//! login-free device needs the follow-up qbz-qobuz Bearer work. Tokens are
-//! never persisted (a daemon restart just waits for the next handoff POST) and
-//! never logged (registered with the qbz-log redactor on receipt).
+//! The handed-over `jwt_api` is the streaming credential when no account is
+//! logged in: `reconnect_for_pairing` installs it on the `QobuzClient` as an
+//! `Authorization: Bearer` fallback (a logged-in account always outranks it),
+//! and the refresh heartbeat below keeps both JWTs alive past their expiry.
+//! Tokens are never persisted (a daemon restart just waits for the next
+//! handoff POST) and never logged (registered with the qbz-log redactor on
+//! receipt and on every refresh).
 //!
 //! This is a SEPARATE tiny_http listener from the `/api` control plane: the
 //! Qobuz app is an unauthenticated LAN client, so it must not be subject to
@@ -62,10 +64,9 @@ pub struct PairingTokens {
     pub ws_jwt: String,
     pub ws_exp: u64,
     pub ws_endpoint: String,
-    /// Stored for the login-free follow-up; unused in hybrid mode.
-    #[allow(dead_code)]
+    /// Streaming credential for the account-less path (`Authorization:
+    /// Bearer`), installed on the client by `reconnect_for_pairing`.
     pub api_jwt: Option<String>,
-    #[allow(dead_code)]
     pub api_exp: u64,
 }
 
@@ -328,14 +329,63 @@ pub fn spawn_token_refresh(store: PairingStore, runtime: Runtime) -> tokio::task
     })
 }
 
+/// A token is refresh-worthy inside a window around its expiry: from
+/// `REFRESH_LEAD_SECS` before it until `REFRESH_LEAD_SECS` after it. Earlier
+/// is pointless, later the token is dead — retrying a guaranteed-401 forever
+/// would poll Qobuz for the daemon lifetime. `exp == 0` (no expiry on the
+/// wire) is never due.
+fn refresh_due(exp: u64, now: u64) -> bool {
+    exp != 0 && now + REFRESH_LEAD_SECS >= exp && now <= exp + REFRESH_LEAD_SECS
+}
+
+/// Extract `{jwt, exp[, endpoint]}` from a refreshToken token payload.
+/// `None` when the jwt is missing/empty; a missing `exp` maps to 0.
+fn parse_refresh_payload(payload: &Value) -> Option<(String, u64, Option<String>)> {
+    let jwt = payload
+        .get("jwt")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())?
+        .to_string();
+    let exp = payload.get("exp").and_then(Value::as_u64).unwrap_or(0);
+    let endpoint = payload
+        .get("endpoint")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    Some((jwt, exp, endpoint))
+}
+
+/// Write a refreshed token back ONLY if the store still holds the handoff the
+/// refresh was computed from (same session + same ws_jwt, which no refresh arm
+/// has touched yet this tick). Guards two races across the HTTP await: a new
+/// `connect-to-qconnect` handoff replacing the store (a stale refresh must not
+/// corrupt the new caster's tokens), and the operator disconnect clearing it
+/// (a stale refresh must not resurrect anything). Returns whether it landed.
+fn install_refreshed(
+    store: &PairingStore,
+    snapshot: &PairingTokens,
+    update: impl FnOnce(&mut PairingTokens),
+) -> bool {
+    let Ok(mut guard) = store.lock() else {
+        return false;
+    };
+    match guard.as_mut() {
+        Some(tokens)
+            if tokens.session_id == snapshot.session_id && tokens.ws_jwt == snapshot.ws_jwt =>
+        {
+            update(tokens);
+            true
+        }
+        _ => false,
+    }
+}
+
 async fn refresh_if_needed(store: &PairingStore, runtime: &Runtime) {
     let Some(snapshot) = store.lock().ok().and_then(|guard| guard.clone()) else {
         return;
     };
     let now = now_secs();
-    let due = |exp: u64| exp != 0 && exp <= now + REFRESH_LEAD_SECS;
-    let api_due = snapshot.api_jwt.is_some() && due(snapshot.api_exp);
-    let ws_due = due(snapshot.ws_exp);
+    let api_due = snapshot.api_jwt.is_some() && refresh_due(snapshot.api_exp, now);
+    let ws_due = refresh_due(snapshot.ws_exp, now);
     if !api_due && !ws_due {
         return;
     }
@@ -351,19 +401,23 @@ async fn refresh_if_needed(store: &PairingStore, runtime: &Runtime) {
     if api_due {
         match refresh_jwt(&client, &api_jwt, "jwt_api").await {
             Ok(payload) => {
-                let jwt = payload.get("jwt").and_then(Value::as_str).unwrap_or_default();
-                if !jwt.is_empty() {
-                    qbz_log::register_secret(jwt.to_string());
-                    api_jwt = jwt.to_string();
-                    let exp = payload.get("exp").and_then(Value::as_u64).unwrap_or(0);
-                    if let Ok(mut guard) = store.lock() {
-                        if let Some(tokens) = guard.as_mut() {
-                            tokens.api_jwt = Some(api_jwt.clone());
-                            tokens.api_exp = exp;
-                        }
+                if let Some((jwt, exp, _)) = parse_refresh_payload(&payload) {
+                    qbz_log::register_secret(jwt.clone());
+                    let landed = install_refreshed(store, &snapshot, |tokens| {
+                        tokens.api_jwt = Some(jwt.clone());
+                        tokens.api_exp = exp;
+                    });
+                    if landed {
+                        api_jwt = jwt;
+                        // Client install only when the store write landed: the
+                        // store changing under us means a newer handoff or an
+                        // operator disconnect owns the Bearer slot now.
+                        client.set_bearer_api_token(Some(api_jwt.clone())).await;
+                        log::info!("[QConnect/Pairing] refreshed jwt_api (exp {exp})");
+                    } else {
+                        log::info!("[QConnect/Pairing] dropped stale jwt_api refresh (store changed)");
+                        return;
                     }
-                    client.set_bearer_api_token(Some(api_jwt.clone())).await;
-                    log::info!("[QConnect/Pairing] refreshed jwt_api (exp {exp})");
                 }
             }
             Err(err) => log::warn!("[QConnect/Pairing] jwt_api refresh failed: {err}"),
@@ -373,26 +427,22 @@ async fn refresh_if_needed(store: &PairingStore, runtime: &Runtime) {
     if ws_due {
         match refresh_jwt(&client, &api_jwt, "jwt_qws").await {
             Ok(payload) => {
-                let jwt = payload.get("jwt").and_then(Value::as_str).unwrap_or_default();
-                if !jwt.is_empty() {
-                    qbz_log::register_secret(jwt.to_string());
-                    let exp = payload.get("exp").and_then(Value::as_u64).unwrap_or(0);
-                    let endpoint = payload
-                        .get("endpoint")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string);
-                    if let Ok(mut guard) = store.lock() {
-                        if let Some(tokens) = guard.as_mut() {
-                            tokens.ws_jwt = jwt.to_string();
-                            tokens.ws_exp = exp;
-                            if let Some(endpoint) = endpoint {
-                                tokens.ws_endpoint = endpoint;
-                            }
+                if let Some((jwt, exp, endpoint)) = parse_refresh_payload(&payload) {
+                    qbz_log::register_secret(jwt.clone());
+                    let landed = install_refreshed(store, &snapshot, |tokens| {
+                        tokens.ws_jwt = jwt.clone();
+                        tokens.ws_exp = exp;
+                        if let Some(endpoint) = endpoint {
+                            tokens.ws_endpoint = endpoint;
                         }
+                    });
+                    if landed {
+                        // The LIVE WS connection keeps its old token; the fresh
+                        // one is what the reconnect credential re-resolve uses.
+                        log::info!("[QConnect/Pairing] refreshed jwt_qws (exp {exp})");
+                    } else {
+                        log::info!("[QConnect/Pairing] dropped stale jwt_qws refresh (store changed)");
                     }
-                    // The LIVE WS connection keeps its old token; the fresh one
-                    // is what the reconnect credential re-resolve picks up.
-                    log::info!("[QConnect/Pairing] refreshed jwt_qws (exp {exp})");
                 }
             }
             Err(err) => log::warn!("[QConnect/Pairing] jwt_qws refresh failed: {err}"),
@@ -635,6 +685,55 @@ mod tests {
             config.subscribe_channels,
             vec![vec![0x01], vec![0x02], vec![0x03]]
         );
+    }
+
+    #[test]
+    fn refresh_due_window_brackets_the_expiry() {
+        let now = 1_000_000;
+        assert!(!refresh_due(0, now), "no expiry on the wire = never due");
+        assert!(!refresh_due(now + REFRESH_LEAD_SECS + 1, now), "too early");
+        assert!(refresh_due(now + REFRESH_LEAD_SECS, now), "lead edge");
+        assert!(refresh_due(now, now), "at expiry");
+        assert!(refresh_due(now - REFRESH_LEAD_SECS, now), "grace edge");
+        assert!(!refresh_due(now - REFRESH_LEAD_SECS - 1, now), "dead token");
+    }
+
+    #[test]
+    fn parse_refresh_payload_requires_a_jwt() {
+        assert!(parse_refresh_payload(&json!({})).is_none());
+        assert!(parse_refresh_payload(&json!({ "jwt": "", "exp": 5 })).is_none());
+        assert_eq!(
+            parse_refresh_payload(&json!({ "jwt": "j" })),
+            Some(("j".to_string(), 0, None))
+        );
+        assert_eq!(
+            parse_refresh_payload(&json!({ "jwt": "j", "exp": 7, "endpoint": "wss://e" })),
+            Some(("j".to_string(), 7, Some("wss://e".to_string())))
+        );
+    }
+
+    #[test]
+    fn install_refreshed_rejects_a_changed_store() {
+        let original = PairingTokens {
+            session_id: "s1".into(),
+            ws_jwt: "jwt1".into(),
+            ws_exp: 0,
+            ws_endpoint: "wss://e".into(),
+            api_jwt: Some("api1".into()),
+            api_exp: 0,
+        };
+        // Same handoff still in the store -> the write lands.
+        let store: PairingStore = Arc::new(StdMutex::new(Some(original.clone())));
+        assert!(install_refreshed(&store, &original, |t| t.api_exp = 42));
+        assert_eq!(store.lock().unwrap().as_ref().unwrap().api_exp, 42);
+        // A newer handoff (different ws_jwt) -> the stale write is dropped.
+        store.lock().unwrap().as_mut().unwrap().ws_jwt = "jwt2".into();
+        assert!(!install_refreshed(&store, &original, |t| t.api_exp = 99));
+        assert_eq!(store.lock().unwrap().as_ref().unwrap().api_exp, 42);
+        // Operator disconnect cleared the store -> nothing is resurrected.
+        *store.lock().unwrap() = None;
+        assert!(!install_refreshed(&store, &original, |t| t.api_exp = 99));
+        assert!(store.lock().unwrap().is_none());
     }
 
     #[test]

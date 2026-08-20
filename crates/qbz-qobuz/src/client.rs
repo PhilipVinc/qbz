@@ -294,7 +294,7 @@ impl QobuzClient {
         let response = self
             .http
             .get(&url)
-            .headers(self.api_headers().await?)
+            .headers(self.app_id_headers().await?)
             .query(&[("email", email), ("password", password)])
             .send()
             .await?;
@@ -530,9 +530,18 @@ impl QobuzClient {
         *self.bearer_api_jwt.write().await = jwt;
     }
 
-    /// Whether a Bearer credential is currently installed.
-    pub async fn has_bearer_api_token(&self) -> bool {
-        self.bearer_api_jwt.read().await.is_some()
+    /// X-App-Id only — for sign-in requests, which must never carry a stray
+    /// credential (in particular not the pairing Bearer token, which belongs
+    /// to whoever cast to this device, not to the account logging in).
+    async fn app_id_headers(&self) -> Result<reqwest::header::HeaderMap> {
+        use reqwest::header::{HeaderMap, HeaderValue};
+        let mut headers = HeaderMap::new();
+        let app_id = self.app_id().await?;
+        headers.insert(
+            "X-App-Id",
+            HeaderValue::from_str(&app_id).map_err(|_| ApiError::InvalidAppId)?,
+        );
+        Ok(headers)
     }
 
     /// Build standard API headers.
