@@ -504,6 +504,7 @@ mod tests {
             track_id: 42,
             volume,
             sample_rate: None,
+            output_sample_rate: None,
             bit_depth: None,
             shuffle: Some(false),
             repeat: Some("off".into()),

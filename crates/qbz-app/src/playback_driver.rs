@@ -756,6 +756,7 @@ mod tests {
             track_id: track,
             volume: 1.0,
             sample_rate: None,
+            output_sample_rate: None,
             bit_depth: None,
             shuffle: None,
             repeat: None,

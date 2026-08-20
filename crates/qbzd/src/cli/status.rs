@@ -143,6 +143,7 @@ fn render_audio(p: &Value) -> String {
     let bit_perfect = p.pointer("/audio/bit_perfect").and_then(|v| v.as_str());
     let sr = p.pointer("/audio/sample_rate").and_then(|v| v.as_u64());
     let bd = p.pointer("/audio/bit_depth").and_then(|v| v.as_u64());
+    let out_sr = p.pointer("/audio/output_sample_rate").and_then(|v| v.as_u64());
 
     let mut parts: Vec<String> = Vec::new();
     let head = match (backend, device) {
@@ -156,8 +157,26 @@ fn render_audio(p: &Value) -> String {
     if let Some(bp) = bit_perfect {
         parts.push(format!("bit-perfect: {bp}"));
     }
+    // Two rates, and the interesting case is when they disagree: the stream
+    // is what the file holds, the output is what the device actually runs at,
+    // and anything in between (a shared PipeWire/Pulse/CPAL path, an ALSA
+    // config pinning a rate) resamples silently. Only label them when there
+    // is something to distinguish — with no output rate known yet, the old
+    // bare "96000 Hz / 24-bit" is still the honest rendering.
     if let (Some(sr), Some(bd)) = (sr, bd) {
-        parts.push(format!("{sr} Hz / {bd}-bit"));
+        match out_sr {
+            Some(out) if out != sr => {
+                parts.push(format!("stream {sr} Hz / {bd}-bit"));
+                parts.push(format!("output {out} Hz (resampled)"));
+            }
+            Some(out) => {
+                parts.push(format!("stream {sr} Hz / {bd}-bit"));
+                parts.push(format!("output {out} Hz"));
+            }
+            None => parts.push(format!("{sr} Hz / {bd}-bit")),
+        }
+    } else if let Some(out) = out_sr {
+        parts.push(format!("output {out} Hz"));
     }
     parts.join(" · ")
 }
@@ -328,5 +347,56 @@ mod tests {
         p["playback"]["state"] = serde_json::json!("stopped");
         let line = render_playback(&p);
         assert_eq!(line, "stopped · queue 14");
+    }
+}
+
+#[cfg(test)]
+mod audio_line_tests {
+    use super::render_audio;
+    use serde_json::json;
+
+    fn line(sr: Option<u64>, bd: Option<u64>, out: Option<u64>) -> String {
+        render_audio(&json!({
+            "audio": {
+                "backend": "Alsa",
+                "configured_device": "HiFiBerry DAC+",
+                "device_present": true,
+                "sample_rate": sr,
+                "bit_depth": bd,
+                "output_sample_rate": out,
+            }
+        }))
+    }
+
+    #[test]
+    fn a_resampling_chain_is_called_out() {
+        // The moOde Pi case: a 96 kHz stream landing on a 44.1 kHz device.
+        let l = line(Some(96000), Some(24), Some(44100));
+        assert!(l.contains("stream 96000 Hz / 24-bit"), "{l}");
+        assert!(l.contains("output 44100 Hz (resampled)"), "{l}");
+    }
+
+    #[test]
+    fn matching_rates_are_shown_without_the_warning() {
+        let l = line(Some(96000), Some(24), Some(96000));
+        assert!(l.contains("stream 96000 Hz / 24-bit"), "{l}");
+        assert!(l.contains("output 96000 Hz"), "{l}");
+        assert!(!l.contains("resampled"), "{l}");
+    }
+
+    #[test]
+    fn an_unknown_output_rate_renders_as_before() {
+        // No stream created yet: labelling one rate "stream" and leaving the
+        // other blank would imply we know something we do not.
+        let l = line(Some(96000), Some(24), None);
+        assert!(l.contains("96000 Hz / 24-bit"), "{l}");
+        assert!(!l.contains("stream"), "{l}");
+        assert!(!l.contains("output"), "{l}");
+    }
+
+    #[test]
+    fn output_rate_alone_still_reports() {
+        let l = line(None, None, Some(48000));
+        assert!(l.contains("output 48000 Hz"), "{l}");
     }
 }

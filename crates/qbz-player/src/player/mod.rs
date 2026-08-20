@@ -909,6 +909,7 @@ fn try_init_stream_with_backend(
                         return Some(result.map(|(stream, mode)| {
                             log::info!("ALSA Direct stream created with mode: {:?}", mode);
                             state.set_bit_perfect_mode(Some(mode));
+                            state.set_output_sample_rate(stream.sample_rate());
                             StreamType::AlsaDirect(Arc::new(stream))
                         }));
                     }
@@ -924,6 +925,7 @@ fn try_init_stream_with_backend(
         match qbz_audio::JackStream::new(config.channels) {
             Ok(stream) => {
                 state.set_bit_perfect_mode(Some(qbz_audio::BitPerfectMode::Disabled));
+                state.set_output_sample_rate(stream.sample_rate());
                 return Some(Ok(StreamType::Jack(Arc::new(stream))));
             }
             Err(e) => return Some(Err(format!("JACK backend unavailable: {e}"))),
@@ -941,6 +943,7 @@ fn try_init_stream_with_backend(
                 output_sample_rate
             );
             state.set_bit_perfect_mode(Some(BitPerfectMode::Disabled));
+            state.set_output_sample_rate(output_sample_rate);
             #[cfg(target_os = "macos")]
             let stream = if backend_type == AudioBackendType::SystemDefault {
                 StreamType::Rodio {
@@ -969,10 +972,17 @@ pub struct PlaybackEvent {
     pub duration: u64,
     pub track_id: u64,
     pub volume: f32,
-    /// Actual sample rate of the current stream (Hz)
+    /// Actual sample rate of the current stream (Hz) — the rate the file
+    /// was encoded at and the decoder produces.
     pub sample_rate: Option<u32>,
     /// Actual bit depth of the current stream
     pub bit_depth: Option<u32>,
+    /// Rate the output device actually runs at (Hz). Differs from
+    /// `sample_rate` when something in the chain resamples — a shared
+    /// PipeWire/Pulse/CPAL path, or an ALSA config that pins a rate. None
+    /// before any stream has been created.
+    #[serde(default)]
+    pub output_sample_rate: Option<u32>,
     /// Queue shuffle state
     pub shuffle: Option<bool>,
     /// Queue repeat mode ("off", "all", "one")
@@ -1030,10 +1040,18 @@ pub struct SharedState {
     /// Drained by the Tauri polling loop to emit a frontend toast and then
     /// cleared, so the UI fires the notification exactly once per error.
     stream_error_message: Arc<std::sync::RwLock<Option<String>>>,
-    /// Actual sample rate of the current stream (Hz)
+    /// Actual sample rate of the current stream (Hz) — what the decoder
+    /// produces, i.e. the rate the file was encoded at.
     sample_rate: Arc<AtomicU32>,
     /// Actual bit depth of the current stream
     bit_depth: Arc<AtomicU32>,
+    /// Rate the output device actually runs at (Hz), which is NOT always the
+    /// stream's: a shared path (PipeWire/Pulse/CPAL, or moOde's ALSA config)
+    /// can hand back 44100 for a 96000 stream and resample in between. 0
+    /// until a stream has been created. Reflects the most recent stream —
+    /// the value survives the pause-suspend teardown, which is what we want,
+    /// since Resume re-opens the device at the same rate.
+    output_sample_rate: Arc<AtomicU32>,
     /// Current normalization gain factor (f32 stored as u32 bits, 0 = not applied)
     normalization_gain: Arc<AtomicU32>,
     /// True when the audio thread wants the next track pre-queued for gapless
@@ -1076,6 +1094,7 @@ impl SharedState {
             stream_error_message: Arc::new(std::sync::RwLock::new(None)),
             sample_rate: Arc::new(AtomicU32::new(0)),
             bit_depth: Arc::new(AtomicU32::new(0)),
+            output_sample_rate: Arc::new(AtomicU32::new(0)),
             normalization_gain: Arc::new(AtomicU32::new(0)),
             gapless_ready: Arc::new(AtomicBool::new(false)),
             gapless_next_track_id: Arc::new(AtomicU64::new(0)),
@@ -1158,6 +1177,23 @@ impl SharedState {
     pub fn set_stream_quality(&self, sample_rate: u32, bit_depth: u32) {
         self.sample_rate.store(sample_rate, Ordering::SeqCst);
         self.bit_depth.store(bit_depth, Ordering::SeqCst);
+    }
+
+    /// Record the rate the freshly-created output device actually runs at.
+    /// Called from the stream-creation paths, which are the only places that
+    /// learn it — the requested rate is only a request.
+    pub fn set_output_sample_rate(&self, sample_rate: u32) {
+        self.output_sample_rate.store(sample_rate, Ordering::SeqCst);
+    }
+
+    /// Rate the output device runs at, or None before any stream exists.
+    /// Compare against `get_sample_rate()`: a mismatch means something in
+    /// the chain is resampling.
+    pub fn get_output_sample_rate(&self) -> Option<u32> {
+        match self.output_sample_rate.load(Ordering::SeqCst) {
+            0 => None,
+            rate => Some(rate),
+        }
     }
 
     /// Set the current bit-perfect mode for the active stream.
@@ -5613,6 +5649,7 @@ impl Player {
                 None
             },
             bit_depth: if bit_depth > 0 { Some(bit_depth) } else { None },
+            output_sample_rate: self.state.get_output_sample_rate(),
             shuffle: None, // Set by caller with access to queue state
             repeat: None,  // Set by caller with access to queue state
             normalization_gain: self.state.get_normalization_gain(),

@@ -43,8 +43,13 @@ pub struct AudioStatus {
     /// (crates/qbz-audio/src/backend.rs:226-233). Kept as a plain string here so
     /// this crate does not need to depend on the exact qbz-audio enum shape yet.
     pub bit_perfect: Option<String>,
+    /// Rate the DECODED STREAM runs at — what the file was encoded at.
     pub sample_rate: Option<u32>,
     pub bit_depth: Option<u32>,
+    /// Rate the OUTPUT DEVICE runs at. Differs from `sample_rate` when
+    /// something in the chain resamples (a shared PipeWire/Pulse/CPAL path,
+    /// or an ALSA config that pins a rate). None before any stream exists.
+    pub output_sample_rate: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -193,6 +198,7 @@ fn assemble_live(state: &super::ApiState) -> StatusDoc {
             bit_perfect: bitperfect_label(ev.bit_perfect_mode),
             sample_rate: ev.sample_rate,
             bit_depth: ev.bit_depth,
+            output_sample_rate: ev.output_sample_rate,
         },
         playback: PlaybackStatus {
             state: pstate.to_string(),
@@ -298,6 +304,7 @@ mod tests {
                 bit_perfect: None,
                 sample_rate: None,
                 bit_depth: None,
+                output_sample_rate: None,
             },
             playback: PlaybackStatus {
                 state: "stopped".into(),
