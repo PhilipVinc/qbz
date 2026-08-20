@@ -264,6 +264,13 @@ official Qobuz apps like a hardware streamer.
 - Event hooks: `qbzd settings set hooks.script /path/to/script` runs your script on
   playback/session events with `QBZ_*` environment variables — push integration for
   audio-box distros (moOde, Volumio, DIY setups), no polling required
+- Local pairing (no login required): the daemon advertises itself on the LAN like a
+  hardware streamer, so ANY Qobuz account in the household can cast to it from the
+  official app — the app hands the device its own session tokens on selection
+  (last cast wins, exactly like a Spotify Connect box). A logged-in account is
+  optional: when present the daemon streams with its own account, otherwise it
+  streams with the token the casting app handed over. Toggle with
+  `qbzd settings set qconnect.pairing on|off` (port: `qconnect.pairing_port`, default 8183)
 
 Full manual: **[Headless Daemon (qbzd) — Wiki](https://github.com/vicrodh/qbz/wiki/Headless-Daemon)**
 

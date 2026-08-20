@@ -93,6 +93,11 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     ("qconnect.device_name", ApplyClass::None),
     ("qconnect.startup_mode", ApplyClass::None),
     ("qconnect.volume_mode", ApplyClass::None),
+    // Pairing surface (pairing.rs). Both apply on the NEXT daemon start: the
+    // listener + mDNS registration are boot-time-only (reload does not
+    // start/stop them).
+    ("qconnect.pairing", ApplyClass::None),
+    ("qconnect.pairing_port", ApplyClass::None),
     // --- hooks (daemon_prefs, CONSOLE ext) ----------------------------------
     ("hooks.script", ApplyClass::None),
 ];
@@ -353,6 +358,13 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
             "qconnect.volume_mode" => {
                 qconnect_kv::load_volume_mode_at(&db).unwrap_or_else(|| "software".to_string())
             }
+            "qconnect.pairing" => if qconnect_kv::load_pairing_enabled_at(&db) {
+                "on"
+            } else {
+                "off"
+            }
+            .to_string(),
+            "qconnect.pairing_port" => qconnect_kv::load_pairing_port_at(&db).to_string(),
             "hooks.script" => prefs.hook_script.clone(),
             other => unreachable!("KEY_TABLE/read_all drifted apart on key: {other}"),
         };
@@ -578,6 +590,21 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         "qconnect.volume_mode" => {
             let v = parse_volume_mode(raw).map_err(SetError::Usage)?;
             qconnect_kv::save_volume_mode_at(&qconnect_db(roots), &v)
+        }
+        "qconnect.pairing" => {
+            let v = parse_bool(raw).map_err(SetError::Usage)?;
+            qconnect_kv::save_pairing_enabled_at(&qconnect_db(roots), v)
+        }
+        "qconnect.pairing_port" => {
+            let port = raw
+                .trim()
+                .parse::<u16>()
+                .ok()
+                .filter(|p| *p != 0)
+                .ok_or_else(|| {
+                    SetError::Usage(format!("invalid port '{raw}' — expected 1-65535"))
+                })?;
+            qconnect_kv::save_pairing_port_at(&qconnect_db(roots), port)
         }
         "hooks.script" => {
             let v = parse_hook_script(raw).map_err(SetError::Usage)?;
