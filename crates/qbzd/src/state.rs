@@ -101,6 +101,10 @@ pub struct QconnectStatus {
     pub session_active: bool,
     pub device_name: String,
     pub last_transport_reconnect: Option<String>,
+    /// Local pairing surface (mDNS + /streamcore listener) actually serving.
+    pub pairing: bool,
+    /// The pairing listener's port, when serving.
+    pub pairing_port: Option<u16>,
 }
 
 #[cfg(test)]
@@ -123,6 +127,8 @@ mod tests {
         assert!(!q.session_active);
         assert_eq!(q.device_name, "");
         assert!(q.last_transport_reconnect.is_none());
+        assert!(!q.pairing);
+        assert!(q.pairing_port.is_none());
     }
 
     #[test]

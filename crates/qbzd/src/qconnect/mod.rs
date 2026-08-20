@@ -649,6 +649,14 @@ pub fn start(
         log::info!("[QConnect/Pairing] disabled by settings (pairing = off)");
         (None, None)
     };
+    // Reflect the pairing surface in `/api/status` (static for the process
+    // lifetime — the listener is boot-time-only).
+    if let Ok(mut s) = service.shared.lock() {
+        s.qconnect.pairing = pairing.is_some();
+        s.qconnect.pairing_port = pairing
+            .is_some()
+            .then(|| transport::load_pairing_port_at(&settings_db));
+    }
 
     let watcher = if should_auto_connect {
         log::info!(
