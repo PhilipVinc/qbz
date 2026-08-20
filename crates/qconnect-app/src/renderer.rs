@@ -35,11 +35,11 @@ pub const PLAYING_STATE_PAUSED: i32 = 3;
 /// `track_id` comparison would re-fire during that buffer/decode gap.
 const LOAD_ATTEMPT_DEDUP_WINDOW: Duration = Duration::from_secs(5);
 
-/// A STOPPED command that lands within this window of our own load of that same
-/// track, at position ~0, is the previous renderer's handoff echo rather than a
-/// user intent — see the `PLAYING_STATE_STOPPED` arm of `apply_renderer_command`.
-/// Kept tight so a real stop shortly after a track starts is still honored.
-const HANDOFF_STOP_ECHO_WINDOW: Duration = Duration::from_millis(1_500);
+/// A stop/pause landing within this window of our own load is the previous
+/// renderer's handoff echo rather than a user intent — see `is_handoff_echo` in
+/// `apply_renderer_command`. Kept tight so a real stop or pause shortly after a
+/// track starts is still honored.
+const HANDOFF_ECHO_WINDOW: Duration = Duration::from_millis(1_500);
 
 /// Source tag stamped on remote queue tracks materialized from a QConnect cloud
 /// queue. Matches the Tauri adapter's prior `QCONNECT_REMOTE_QUEUE_SOURCE`.
@@ -385,6 +385,36 @@ pub async fn apply_renderer_command(
                 }
             }
 
+            // Handoff echo: claiming the render from a peer (the phone/desktop
+            // Qobuz app) makes that peer stop ITS local playback, and the cloud
+            // relays the result to whoever is now the active renderer — us,
+            // milliseconds after it told us to play that very track. Observed
+            // in both shapes: `stopped` at position 0 naming the track, and a
+            // state-only `paused` carrying no track or position at all.
+            // Honoring either killed the stream we had just started, leaving
+            // the controller spinning until the user pressed play again.
+            //
+            // Keyed on our OWN load having just happened (not on the command's
+            // contents, which the state-only shape leaves empty), and only
+            // while the command does not name a real position to hold at. The
+            // window is deliberately tight, so pausing a second or more after
+            // a track starts still works normally.
+            let is_handoff_echo = {
+                let command_track_id = current_track.as_ref().map(|t| t.track_id);
+                let just_loaded = {
+                    let state = sync_state.lock().await;
+                    match state.last_load_attempt {
+                        Some((tid, ts)) => {
+                            ts.elapsed() < HANDOFF_ECHO_WINDOW
+                                && command_track_id.map(|cmd| cmd == tid).unwrap_or(true)
+                        }
+                        None => false,
+                    }
+                };
+                just_loaded
+                    && (*current_position_ms).map(|ms| ms <= 1_000).unwrap_or(true)
+            };
+
             if let Some(value) = resolved_playing_state {
                 match value {
                     PLAYING_STATE_PLAYING => {
@@ -429,36 +459,16 @@ pub async fn apply_renderer_command(
                         }
                     }
                     PLAYING_STATE_PAUSED => {
-                        engine.pause()?;
+                        if is_handoff_echo {
+                            log::info!(
+                                "[QConnect] SetState pause ignored: handoff echo for the track just started"
+                            );
+                        } else {
+                            engine.pause()?;
+                        }
                     }
                     PLAYING_STATE_STOPPED => {
-                        // Handoff echo: claiming the render from a peer (the
-                        // phone/desktop Qobuz app) makes that peer stop ITS
-                        // local playback, and the cloud relays the resulting
-                        // stopped@0 to whoever is now the active renderer —
-                        // us, ~300ms after it told us to play the very same
-                        // track. Honoring it stopped the stream we had just
-                        // started, leaving the controller at 0:00 in silence
-                        // until the user pressed play a second time.
-                        let stop_is_handoff_echo = {
-                            let command_track_id = current_track.as_ref().map(|t| t.track_id);
-                            let just_loaded = {
-                                let state = sync_state.lock().await;
-                                match (state.last_load_attempt, command_track_id) {
-                                    (Some((tid, ts)), Some(cmd_tid)) => {
-                                        tid == cmd_tid
-                                            && ts.elapsed() < HANDOFF_STOP_ECHO_WINDOW
-                                    }
-                                    _ => false,
-                                }
-                            };
-                            just_loaded
-                                && (*current_position_ms)
-                                    .or(renderer_state.current_position_ms)
-                                    .map(|ms| ms <= 1_000)
-                                    .unwrap_or(false)
-                        };
-                        if stop_is_handoff_echo {
+                        if is_handoff_echo {
                             log::info!(
                                 "[QConnect] SetState stop ignored: handoff echo for the track just started"
                             );
@@ -1305,6 +1315,67 @@ mod tests {
         let calls = engine.calls();
         assert_eq!(calls.start_track_streams, vec![9], "the play still loads");
         assert_eq!(calls.stops, 0, "the handoff stop echo must not stop us");
+    }
+
+    /// The same echo also arrives as a STATE-ONLY pause (no track, no
+    /// position) — the shape observed when switching output mid-track from the
+    /// desktop app, which left the device spinning until the user pressed play.
+    #[tokio::test]
+    async fn apply_renderer_command_ignores_a_state_only_pause_echo() {
+        let engine = MockEngine::new();
+        let sync = sync();
+        let play = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PLAYING),
+            current_position_ms: Some(139_691),
+            current_track: Some(qi(9, 0)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &play, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        let echo = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PAUSED),
+            current_position_ms: None,
+            current_track: None,
+            next_track: None,
+        };
+        // The cloud's view still carries the handed-off position; the echo check
+        // must not read it as "hold here".
+        let renderer_state = QConnectRendererState {
+            current_position_ms: Some(139_691),
+            ..Default::default()
+        };
+        apply_renderer_command(&engine, &sync, &echo, &renderer_state)
+            .await
+            .unwrap();
+        assert_eq!(
+            engine.calls().pauses,
+            0,
+            "the state-only pause echo must not pause the stream we just started"
+        );
+    }
+
+    /// A pause that is not part of a handoff burst still pauses.
+    #[tokio::test]
+    async fn apply_renderer_command_honors_a_genuine_pause() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 9,
+            position: 45,
+            ..Default::default()
+        };
+        engine.loaded_audio = true;
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PAUSED),
+            current_position_ms: None,
+            current_track: None,
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        assert_eq!(engine.calls().pauses, 1, "a real pause must reach the engine");
     }
 
     /// A stop for a track we did NOT just load is a real stop.
