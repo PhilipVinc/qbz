@@ -738,6 +738,8 @@ mod tests {
         assert_eq!(load_device_name_at(&tmp), None);
         assert_eq!(load_volume_mode_at(&tmp), None);
         assert_eq!(load_last_known_state_at(&tmp), None);
+        assert!(load_pairing_enabled_at(&tmp), "pairing defaults ON");
+        assert_eq!(load_pairing_port_at(&tmp), DEFAULT_PAIRING_PORT);
 
         // Persist + read back.
         save_startup_mode_at(&tmp, qconnect_app::QconnectStartupMode::On);
@@ -756,6 +758,16 @@ mod tests {
         // Clearing the device name removes it.
         persist_device_name_at(&tmp, None);
         assert_eq!(load_device_name_at(&tmp), None);
+
+        // Pairing switch + port round-trip; port 0 / garbage fall back.
+        save_pairing_enabled_at(&tmp, false);
+        assert!(!load_pairing_enabled_at(&tmp));
+        save_pairing_enabled_at(&tmp, true);
+        assert!(load_pairing_enabled_at(&tmp));
+        save_pairing_port_at(&tmp, 9000);
+        assert_eq!(load_pairing_port_at(&tmp), 9000);
+        save_pairing_port_at(&tmp, 0);
+        assert_eq!(load_pairing_port_at(&tmp), DEFAULT_PAIRING_PORT);
 
         let _ = std::fs::remove_file(&tmp);
     }

@@ -151,6 +151,17 @@ pub struct DaemonQconnectService {
     /// Tokens handed over by a Qobuz app via the local pairing surface
     /// (pairing.rs). `connect()` prefers a live entry over `/qws/createToken`.
     pairing_store: pairing::PairingStore,
+    /// Serializes connect/disconnect state transitions. Without it a pairing
+    /// takeover's `disconnect()` against an in-flight `connect()` (e.g. the
+    /// auto-connect watcher mid-handshake) lets the slower connect install its
+    /// runtime LAST — leaking the newer session's event loop + WS connection
+    /// and stranding the handed-over token on the account session.
+    ops: Mutex<()>,
+    /// The latest pairing-takeover task (pairing.rs POST handler). Tracked so
+    /// a newer handoff aborts the previous takeover and `shutdown()` can abort
+    /// it before the final disconnect (#521: it clones this service's
+    /// `Arc<AppRuntime>` and must not resurrect a session past shutdown).
+    takeover_task: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 impl DaemonQconnectService {
@@ -158,6 +169,11 @@ impl DaemonQconnectService {
     /// qws/createToken discovery needs it). Idempotent: a second call while a
     /// runtime is alive (or a connect is in flight) is a no-op.
     pub async fn connect(&self) -> Result<(), String> {
+        let _ops = self.ops.lock().await;
+        self.connect_locked().await
+    }
+
+    async fn connect_locked(&self) -> Result<(), String> {
         if !self.runtime.core().is_api_initialized().await {
             return Err("Qobuz API is not initialized; cannot start Qobuz Connect".to_string());
         }
@@ -299,6 +315,11 @@ impl DaemonQconnectService {
     /// event loop so its `Arc<AppRuntime>` clone drops before the daemon's
     /// shutdown releases the audio device (§8.2 / #521 ordering).
     pub async fn disconnect(&self) -> Result<(), String> {
+        let _ops = self.ops.lock().await;
+        self.disconnect_locked().await
+    }
+
+    async fn disconnect_locked(&self) -> Result<(), String> {
         let runtime = {
             let mut guard = self.inner.lock().await;
             guard.lifecycle_state = QconnectLifecycleState::Off;
@@ -355,11 +376,35 @@ impl DaemonQconnectService {
     }
 
     /// Handoff takeover: force-drop whatever session is live, then connect —
-    /// which now picks up the freshly stored pairing tokens. `disconnect` is a
-    /// no-op when nothing is connected, so this is safe from any state.
+    /// which now picks up the freshly stored pairing tokens. Holds the ops
+    /// lock across BOTH steps so an in-flight connect (auto-connect watcher,
+    /// an earlier takeover) finishes and gets torn down first, and nothing can
+    /// interleave between our disconnect and connect.
     pub(crate) async fn reconnect_for_pairing(&self) -> Result<(), String> {
-        let _ = self.disconnect().await;
-        self.connect().await
+        let _ops = self.ops.lock().await;
+        let _ = self.disconnect_locked().await;
+        self.connect_locked().await
+    }
+
+    /// Track the latest takeover task, aborting the previous one (a newer
+    /// handoff always wins). Returns nothing; the handle is consumed by
+    /// [`Self::abort_takeover_task`] at shutdown.
+    pub(crate) fn replace_takeover_task(&self, task: JoinHandle<()>) {
+        if let Ok(mut guard) = self.takeover_task.lock() {
+            if let Some(prev) = guard.replace(task) {
+                prev.abort();
+            }
+        }
+    }
+
+    /// Abort any in-flight takeover so it cannot resurrect a session after
+    /// shutdown's final disconnect (#521 ordering).
+    fn abort_takeover_task(&self) {
+        if let Ok(mut guard) = self.takeover_task.lock() {
+            if let Some(task) = guard.take() {
+                task.abort();
+            }
+        }
     }
 
     /// Wait until the daemon is Ready (logged in + API initialized), then attempt
@@ -438,6 +483,14 @@ impl QconnectControl {
     }
 
     pub async fn disconnect(&self) -> Result<(), String> {
+        // Operator intent (`qbzd qconnect disable`): also drop any handed-over
+        // pairing token, so a later enable reconnects with the daemon account
+        // instead of silently re-joining the last LAN caster's session. The
+        // internal disconnect() must NOT do this — reconnect_for_pairing
+        // depends on the token surviving its own disconnect step.
+        if let Ok(mut guard) = self.0.pairing_store.lock() {
+            *guard = None;
+        }
         self.0.disconnect().await
     }
 
@@ -477,9 +530,15 @@ impl QconnectHandle {
     /// every `Arc<AppRuntime>` clone this handle owns drops ahead of
     /// `drop(booted)` (the #521 clock-release ordering).
     pub async fn shutdown(&mut self) {
+        // Stop the pairing surface FIRST (no new handoffs), then kill any
+        // in-flight takeover, so nothing can resurrect a session after the
+        // final disconnect below. The listener join is a blocking call and the
+        // pairing thread may itself be parked in `Handle::block_on`, so move
+        // the join off this worker (multi-thread runtime; see main.rs).
         if let Some(mut pairing) = self.pairing.take() {
-            pairing.shutdown();
+            tokio::task::block_in_place(move || pairing.shutdown());
         }
+        self.service.abort_takeover_task();
         if let Some(watcher) = self.watcher.take() {
             watcher.abort();
             let _ = watcher.await;
@@ -538,6 +597,8 @@ pub fn start(
         settings_db: settings_db.clone(),
         custom_device_name: Arc::new(tokio::sync::RwLock::new(custom_name)),
         pairing_store: Arc::new(std::sync::Mutex::new(None)),
+        ops: Mutex::new(()),
+        takeover_task: std::sync::Mutex::new(None),
     });
 
     // Local pairing surface (KV `pairing` = on|off, default on; port from KV

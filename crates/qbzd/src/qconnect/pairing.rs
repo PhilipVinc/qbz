@@ -1,5 +1,6 @@
-// DAEMON-ORIGINAL (like publish.rs/report.rs) — no desktop twin; the desktop
-// pairs implicitly through the logged-in account and never serves this surface.
+// DAEMON-ORIGINAL (like hooks.rs/events_bridge.rs) — no desktop twin; the
+// desktop pairs implicitly through the logged-in account and never serves this
+// surface, so there is nothing to converge with.
 //
 //! Local pairing surface for Qobuz Connect: mDNS advertisement + the three
 //! `/streamcore` HTTP endpoints the Qobuz app calls when a user picks this
@@ -38,10 +39,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 use qconnect_transport_ws::WsTransportConfig;
 use serde_json::{json, Value};
-use tiny_http::{Header, Method, Request, Response, Server};
+use tiny_http::{Method, Request, Response, Server};
 
 use super::transport::{default_qconnect_device_info, resolve_qconnect_device_uuid};
 use super::DaemonQconnectService;
+// The response formatter is shared with the control plane deliberately: it is
+// a pure serializer, so reusing it does not couple the two listeners.
+use crate::api::json;
 
 pub const MDNS_SERVICE_TYPE: &str = "_qobuz-connect._tcp.local.";
 const SDK_VERSION: &str = concat!("qbz-", env!("CARGO_PKG_VERSION"));
@@ -52,7 +56,7 @@ const EXP_SLACK_SECS: u64 = 60;
 /// Tokens handed over by the Qobuz app in `connect-to-qconnect`. `exp` values
 /// are unix seconds as sent on the wire; `0` = not provided (treated as
 /// non-expiring — nothing in this repo decodes JWTs to find out more).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PairingTokens {
     pub session_id: String,
     pub ws_jwt: String,
@@ -68,6 +72,21 @@ pub struct PairingTokens {
 impl PairingTokens {
     fn ws_token_live(&self, now: u64) -> bool {
         self.ws_exp == 0 || self.ws_exp > now + EXP_SLACK_SECS
+    }
+}
+
+/// The redactor covers registered values in LOG lines, but a `{:?}` in a panic
+/// message or `dbg!` bypasses it — so Debug elides the raw JWTs entirely.
+impl std::fmt::Debug for PairingTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PairingTokens")
+            .field("session_id", &self.session_id)
+            .field("ws_jwt", &"<redacted>")
+            .field("ws_exp", &self.ws_exp)
+            .field("ws_endpoint", &self.ws_endpoint)
+            .field("api_jwt", &self.api_jwt.as_ref().map(|_| "<redacted>"))
+            .field("api_exp", &self.api_exp)
+            .finish()
     }
 }
 
@@ -307,8 +326,12 @@ fn handle(
             )
         }
         (Method::Post, "/streamcore/connect-to-qconnect") => {
+            // Unauthenticated LAN endpoint: cap the body read (a real handoff
+            // is well under 8 KB) so a hostile client can't stream gigabytes
+            // into daemon memory.
+            use std::io::Read as _;
             let mut body = String::new();
-            let _ = req.as_reader().read_to_string(&mut body);
+            let _ = req.as_reader().take(64 * 1024).read_to_string(&mut body);
             let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
             match parse_connect_request(&body) {
                 Ok(tokens) => {
@@ -326,13 +349,16 @@ fn handle(
                     }
                     // Ack the app immediately (it watches the cloud session for
                     // the device joining, not this response) and run the
-                    // disconnect+connect takeover off the serving thread.
-                    let service = Arc::clone(service);
-                    rt.spawn(async move {
-                        if let Err(err) = service.reconnect_for_pairing().await {
+                    // disconnect+connect takeover off the serving thread. The
+                    // task is tracked on the service: a newer handoff aborts
+                    // it, and shutdown aborts it before the final disconnect.
+                    let takeover = Arc::clone(service);
+                    let task = rt.spawn(async move {
+                        if let Err(err) = takeover.reconnect_for_pairing().await {
                             log::warn!("[QConnect/Pairing] takeover connect failed: {err}");
                         }
                     });
+                    service.replace_takeover_task(task);
                     json(200, json!({}))
                 }
                 Err(err) => json(400, json!({ "error": err })),
@@ -356,15 +382,6 @@ fn display_info() -> Value {
         "serial_number": info.device_uuid.unwrap_or_default(),
         "max_audio_quality": "HIRES_L3",
     })
-}
-
-fn json(status: u16, body: Value) -> Response<Cursor<Vec<u8>>> {
-    let data = body.to_string().into_bytes();
-    let header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-        .expect("static content-type header");
-    Response::from_data(data)
-        .with_status_code(status)
-        .with_header(header)
 }
 
 #[cfg(test)]
@@ -411,6 +428,40 @@ mod tests {
         assert_eq!(tokens.ws_exp, 0);
         assert!(tokens.ws_token_live(now_secs()));
         assert!(tokens.api_jwt.is_none());
+    }
+
+    #[test]
+    fn ws_token_live_boundary_honors_the_slack() {
+        let tokens = |exp| PairingTokens {
+            session_id: "s".into(),
+            ws_jwt: "jwt".into(),
+            ws_exp: exp,
+            ws_endpoint: "wss://e".into(),
+            api_jwt: None,
+            api_exp: 0,
+        };
+        let now = 1_000_000;
+        // Strictly greater than now + slack is required: exactly at the slack
+        // edge counts as expired.
+        assert!(!tokens(now + EXP_SLACK_SECS).ws_token_live(now));
+        assert!(tokens(now + EXP_SLACK_SECS + 1).ws_token_live(now));
+    }
+
+    #[test]
+    fn debug_never_prints_the_jwts() {
+        let rendered = format!(
+            "{:?}",
+            PairingTokens {
+                session_id: "s".into(),
+                ws_jwt: "SECRET-WS".into(),
+                ws_exp: 0,
+                ws_endpoint: "wss://e".into(),
+                api_jwt: Some("SECRET-API".into()),
+                api_exp: 0,
+            }
+        );
+        assert!(!rendered.contains("SECRET-WS"));
+        assert!(!rendered.contains("SECRET-API"));
     }
 
     #[test]
