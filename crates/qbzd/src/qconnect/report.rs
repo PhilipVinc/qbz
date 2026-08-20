@@ -256,6 +256,22 @@ pub async fn run_report_scheduler(
             continue;
         }
 
+        // Reconcile the queue cursor with the audible track. A gapless hand-off
+        // advances inside the player, and the driver only syncs the cursor on
+        // the exact tick the track id changes while playing on BOTH sides of
+        // the tick — a playback-state blip during the hand-off ("PlayNext
+        // landed after track finished") loses that edge for good, leaving the
+        // cursor one track behind: `qbzd status` and the moOde overlay named
+        // the previous track while the next one played (title said "Golden
+        // Seams" while the reported duration, 213s, was "Pulse"). Skipped while
+        // buffering, where the cursor is legitimately AHEAD of the player: the
+        // stream for the new track has not started yet, and syncing there would
+        // drag the cursor back to the outgoing track. `sync_current_to_id` only
+        // moves the pointer (and emits) when it actually differs.
+        if ev.is_playing && ev.track_id != 0 && !is_buffering {
+            runtime.core().sync_current_to_id(ev.track_id).await;
+        }
+
         // Resolve the LIVE session (app + the shared sync accumulator). No runtime
         // means QConnect is not connected -> a no-op this tick.
         let (app, sync_state) = {
