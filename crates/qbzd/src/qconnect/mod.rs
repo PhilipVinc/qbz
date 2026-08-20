@@ -162,6 +162,12 @@ pub struct DaemonQconnectService {
     /// it before the final disconnect (#521: it clones this service's
     /// `Arc<AppRuntime>` and must not resurrect a session past shutdown).
     takeover_task: std::sync::Mutex<Option<JoinHandle<()>>>,
+    /// One-shot latch: the next deferred renderer join claims the active slot
+    /// (is_active=true). Armed by a handoff takeover — the handoff IS the
+    /// user's output selection and no SET_ACTIVE_RENDERER follows it (official
+    /// receivers join active after a handoff; qobuz-proxy parity). Never armed
+    /// on the account path, which keeps the desktop anti-steal join.
+    handoff_join_pending: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl DaemonQconnectService {
@@ -273,6 +279,7 @@ impl DaemonQconnectService {
             shared: Arc::clone(&self.shared),
             volume_mode, // T10 (OD4): join-time volume report honors the mode
             pairing_store: Arc::clone(&self.pairing_store),
+            handoff_join_pending: Arc::clone(&self.handoff_join_pending),
         });
         let app_for_loop = Arc::clone(&app);
         let event_loop = tokio::spawn(async move {
@@ -394,6 +401,11 @@ impl DaemonQconnectService {
             }
         }
         let _ = self.disconnect_locked().await;
+        // Arm AFTER the disconnect (which tears down the previous session
+        // loop) and BEFORE the connect that will consume it on its deferred
+        // renderer join.
+        self.handoff_join_pending
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         self.connect_locked().await
     }
 
@@ -507,6 +519,9 @@ impl QconnectControl {
         // disconnect step.
         self.0.abort_takeover_task();
         let _ops = self.0.ops.lock().await;
+        self.0
+            .handoff_join_pending
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         if let Ok(mut guard) = self.0.pairing_store.lock() {
             *guard = None;
         }
@@ -626,6 +641,7 @@ pub fn start(
         pairing_store: Arc::new(std::sync::Mutex::new(None)),
         ops: Mutex::new(()),
         takeover_task: std::sync::Mutex::new(None),
+        handoff_join_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     });
 
     // Local pairing surface (KV `pairing` = on|off, default on; port from KV

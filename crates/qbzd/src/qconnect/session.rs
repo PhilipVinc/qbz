@@ -62,6 +62,13 @@ pub struct DaemonSessionLoopHost {
     /// DAEMON-ONLY (pairing): reconnect credential re-resolve prefers a live
     /// handed-over token, mirroring the preference in `connect()`.
     pub pairing_store: super::pairing::PairingStore,
+    /// DAEMON-ONLY (pairing): one-shot latch armed by a handoff takeover. The
+    /// handoff IS the user's output selection, so the next renderer join must
+    /// claim the active slot (official receivers join with is_active=true
+    /// after a handoff — qobuz-proxy/StreamCore32 parity). Joining available
+    /// leaves the session's active renderer pointing at the PREVIOUS output
+    /// and the app's play command never reaches this device.
+    pub handoff_join_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[async_trait::async_trait]
@@ -103,6 +110,10 @@ impl SessionLoopHost for DaemonSessionLoopHost {
     }
 
     async fn deferred_renderer_join(&self, session_uuid: String, reason: i32) {
+        // DAEMON-ONLY (pairing): consume the handoff latch exactly once.
+        let force_active = self
+            .handoff_join_pending
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
         deferred_renderer_join(
             &self.app,
             &self.sync_state,
@@ -110,6 +121,7 @@ impl SessionLoopHost for DaemonSessionLoopHost {
             self.volume_mode, // T10 (OD4): 100 in Locked, real in Software
             &session_uuid,
             reason,
+            force_active,
         )
         .await;
     }
@@ -209,6 +221,7 @@ pub async fn deferred_renderer_join(
     volume_mode: VolumeMode, // T10 (OD4): join-time volume report policy
     session_uuid: &str,
     join_reason: i32,
+    force_active: bool, // DAEMON-ONLY (pairing): handoff join claims the render
 ) {
     let already_joined = {
         let st = sync_state.lock().await;
@@ -233,8 +246,10 @@ pub async fn deferred_renderer_join(
     // Do NOT auto-steal the render on a fresh connect: join as an AVAILABLE
     // renderer (is_active=false), not the active one. Only a post-drop
     // RECONNECTION rejoins as active, so a network blip mid-render does not lose
-    // the render.
-    let join_as_active = join_reason == JOIN_SESSION_REASON_RECONNECTION;
+    // the render. DAEMON-ONLY (pairing) exception: a join right after a local
+    // handoff claims the render (`force_active`) — the handoff is the user's
+    // output selection and no separate SET_ACTIVE_RENDERER ever arrives.
+    let join_as_active = force_active || join_reason == JOIN_SESSION_REASON_RECONNECTION;
     let renderer_join_payload = json!({
         "session_uuid": session_uuid,
         "device_info": serde_json::to_value(&device_info).unwrap_or_default(),
