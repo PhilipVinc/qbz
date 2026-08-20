@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use crate::adapter::DaemonAdapter;
 use super::sink::DaemonQconnectApp;
-use super::transport::BUFFER_STATE_OK;
+use super::transport::{BUFFER_STATE_BUFFERING, BUFFER_STATE_OK};
 
 pub const QCONNECT_RENDERER_CHANNELS: i32 = 2;
 const AUDIO_QUALITY_UNKNOWN: i32 = 0;
@@ -50,6 +50,7 @@ pub async fn report_playback_state(
     position_ms: i64,
     duration_ms: i64,
     track_id: u64,
+    buffer_state: i32,
 ) {
     // Only report when WE are the active renderer. When a peer renderer owns
     // playback (the daemon is acting as a controller) the renderer reports come
@@ -71,7 +72,7 @@ pub async fn report_playback_state(
         queue_version,
         json!({
             "playing_state": playing_state,
-            "buffer_state": BUFFER_STATE_OK,
+            "buffer_state": buffer_state,
             "current_position": position_ms,
             "duration": duration_ms,
             "current_queue_item_id": current_qid,
@@ -202,6 +203,7 @@ pub async fn run_report_scheduler(
     notify: Arc<tokio::sync::Notify>,
     inner: Arc<Mutex<super::DaemonQconnectInner>>,
     runtime: Arc<AppRuntime<DaemonAdapter>>,
+    buffering: Arc<super::engine::BufferingLatch>,
 ) {
     use qconnect_app::renderer::{PLAYING_STATE_PAUSED, PLAYING_STATE_PLAYING};
 
@@ -221,9 +223,18 @@ pub async fn run_report_scheduler(
         if ev.track_id == 0 {
             continue;
         }
-        // The periodic floor only fires while actually playing; edge notifications
-        // (transitions + the driver's periodic) always report.
-        if via_interval && !ev.is_playing {
+        // A loading stream is not audible yet, so the player reports
+        // not-playing: the report must still go out (that IS the buffering
+        // signal the controller needs). Cleared as soon as audio starts, which
+        // is also the edge that flips the report back to OK.
+        let is_buffering = buffering.is_buffering(ev.track_id);
+        if ev.is_playing {
+            buffering.finish(ev.track_id);
+        }
+
+        // The periodic floor only fires while actually playing (or buffering);
+        // edge notifications (transitions + the driver's periodic) always report.
+        if via_interval && !ev.is_playing && !is_buffering {
             continue;
         }
 
@@ -237,10 +248,19 @@ pub async fn run_report_scheduler(
             }
         };
 
-        let playing_state = if ev.is_playing {
+        // While buffering, report PLAYING + BUFFERING: the intent is to play,
+        // we just have no audio yet. (StreamCore32 reports playing_state
+        // UNKNOWN here; PLAYING keeps the controller's transport populated and
+        // the buffer_state carries the "loading" meaning.)
+        let playing_state = if ev.is_playing || is_buffering {
             PLAYING_STATE_PLAYING
         } else {
             PLAYING_STATE_PAUSED
+        };
+        let buffer_state = if is_buffering {
+            BUFFER_STATE_BUFFERING
+        } else {
+            BUFFER_STATE_OK
         };
         // `report_playback_state` wants MILLISECONDS; the player reports seconds.
         let position_ms = (ev.position as i64) * 1000;
@@ -253,6 +273,7 @@ pub async fn run_report_scheduler(
             position_ms,
             duration_ms,
             ev.track_id,
+            buffer_state,
         )
         .await;
     }

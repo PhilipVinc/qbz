@@ -168,6 +168,12 @@ pub struct DaemonQconnectService {
     /// receivers join active after a handoff; qobuz-proxy parity). Never armed
     /// on the account path, which keeps the desktop anti-steal join.
     handoff_join_pending: Arc<std::sync::atomic::AtomicBool>,
+    /// Which track is still filling its buffer — written by the renderer
+    /// engine, read by the report scheduler so the controller is told
+    /// BUFFERING instead of being shown a healthy buffer over silence.
+    buffering: Arc<engine::BufferingLatch>,
+    /// Report-tick wakeup, shared with the engine so a load reports at once.
+    report_notify: Arc<tokio::sync::Notify>,
 }
 
 impl DaemonQconnectService {
@@ -232,7 +238,12 @@ impl DaemonQconnectService {
         // next connect. Unset/unknown -> Software (the OD4 default).
         let volume_mode =
             engine::VolumeMode::from_kv(transport::load_volume_mode_at(&self.settings_db).as_deref());
-        let engine = DaemonRendererEngine::new(Arc::clone(&self.runtime), volume_mode);
+        let engine = DaemonRendererEngine::new(
+            Arc::clone(&self.runtime),
+            volume_mode,
+            Arc::clone(&self.buffering),
+            Arc::clone(&self.report_notify),
+        );
         let sink = Arc::new(DaemonEventSink::new(engine, Arc::clone(&sync_state)));
         let app = Arc::new(QconnectApp::new(
             Arc::clone(&transport),
@@ -642,6 +653,8 @@ pub fn start(
         ops: Mutex::new(()),
         takeover_task: std::sync::Mutex::new(None),
         handoff_join_pending: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        buffering: Arc::new(engine::BufferingLatch::default()),
+        report_notify: Arc::clone(&report_notify),
     });
 
     // Local pairing surface (KV `pairing` = on|off, default on; port from KV
@@ -703,8 +716,15 @@ pub fn start(
     // connect installs a runtime).
     let scheduler_inner = Arc::clone(&service.inner);
     let scheduler_runtime = Arc::clone(&service.runtime);
+    let scheduler_buffering = Arc::clone(&service.buffering);
     let report_task = Some(tokio::spawn(async move {
-        report::run_report_scheduler(report_notify, scheduler_inner, scheduler_runtime).await;
+        report::run_report_scheduler(
+            report_notify,
+            scheduler_inner,
+            scheduler_runtime,
+            scheduler_buffering,
+        )
+        .await;
     }));
 
     // Queue-publish subscriber (publish.rs): debounced CoreEvent::QueueUpdated ->

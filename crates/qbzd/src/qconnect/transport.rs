@@ -156,6 +156,13 @@ pub const AUDIO_QUALITY_HIRES_LEVEL2: i32 = 4;
 const VOLUME_REMOTE_CONTROL_ALLOWED: i32 = 2;
 /// Renderer buffer-state wire value for OK/ready (mirrors the Tauri adapter).
 pub const BUFFER_STATE_OK: i32 = 2;
+/// Renderer buffer-state wire value for "filling the buffer, not yet audible"
+/// (`BufferState.BUFFER_STATE_BUFFERING`, field 2 of the protocol's
+/// RendererState). Reported while a stream is loading so the controller shows a
+/// loading state instead of advancing its progress bar against silence — the
+/// progressive feeder can take seconds to reach a deep resume position, and
+/// claiming OK the whole time is what made the app rubber-band.
+pub const BUFFER_STATE_BUFFERING: i32 = 1;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QconnectDeviceCapabilitiesPayload {

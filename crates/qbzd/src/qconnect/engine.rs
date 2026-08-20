@@ -90,20 +90,83 @@ pub struct DaemonRendererEngine {
     /// concurrent hi-res downloads that starve the new track's startup buffer
     /// (5-8 s starts observed on a Pi).
     current_feeder: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// DAEMON-ONLY: the track whose buffer is still filling, so renderer
+    /// reports can say BUFFERING (see `BufferingLatch`).
+    buffering: Arc<BufferingLatch>,
+    /// Pulsed when buffering starts so the report scheduler tells the
+    /// controller within milliseconds instead of at its next 2 s tick.
+    report_notify: Arc<tokio::sync::Notify>,
+}
+
+/// Which track is filling its buffer, shared between the renderer engine (the
+/// writer) and the report scheduler (the reader). A stream is "buffering" from
+/// the moment its feeder opens until the player actually starts producing
+/// audio — on a deep resume that is several seconds of downloading plus a
+/// sample pre-skip, during which the controller deserves a loading state.
+#[derive(Default)]
+pub struct BufferingLatch(std::sync::Mutex<Option<u64>>);
+
+impl BufferingLatch {
+    /// Mark `track_id` as buffering (replacing any previous track).
+    pub fn begin(&self, track_id: u64) {
+        if let Ok(mut guard) = self.0.lock() {
+            *guard = Some(track_id);
+        }
+    }
+
+    /// Clear the latch once `track_id` is audible. Ignores a stale clear for a
+    /// track that has already been superseded.
+    pub fn finish(&self, track_id: u64) {
+        if let Ok(mut guard) = self.0.lock() {
+            if *guard == Some(track_id) {
+                *guard = None;
+            }
+        }
+    }
+
+    pub fn is_buffering(&self, track_id: u64) -> bool {
+        self.0
+            .lock()
+            .map(|guard| *guard == Some(track_id))
+            .unwrap_or(false)
+    }
+
+    /// The track currently buffering, for report sites that have no track id of
+    /// their own (the active-renderer-ready report).
+    pub fn current(&self) -> Option<u64> {
+        self.0.lock().ok().and_then(|guard| *guard)
+    }
 }
 
 impl DaemonRendererEngine {
-    pub fn new(runtime: Arc<AppRuntime<DaemonAdapter>>, volume_mode: VolumeMode) -> Self {
+    pub fn new(
+        runtime: Arc<AppRuntime<DaemonAdapter>>,
+        volume_mode: VolumeMode,
+        buffering: Arc<BufferingLatch>,
+        report_notify: Arc<tokio::sync::Notify>,
+    ) -> Self {
         Self {
             runtime,
             volume_mode,
             current_feeder: std::sync::Mutex::new(None),
+            buffering,
+            report_notify,
         }
     }
 
     /// Abort the previous track's feeder (no-op when none). The dropped
     /// FailGuard marks the OLD writer errored, which is correct — that buffer
     /// belongs to the abandoned source.
+    /// Buffer state to report right now: BUFFERING while a stream is still
+    /// filling, else OK.
+    pub fn buffer_state(&self) -> i32 {
+        if self.buffering.current().is_some() {
+            super::transport::BUFFER_STATE_BUFFERING
+        } else {
+            super::transport::BUFFER_STATE_OK
+        }
+    }
+
     fn abort_current_feeder(&self) {
         if let Ok(mut guard) = self.current_feeder.lock() {
             if let Some(prev) = guard.take() {
@@ -241,6 +304,13 @@ impl QconnectRendererEngine for DaemonRendererEngine {
         // next one (see `current_feeder`).
         self.abort_current_feeder();
 
+        // DAEMON-ONLY: tell the controller we are loading. The stream is not
+        // audible until the feeder reaches `start_position_secs` and the
+        // pre-skip completes; the report scheduler clears this once the player
+        // starts producing audio.
+        self.buffering.begin(track_id);
+        self.report_notify.notify_one();
+
         let player = self.core().player();
         let stream_result = super::remote_stream::stream_remote_track_into_player(
             &player,
@@ -344,6 +414,25 @@ async fn download_remote_audio(url: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn buffering_latch_tracks_one_track_at_a_time() {
+        let latch = BufferingLatch::default();
+        assert!(!latch.is_buffering(7), "nothing is buffering initially");
+
+        latch.begin(7);
+        assert!(latch.is_buffering(7));
+        assert!(!latch.is_buffering(8), "only the loading track buffers");
+
+        // A track change supersedes: the old track's late clear must not
+        // release the new track's buffering state.
+        latch.begin(8);
+        latch.finish(7);
+        assert!(latch.is_buffering(8), "stale clear must be ignored");
+
+        latch.finish(8);
+        assert!(!latch.is_buffering(8), "audible track is no longer buffering");
+    }
 
     #[test]
     fn software_mode_applies_and_reports_real() {

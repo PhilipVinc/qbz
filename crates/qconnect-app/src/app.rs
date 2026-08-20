@@ -744,13 +744,17 @@ where
     }
 }
 
+/// Buffer health to accompany a state echo. This report mirrors a SetState back
+/// to the cloud and has no view of the feeder, so it can only say "nothing is
+/// wrong with the buffer" — the real BUFFERING signal comes from the renderer's
+/// own report path, which knows whether a stream is still filling.
+///
+/// It used to pass the playing-state number straight through for STOPPED,
+/// which happens to be `BUFFER_STATE_BUFFERING` on the wire: a stopped
+/// renderer was telling controllers it was buffering.
 fn infer_buffer_state(playing_state: Option<i32>) -> Option<i32> {
-    match playing_state {
-        Some(2) | Some(3) => Some(2),
-        Some(1) => Some(1),
-        Some(value) => Some(value),
-        None => None,
-    }
+    const BUFFER_STATE_OK: i32 = 2;
+    playing_state.map(|_| BUFFER_STATE_OK)
 }
 
 /// BLOCKING OPEN QUESTION: the Qobuz `queue_hash` (field #100) algorithm is

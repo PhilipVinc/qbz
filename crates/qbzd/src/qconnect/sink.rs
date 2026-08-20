@@ -31,7 +31,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use super::engine::DaemonRendererEngine;
-use super::transport::{resolve_local_identity, BUFFER_STATE_OK};
+use super::transport::resolve_local_identity;
 
 /// Concrete `QconnectApp` type used by the daemon adapter.
 pub type DaemonQconnectApp = QconnectApp<NativeWsTransport, DaemonEventSink>;
@@ -88,7 +88,10 @@ impl DaemonEventSink {
             queue_version,
             serde_json::json!({
                 "is_active": true,
-                "buffer_state": BUFFER_STATE_OK,
+                // A takeback SetActive force-streams the current track, so this
+                // report can land while that stream is still filling — claiming
+                // OK there is the same lie the periodic report used to tell.
+                "buffer_state": self.engine.buffer_state(),
                 "queue_version": {
                     "major": queue_version.major,
                     "minor": queue_version.minor

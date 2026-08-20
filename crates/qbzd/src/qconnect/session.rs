@@ -297,10 +297,28 @@ pub async fn deferred_renderer_join(
             .unwrap_or(0),
         None => 0,
     };
+    // FIX (c) (daemon-copy only): report the player's REAL state, not a
+    // hardcoded stopped-at-zero. A RECONNECTION rejoin (and a pairing takeover
+    // that lands mid-playback) happens while audio is live, and announcing
+    // "stopped, 0:00" made the controller show 0:00 and treat us as idle until
+    // the next report tick corrected it. Same reasoning as FIX (a) below for
+    // volume. Position is MILLISECONDS on the wire; the player reports seconds.
+    let live = runtime.core().get_playback_state();
+    let live_is_current = live.track_id != 0 && Some(live.track_id) == current_track_id;
+    let report_playing_state = if live_is_current && live.is_playing {
+        qconnect_app::renderer::PLAYING_STATE_PLAYING
+    } else {
+        PLAYING_STATE_STOPPED
+    };
+    let report_position_ms = if live_is_current {
+        (live.position as i64) * 1000
+    } else {
+        0
+    };
     let mut state_report_payload = json!({
-        "playing_state": PLAYING_STATE_STOPPED,
+        "playing_state": report_playing_state,
         "buffer_state": BUFFER_STATE_OK,
-        "current_position": 0,
+        "current_position": report_position_ms,
         "duration": duration_secs,
         "queue_version": {
             "major": queue_version_ref.major,
