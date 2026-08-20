@@ -192,11 +192,27 @@ pub enum StreamSeekMode {
 }
 
 /// How far ahead of the download head a read may sit before we prefer a
-/// fresh range request over waiting. Re-opening a body costs a round trip
-/// plus TLS, so a short forward hop is cheaper to wait out; 512KB is well
-/// under a second of hi-res FLAC on any connection fast enough to stream
-/// one in the first place.
-const FORWARD_WAIT_BYTES: u64 = 512 * 1024;
+/// fresh range request over waiting for the bytes already on their way.
+///
+/// Sized from a measured resume, because the cost is lopsided and one bad
+/// call cascades. Qobuz FLACs carry STREAMINFO as their only metadata
+/// block — no SEEKTABLE — so Symphonia cannot look a timestamp up and
+/// bisects instead, probing a few offsets that converge on the target. In
+/// a 106s resume trace the first probe landed 33 MB ahead (a genuine jump,
+/// worth a request) and the second only 803 KB ahead. At 512 KB that
+/// second probe re-opened the body, which moved its start past the third
+/// and fourth probes and turned both into holes needing their own
+/// requests: one avoidable re-open became three, and two of the four cost
+/// ~5 s of CDN time-to-first-byte on a cold offset. Waiting out those
+/// 803 KB would have cost ~280 ms and left the following probes inside
+/// already-buffered data.
+///
+/// So: generous enough to swallow a bisection (its window halves each
+/// step, starting under a megabyte once the byte-rate estimate is close),
+/// while a real jump is orders of magnitude further out and still gets its
+/// request. 2 MB is under a second of download on any link fast enough to
+/// stream hi-res at all.
+const FORWARD_WAIT_BYTES: u64 = 2 * 1024 * 1024;
 
 /// One contiguous run of downloaded bytes, covering
 /// `[offset, offset + data.len())` of the source file.
@@ -1680,12 +1696,13 @@ mod tests {
             initial_buffer_bytes: 4,
             max_buffer_bytes: 8 * 1024 * 1024,
         };
-        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(4 * 1024 * 1024));
+        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(64 * 1024 * 1024));
         assert!(source.supports_range_requests());
         writer.push_chunk(&[7u8; 1024]).unwrap();
 
-        // The reader jumps a megabyte ahead — well past FORWARD_WAIT_BYTES.
-        let target = 2 * 1024 * 1024;
+        // The reader jumps 32 MB ahead — a real seek, orders of magnitude
+        // past FORWARD_WAIT_BYTES.
+        let target = 32 * 1024 * 1024;
         let mut reader = source.create_reader();
         let handle = thread::spawn(move || {
             let mut buf = [0u8; 4];
@@ -1740,6 +1757,46 @@ mod tests {
         // The sequential download reaches the reader on its own.
         writer.push_chunk(&[2u8; 64 * 1024]).unwrap();
         assert_eq!(&handle.join().unwrap(), &[2u8, 2u8]);
+    }
+
+    #[test]
+    fn bisection_probe_just_ahead_of_the_head_waits_for_it() {
+        // The offsets are the ones a real 106s resume produced. Symphonia
+        // has no seek table to consult, so after jumping to 34,165,359 it
+        // probes 35,002,642 — 803 KB past the download head. Re-opening
+        // there would move the body's start past the probes that follow
+        // (which converge back down) and turn each into its own request, so
+        // this hop has to be waited out.
+        let config = StreamingConfig {
+            initial_buffer_bytes: 4,
+            max_buffer_bytes: 100 * 1024 * 1024,
+        };
+        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(72_332_363));
+        feed(&writer, to_eof(34_165_359), &[9u8; 15_619]);
+        assert_eq!(source.primary_offset(), 0);
+
+        let mut reader = source.create_reader();
+        let handle = thread::spawn(move || {
+            let mut buf = [0u8; 1];
+            reader.seek(SeekFrom::Start(35_002_642)).unwrap();
+            reader.read(&mut buf).unwrap();
+            buf[0]
+        });
+
+        thread::sleep(Duration::from_millis(50));
+        assert!(
+            writer.take_request().is_none(),
+            "an 803 KB hop must be waited out - re-opening there strands the probes behind it"
+        );
+
+        // The live body reaches it on its own, and the probes that converge
+        // back down are then served from the buffer, not the network.
+        writer.push_chunk(&[8u8; 900_000]).unwrap();
+        assert_eq!(handle.join().unwrap(), 8);
+        let mut back = source.create_reader();
+        assert_eq!(back.seek(SeekFrom::Start(34_584_000)).unwrap(), 34_584_000);
+        assert_eq!(back.seek(SeekFrom::Start(34_374_679)).unwrap(), 34_374_679);
+        assert!(writer.take_request().is_none());
     }
 
     #[test]
@@ -1849,12 +1906,12 @@ mod tests {
             initial_buffer_bytes: 8,
             max_buffer_bytes: 8 * 1024 * 1024,
         };
-        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(4 * 1024 * 1024));
+        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(64 * 1024 * 1024));
         writer.push_chunk(&[0u8; 1024]).unwrap();
         // 1024 bytes from byte 0 clears the 8-byte floor.
         assert!(source.has_min_buffer());
 
-        let target = 2 * 1024 * 1024;
+        let target = 32 * 1024 * 1024;
         let mut reader = source.create_reader();
         let handle = thread::spawn(move || {
             let _ = reader.seek(SeekFrom::Start(target));
