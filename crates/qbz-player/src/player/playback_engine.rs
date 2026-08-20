@@ -13,7 +13,7 @@ use qbz_audio::AlsaDirectStream;
 use qbz_audio::JackStream;
 use rodio::{mixer::Mixer, Player as RodioPlayer, Source};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -86,6 +86,11 @@ pub enum PlaybackEngine {
         /// Signals that the writer thread has consumed a source and moved to next
         source_transition: Arc<AtomicBool>,
         hardware_volume: bool,
+        /// Software volume for the writer thread, as f32 bits — the same
+        /// idiom `SharedState::volume` and the normalization `gain_atomic`
+        /// use. Only read when `hardware_volume` is false; unity means the
+        /// writer passes samples through untouched.
+        volume: Arc<AtomicU32>,
     },
     /// Native JACK output (#263 Tier 3). Mirrors AlsaDirect (gapless source queue
     /// + a single long-lived feeder thread), but the feeder resamples each source
@@ -136,6 +141,7 @@ impl PlaybackEngine {
         let duration_frames = Arc::new(AtomicU64::new(0));
         let source_queue = Arc::new(SourceQueue::new());
         let source_transition = Arc::new(AtomicBool::new(false));
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
 
         // Spawn the single long-lived writer thread
         let handle = {
@@ -146,6 +152,7 @@ impl PlaybackEngine {
             let dur_c = duration_frames.clone();
             let queue_c = source_queue.clone();
             let transition_c = source_transition.clone();
+            let volume_c = volume.clone();
             let channels = stream.channels();
 
             thread::spawn(move || {
@@ -157,6 +164,7 @@ impl PlaybackEngine {
                     dur_c,
                     queue_c,
                     transition_c,
+                    volume_c,
                     channels,
                 );
             })
@@ -172,6 +180,7 @@ impl PlaybackEngine {
             playback_thread: Some(handle),
             source_transition,
             hardware_volume,
+            volume,
         }
     }
 
@@ -495,6 +504,7 @@ impl PlaybackEngine {
             Self::AlsaDirect {
                 stream,
                 hardware_volume,
+                volume: software_volume,
                 ..
             } => {
                 if *hardware_volume {
@@ -505,9 +515,13 @@ impl PlaybackEngine {
                         }
                     }
                 } else {
-                    log::debug!(
-                        "[ALSA Direct Engine] Hardware volume control disabled (use DAC/amplifier)"
-                    );
+                    // Hand it to the writer thread to apply. This branch used to
+                    // do nothing at all, which left a DAC with no mixer element
+                    // (a fixed-output design like the Schiit Modius) with no
+                    // volume control whatsoever the moment playback went direct
+                    // — the controlling app's slider moved and the level did
+                    // not. Unity is still bit-perfect: see alsa_writer_thread.
+                    software_volume.store(volume.to_bits(), Ordering::Relaxed);
                 }
             }
             #[cfg(target_os = "linux")]
@@ -650,6 +664,7 @@ impl PlaybackEngine {
 /// When a source ends, seamlessly picks up the next one from the queue
 /// (gapless transition). If no next source is available, drains the ALSA
 /// buffer and waits for the next source or a stop signal.
+#[allow(clippy::too_many_arguments)]
 fn alsa_writer_thread(
     stream: Arc<AlsaDirectStream>,
     is_playing: Arc<AtomicBool>,
@@ -658,6 +673,7 @@ fn alsa_writer_thread(
     duration_frames: Arc<AtomicU64>,
     source_queue: Arc<SourceQueue<BoxedSampleIter>>,
     source_transition: Arc<AtomicBool>,
+    volume: Arc<AtomicU32>,
     channels: u16,
 ) {
     const CHUNK_FRAMES: usize = 8192;
@@ -712,6 +728,18 @@ fn alsa_writer_thread(
                     source_ended = true;
                     break;
                 }
+            }
+        }
+
+        // Software volume, applied here because this is the last place the
+        // samples exist as f32. Unity is the bit-perfect case and costs one
+        // atomic load per chunk rather than a multiply per sample, so a
+        // `locked` volume mode (which pins the level at 100%) leaves the
+        // stream untouched. Attenuation only, so this cannot clip.
+        let gain = f32::from_bits(volume.load(Ordering::Relaxed));
+        if gain != 1.0 {
+            for sample in buffer_f32.iter_mut() {
+                *sample *= gain;
             }
         }
 
