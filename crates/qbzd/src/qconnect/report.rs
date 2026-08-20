@@ -223,9 +223,7 @@ pub async fn run_report_scheduler(
     runtime: Arc<AppRuntime<DaemonAdapter>>,
     buffering: Arc<super::engine::BufferingLatch>,
 ) {
-    use qconnect_app::renderer::{
-        PLAYING_STATE_PAUSED, PLAYING_STATE_PLAYING, PLAYING_STATE_UNKNOWN,
-    };
+    use qconnect_app::renderer::{PLAYING_STATE_PAUSED, PLAYING_STATE_PLAYING};
 
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(2_000));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -281,17 +279,17 @@ pub async fn run_report_scheduler(
             }
         };
 
-        // While buffering, report UNKNOWN + BUFFERING, the pair StreamCore32
-        // sends during a load. PLAYING + BUFFERING was tried first, on the
-        // theory that the buffer_state alone carries the "loading" meaning and
-        // PLAYING keeps the controller's transport populated — but the app
-        // ignores buffer_state when the playing state looks decided, and shows
-        // a play indicator parked at 0:00 for the whole load instead of a
-        // loading state. Leaving the playing state undecided is what makes the
-        // controller treat the renderer as busy rather than playing.
-        let playing_state = if is_buffering {
-            PLAYING_STATE_UNKNOWN
-        } else if ev.is_playing {
+        // While buffering, report PLAYING + BUFFERING — the pair the official
+        // client itself sends. Observed from the desktop app's own renderer
+        // reports while IT buffers: playing_state 2, buffer_state 1, position
+        // and duration populated, repeated for the whole load.
+        //
+        // UNKNOWN was tried (StreamCore32 uses it) and is worse here: for a
+        // fresh track the position is 0, which the wire omits, so an UNKNOWN
+        // report carries neither a state nor a position and the controller drew
+        // nothing at all during a next-track load. The loading state comes from
+        // buffer_state; the playing state's job is to say we intend to play.
+        let playing_state = if ev.is_playing || is_buffering {
             PLAYING_STATE_PLAYING
         } else {
             PLAYING_STATE_PAUSED
