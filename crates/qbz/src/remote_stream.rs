@@ -179,6 +179,15 @@ pub async fn probe_remote_stream_info(url: &str) -> Result<RemoteStreamInfo, Str
     })
 }
 
+/// One response header as a string for logging, or `-` when absent.
+fn header_str(headers: &reqwest::header::HeaderMap, name: &str) -> String {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("-")
+        .to_string()
+}
+
 /// Why the body loop stopped.
 enum BodyEnd {
     /// The body ran out: the plan is filled, or the server closed early.
@@ -261,12 +270,14 @@ pub async fn download_and_stream_remote_track(
             request = request.header("Range", plan.range_header());
         }
 
+        let sent = Instant::now();
         let response = request.send().await.map_err(|err| {
             format!(
                 "start remote streaming request failed: {}",
                 describe_reqwest_error(&err)
             )
         })?;
+        let opened_ms = sent.elapsed().as_millis();
 
         if !response.status().is_success() {
             return Err(format!(
@@ -296,13 +307,21 @@ pub async fn download_and_stream_remote_track(
         // came back unranged has no such bound - it is the whole file.
         let plan_limit = if honors_range { plan.byte_len() } else { None };
 
-        if !plan.is_whole_file() {
+        // A ranged read at an offset the edge does not hold has measured
+        // ~5 s of time-to-first-byte on this CDN, while a fresh connection
+        // to it costs 150 ms — so the wait is the edge filling its cache,
+        // not our client. `x-cache` says which it was (TCP_HIT vs
+        // TCP_MISS), and pairing it with the elapsed time is what makes
+        // that attributable rather than guessed at.
+        if !plan.is_whole_file() || opened_ms > 1000 {
             log::info!(
-                "[{}/STREAMING] Track {} body open at byte {} ({})",
+                "[{}/STREAMING] Track {} body open at byte {} ({}) in {}ms [x-cache: {}]",
                 log_tag,
                 track_id,
                 plan.offset,
-                plan.range_header()
+                plan.range_header(),
+                opened_ms,
+                header_str(response.headers(), "x-cache")
             );
         }
 

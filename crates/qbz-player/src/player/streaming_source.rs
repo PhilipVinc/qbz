@@ -214,6 +214,25 @@ pub enum StreamSeekMode {
 /// stream hi-res at all.
 const FORWARD_WAIT_BYTES: u64 = 2 * 1024 * 1024;
 
+/// How far *before* the target a re-opened body starts when the reader is
+/// walking backwards.
+///
+/// A probe behind the body we are already streaming can only be a decoder
+/// bisecting for a frame boundary — nothing else reads backwards into a
+/// region it just skipped. Symphonia's walk then continues downward, and
+/// each step would strand the next one in another hole: a measured 91s
+/// resume went 32.31 MB, 31.47 MB, 31.06 MB, 30.85 MB, four requests where
+/// two of them cost ~5 s of CDN time-to-first-byte. Starting the body a
+/// megabyte early puts the rest of the walk inside bytes we are about to
+/// hold anyway, and `FORWARD_WAIT_BYTES` covers the gap between the body's
+/// start and the probe that asked for it.
+///
+/// Kept below `FORWARD_WAIT_BYTES` so the reader waits for its own target
+/// rather than immediately asking again, and small enough that streaming
+/// through it costs a fraction of a second on any link that can carry
+/// hi-res.
+const SEEK_LOOKBEHIND_BYTES: u64 = 1024 * 1024;
+
 /// One contiguous run of downloaded bytes, covering
 /// `[offset, offset + data.len())` of the source file.
 struct BufferSegment {
@@ -700,14 +719,29 @@ impl BufferedMediaSource {
         if !state.should_request(pos) {
             return;
         }
+        // Reading backwards into a region we skipped means the decoder is
+        // bisecting, and the walk carries on downward from here — so fetch
+        // from a little earlier and let the rest of it land in buffered
+        // bytes. See SEEK_LOOKBEHIND_BYTES.
+        let walking_back = pos < state.range_start;
+        let fetch_from = if walking_back {
+            pos.saturating_sub(SEEK_LOOKBEHIND_BYTES)
+        } else {
+            pos
+        };
         log::info!(
-            "Streaming buffer: requesting range from byte {} (download head at {}, {} bytes held)",
-            pos,
+            "Streaming buffer: requesting range from byte {}{} (download head at {}, {} bytes held)",
+            fetch_from,
+            if walking_back {
+                format!(" for a backward probe at {pos}")
+            } else {
+                String::new()
+            },
             state.write_pos,
             state.downloaded()
         );
         state.primary_offset = pos;
-        state.pending_request = Some(pos);
+        state.pending_request = Some(fetch_from);
         self.shared.wanted.notify_one();
     }
 }
@@ -1800,6 +1834,51 @@ mod tests {
     }
 
     #[test]
+    fn a_backward_probe_fetches_from_before_itself() {
+        // The offsets a real 91s resume produced. After jumping to
+        // 32,311,596 Symphonia walks back down — 31,475,334 then
+        // 31,057,203 then 30,848,137 — and each step used to strand the
+        // next one in a hole of its own.
+        let config = StreamingConfig {
+            initial_buffer_bytes: 4,
+            max_buffer_bytes: 200 * 1024 * 1024,
+        };
+        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(108_323_214));
+        feed(&writer, to_eof(32_311_596), &[9u8; 19_801]);
+
+        let mut reader = source.create_reader();
+        let handle = thread::spawn(move || {
+            let mut buf = [0u8; 1];
+            reader.seek(SeekFrom::Start(31_475_334)).unwrap();
+            reader.read(&mut buf).unwrap();
+            buf[0]
+        });
+
+        let plan = loop {
+            if let Some(plan) = writer.take_request() {
+                break plan;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        // Fetched from a megabyte before the probe, not from the probe.
+        assert_eq!(plan.offset, 31_475_334 - 1024 * 1024);
+        // But the buffer-fill gate still measures from where playback is.
+        assert_eq!(source.primary_offset(), 31_475_334);
+
+        // Streaming that body through the probe covers the rest of the
+        // walk, so nothing below it asks for the network again.
+        feed(&writer, plan, &[7u8; 1024 * 1024 + 64]);
+        assert_eq!(handle.join().unwrap(), 7);
+        let mut back = source.create_reader();
+        assert_eq!(back.seek(SeekFrom::Start(31_057_203)).unwrap(), 31_057_203);
+        assert_eq!(back.seek(SeekFrom::Start(30_848_137)).unwrap(), 30_848_137);
+        assert!(
+            writer.take_request().is_none(),
+            "the descending walk must be served from the buffer, not re-opened"
+        );
+    }
+
+    #[test]
     fn holes_are_backfilled_before_the_stream_reports_complete() {
         let config = StreamingConfig {
             initial_buffer_bytes: 4,
@@ -1836,34 +1915,37 @@ mod tests {
 
     #[test]
     fn a_pending_request_outranks_backfill() {
+        const MB: u64 = 1024 * 1024;
         let config = StreamingConfig {
             initial_buffer_bytes: 4,
-            max_buffer_bytes: 100,
+            max_buffer_bytes: 16 * MB as usize,
         };
-        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(30));
-        // Header plus a jumped-to tail: 10..20 is the hole waiting to be
-        // backfilled.
-        writer.push_chunk(b"0123456789").unwrap();
-        feed(&writer, to_eof(20), b"UUUUUUUUUU");
+        let (source, writer) = BufferedMediaSource::new_seekable(config, Some(8 * MB));
+        // Header plus a jumped-to tail: 1 MB .. 6 MB is the hole waiting to
+        // be backfilled.
+        writer.push_chunk(&[1u8; MB as usize]).unwrap();
+        feed(&writer, to_eof(6 * MB), &[6u8; 2 * MB as usize]);
 
-        // A reader now needs byte 15, inside that hole.
+        // A reader now needs a byte inside that hole.
         let mut reader = source.create_reader();
         let handle = thread::spawn(move || {
-            let _ = reader.seek(SeekFrom::Start(15));
+            let _ = reader.seek(SeekFrom::Start(4 * MB));
         });
         thread::sleep(Duration::from_millis(50));
 
-        // Playback comes first: the feeder is sent to 15 and runs to EOF,
-        // not to the bounded gap that starts at 10.
+        // Playback comes first: the feeder is sent to the probe (a
+        // lookbehind early, since it reads backwards) and runs to EOF, not
+        // to the bounded gap that starts at 1 MB.
         let plan = writer.next_plan().unwrap();
-        assert_eq!(plan.offset, 15);
+        assert_eq!(plan.offset, 3 * MB);
         assert_eq!(plan.end, None, "the live body runs to EOF, not to a bound");
-        feed(&writer, plan, b"FGHIJ");
+        assert_eq!(source.primary_offset(), 4 * MB);
+        feed(&writer, plan, &[3u8; MB as usize + 16]);
         handle.join().unwrap();
 
         // What is left of the hole is what backfill picks up next.
         let gap = writer.next_plan().unwrap();
-        assert_eq!((gap.offset, gap.end), (10, Some(15)));
+        assert_eq!((gap.offset, gap.end), (MB, Some(3 * MB)));
     }
 
     #[test]
