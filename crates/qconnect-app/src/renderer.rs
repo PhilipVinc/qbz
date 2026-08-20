@@ -169,16 +169,16 @@ pub async fn ensure_remote_track_loaded(
     track_id: u64,
     max_audio_quality: Option<i32>,
     start_position_secs: u64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     {
         let state = sync_state.lock().await;
         if is_recent_load_attempt(&state, track_id) {
-            return Ok(());
+            return Ok(false);
         }
     }
     let playback_state = engine.get_playback_state();
     if !should_reload_remote_track(&playback_state, track_id) {
-        return Ok(());
+        return Ok(false);
     }
 
     {
@@ -195,6 +195,7 @@ pub async fn ensure_remote_track_loaded(
     engine
         .start_track_stream(track_id, quality, duration_secs, start_position_secs)
         .await
+        .map(|()| true)
 }
 
 /// Force a (re)stream of `track_id` at `start_position_secs` when BECOMING the
@@ -220,16 +221,16 @@ pub async fn force_remote_track_stream(
     track_id: u64,
     max_audio_quality: Option<i32>,
     start_position_secs: u64,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let playback_state = engine.get_playback_state();
     if playback_state.track_id == track_id && engine.has_loaded_audio() {
-        return Ok(());
+        return Ok(false);
     }
 
     {
         let state = sync_state.lock().await;
         if is_recent_load_attempt(&state, track_id) {
-            return Ok(());
+            return Ok(false);
         }
     }
     {
@@ -246,6 +247,7 @@ pub async fn force_remote_track_stream(
     engine
         .start_track_stream(track_id, quality, duration_secs, start_position_secs)
         .await
+        .map(|()| true)
 }
 
 pub async fn apply_remote_loop_mode(
@@ -273,6 +275,15 @@ pub async fn apply_renderer_command(
             ..
         } => {
             let resolved_playing_state = renderer_state.playing_state.or(*playing_state);
+            // Position this command started a fresh stream at, if it did. The
+            // protected streaming path already begins playback there (it waits
+            // for the buffer and pre-skips), so the seek block below must not
+            // ALSO seek to it: the engine's reported position is still the
+            // previous track's at that moment, making the comparison
+            // meaningless, and the seek either gets dropped for being past the
+            // buffered watermark or lands later and rebuilds the engine,
+            // redoing the whole skip.
+            let mut stream_started_at: Option<u64> = None;
             let mut projection_renderer_state = renderer_state.clone();
             if projection_renderer_state.current_track.is_none() {
                 projection_renderer_state.current_track = current_track.clone();
@@ -348,7 +359,7 @@ pub async fn apply_renderer_command(
                             .or(*current_position_ms)
                             .map(|ms| ms / 1000)
                             .unwrap_or(0);
-                        if let Err(err) = ensure_remote_track_loaded(
+                        match ensure_remote_track_loaded(
                             engine,
                             sync_state,
                             command_track.track_id,
@@ -357,10 +368,12 @@ pub async fn apply_renderer_command(
                         )
                         .await
                         {
-                            log::warn!(
+                            Ok(true) => stream_started_at = Some(start_position_secs),
+                            Ok(false) => {}
+                            Err(err) => log::warn!(
                                 "[QConnect] Failed to load remote track {}: {err}",
                                 command_track.track_id
-                            );
+                            ),
                         }
                     }
                 }
@@ -390,7 +403,7 @@ pub async fn apply_renderer_command(
                                 .or(*current_position_ms)
                                 .map(|ms| ms / 1000)
                                 .unwrap_or(0);
-                            if let Err(err) = force_remote_track_stream(
+                            match force_remote_track_stream(
                                 engine,
                                 sync_state,
                                 track_id,
@@ -399,9 +412,11 @@ pub async fn apply_renderer_command(
                             )
                             .await
                             {
-                                log::warn!(
+                                Ok(true) => stream_started_at = Some(start_position_secs),
+                                Ok(false) => {}
+                                Err(err) => log::warn!(
                                     "[QConnect] Cold-start load of remote track {track_id} failed: {err}"
-                                );
+                                ),
                             }
                         } else {
                             engine.resume()?;
@@ -452,7 +467,19 @@ pub async fn apply_renderer_command(
                 // to defend against in commit 147bcbd7. If hiccups return,
                 // revert this change and reintroduce a more targeted echo
                 // detector (UUID-based) instead of the all-or-nothing gate.
-                if !is_echo_reset && current_pos_secs.abs_diff(target_secs) > 2 {
+                // The stream this command just started already begins at
+                // `target_secs` (see `stream_started_at`), so a seek here is
+                // pure waste — and harmful: it either logs "past buffered
+                // watermark" and is dropped, or applies later and rebuilds the
+                // engine, re-running a multi-second sample pre-skip.
+                let redundant_after_load = stream_started_at
+                    .map(|started| started.abs_diff(target_secs) <= 2)
+                    .unwrap_or(false);
+                if redundant_after_load {
+                    log::info!(
+                        "[QConnect] SetState seek skipped: stream already started at {target_secs}s"
+                    );
+                } else if !is_echo_reset && current_pos_secs.abs_diff(target_secs) > 2 {
                     log::info!(
                         "[QConnect] SetState seek: current={}s target={}s",
                         current_pos_secs,
@@ -1172,6 +1199,72 @@ mod tests {
             "load must resume at the handed-off position"
         );
         assert_eq!(calls.resumes, 0, "no bare resume on a cold engine");
+        assert!(
+            calls.seeks.is_empty(),
+            "the load already starts at the position; a seek here is dropped for \
+             being past the buffered watermark, or rebuilds the engine and \
+             re-runs a multi-second sample pre-skip"
+        );
+    }
+
+    /// A peer track-change (position 0) must not seek either: the fresh stream
+    /// already starts at 0, while the engine still reports the PREVIOUS track's
+    /// position, so the comparison that drives the seek is meaningless.
+    #[tokio::test]
+    async fn apply_renderer_command_track_change_does_not_seek_after_load() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 7,
+            position: 84, // still the outgoing track's position
+            ..Default::default()
+        };
+        engine.queue_tracks = vec![mock_queue_track(7), mock_queue_track(8)];
+        engine.queue_index = Some(0);
+        engine.loaded_audio = true;
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PLAYING),
+            current_position_ms: Some(0),
+            current_track: Some(qi(8, 1)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        let calls = engine.calls();
+        assert_eq!(calls.start_track_streams, vec![8], "loads the new track");
+        assert_eq!(calls.start_positions, vec![0]);
+        assert!(calls.seeks.is_empty(), "no redundant seek after the load");
+    }
+
+    /// A genuine mid-track seek (no load this command) still reaches the engine.
+    #[tokio::test]
+    async fn apply_renderer_command_real_seek_still_applies() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 7,
+            position: 10,
+            ..Default::default()
+        };
+        engine.queue_tracks = vec![mock_queue_track(7)];
+        engine.queue_index = Some(0);
+        engine.loaded_audio = true;
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: None,
+            current_position_ms: Some(90_000),
+            current_track: None,
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        let calls = engine.calls();
+        assert!(
+            calls.start_track_streams.is_empty(),
+            "no load: the track is already playing"
+        );
+        assert_eq!(calls.seeks, vec![90], "a real seek must still be honored");
     }
 
     /// The cold-start load never fires while audio is loaded: a resume during
