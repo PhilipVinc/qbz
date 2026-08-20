@@ -148,6 +148,21 @@ pub fn should_reload_remote_track(playback_state: &PlaybackState, track_id: u64)
 
 /// Returns true if a load attempt for `track_id` was registered within the
 /// dedup window (see `LOAD_ATTEMPT_DEDUP_WINDOW`).
+/// The most recent position reported by a renderer that is NOT us — the peer we
+/// are taking the render back from. Falls back to `None` when the session has
+/// only us (or nobody has reported a position), leaving the caller on its own
+/// last-known position.
+fn latest_peer_position_ms(state: &QconnectRemoteSyncState) -> Option<u64> {
+    let local_id = state.session.local_renderer_id;
+    state
+        .session_renderer_states
+        .iter()
+        .filter(|(renderer_id, _)| Some(**renderer_id) != local_id)
+        .filter(|(_, renderer)| renderer.current_position_ms.is_some())
+        .max_by_key(|(_, renderer)| renderer.updated_at_ms)
+        .and_then(|(_, renderer)| renderer.current_position_ms)
+}
+
 fn is_recent_load_attempt(state: &QconnectRemoteSyncState, track_id: u64) -> bool {
     match state.last_load_attempt {
         Some((tid, ts)) => tid == track_id && ts.elapsed() < LOAD_ATTEMPT_DEDUP_WINDOW,
@@ -570,8 +585,21 @@ pub async fn apply_renderer_command(
                 // available". Resume at the handed-off position so a long
                 // track / audiobook does not restart from 0.
                 if let Some(current) = renderer_state.current_track.as_ref() {
-                    let start_position_secs = renderer_state
-                        .current_position_ms
+                    // Resume where the PEER actually got to. Our own
+                    // renderer_state.current_position_ms only advances from
+                    // SetState commands addressed to US, so once a peer carries
+                    // on playing past the point we handed off, it is stale:
+                    // playing here to 0:30, moving output to the phone,
+                    // listening to 1:10 there and taking the render back
+                    // restarted at 0:30. The session's per-renderer states hold
+                    // each peer's own position reports, so prefer the freshest
+                    // report from a renderer that is not us.
+                    let peer_position_ms = {
+                        let state = sync_state.lock().await;
+                        latest_peer_position_ms(&state)
+                    };
+                    let start_position_secs = peer_position_ms
+                        .or(renderer_state.current_position_ms)
                         .map(|ms| ms / 1000)
                         .unwrap_or(0);
                     if let Err(err) = force_remote_track_stream(
@@ -941,6 +969,7 @@ pub async fn align_queue_cursor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::QconnectSessionRendererState;
     use std::sync::{Arc, Mutex as StdMutex};
 
     use async_trait::async_trait;
@@ -1318,6 +1347,72 @@ mod tests {
         let calls = engine.calls();
         assert_eq!(calls.start_track_streams, vec![9], "the play still loads");
         assert_eq!(calls.stops, 0, "the handoff stop echo must not stop us");
+    }
+
+    /// Taking the render back must resume where the PEER got to, not where we
+    /// left off: playing here to 0:30, handing output to the phone, listening
+    /// to 1:10 there and taking it back restarted at 0:30, because our own
+    /// renderer state only advances from commands addressed to us.
+    #[tokio::test]
+    async fn apply_renderer_command_setactive_resumes_at_the_peer_position() {
+        let engine = MockEngine::new();
+        let sync = sync();
+        {
+            let mut state = sync.lock().await;
+            state.session.local_renderer_id = Some(5);
+            // Us: stale, from when we last held the render.
+            state.session_renderer_states.insert(
+                5,
+                QconnectSessionRendererState {
+                    current_position_ms: Some(30_000),
+                    updated_at_ms: 1_000,
+                    ..Default::default()
+                },
+            );
+            // The peer that has been playing since: fresher report.
+            state.session_renderer_states.insert(
+                1,
+                QconnectSessionRendererState {
+                    current_position_ms: Some(70_000),
+                    updated_at_ms: 2_000,
+                    ..Default::default()
+                },
+            );
+        }
+        let cmd = RendererCommand::SetActive { active: true };
+        // The cloud's view of OUR renderer still carries the handoff position.
+        let renderer_state = QConnectRendererState {
+            current_track: Some(qi(7, 0)),
+            current_position_ms: Some(30_000),
+            ..Default::default()
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &renderer_state)
+            .await
+            .unwrap();
+        let calls = engine.calls();
+        assert_eq!(calls.start_track_streams, vec![7]);
+        assert_eq!(
+            calls.start_positions,
+            vec![70],
+            "takeback must resume at the peer's position, not our stale one"
+        );
+    }
+
+    /// With no peer report, the takeback still uses our own last-known position.
+    #[tokio::test]
+    async fn apply_renderer_command_setactive_falls_back_to_own_position() {
+        let engine = MockEngine::new();
+        let sync = sync();
+        let cmd = RendererCommand::SetActive { active: true };
+        let renderer_state = QConnectRendererState {
+            current_track: Some(qi(7, 0)),
+            current_position_ms: Some(45_000),
+            ..Default::default()
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &renderer_state)
+            .await
+            .unwrap();
+        assert_eq!(engine.calls().start_positions, vec![45]);
     }
 
     /// The echo can also name a DIFFERENT track than the one we just started:
