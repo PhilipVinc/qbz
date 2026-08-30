@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use qbz_models::{QueueTrack, RepeatMode, Track};
 use qbz_player::PlaybackState;
+use qconnect_core::QueueItem;
 use tokio::sync::Mutex;
 
 use crate::queue_resolution::{
@@ -155,6 +156,37 @@ fn is_recent_load_attempt(state: &QconnectRemoteSyncState, track_id: u64) -> boo
     }
 }
 
+/// The position a `SetState` frame actually specifies, in milliseconds.
+///
+/// The command's own `current_position_ms` is authoritative: it arrives in the
+/// same frame as the track it names. The cloud's retained renderer view
+/// (`renderer_state.current_position_ms`) is only a fallback, and preferring it
+/// was a bug — `qconnect_core::apply_renderer_command` updates `current_track`
+/// and `current_position_ms` INDEPENDENTLY, each only when the command carries
+/// it. So an ordinary track change (new `current_track`, no position) leaves the
+/// retained position sitting at the OUTGOING track's: playing 20 s of a track
+/// and pressing next started the next track 20 s in, both by loading the stream
+/// there and by seeking there right afterwards (moOde forum, the_bertrum, three
+/// 10.3.3 boxes).
+///
+/// So the retained position counts only for a frame that names neither a track
+/// nor a position — the state-only shape, which is the takeback this fallback
+/// exists for: `SetActive` lands before the cloud knows our `current_track`, and
+/// the renderer view is then the only thing carrying where the peer left off.
+///
+/// A frame that names a NEW track without a position means "from the start".
+fn frame_position_ms(
+    command_position_ms: Option<u64>,
+    command_track: Option<&QueueItem>,
+    renderer_state: &QConnectRendererState,
+) -> Option<u64> {
+    match (command_position_ms, command_track) {
+        (Some(ms), _) => Some(ms),
+        (None, Some(_)) => None,
+        (None, None) => renderer_state.current_position_ms,
+    }
+}
+
 /// Load a remote track into the engine, deduped against echoed SetState frames.
 /// Records the attempt BEFORE dispatching the load (the audio thread updates
 /// `playback_state.track_id` only after the engine appends the source, so the
@@ -290,6 +322,11 @@ pub async fn apply_renderer_command(
             // buffered watermark or lands later and rebuilds the engine,
             // redoing the whole skip.
             let mut stream_started_at: Option<u64> = None;
+            // Resolved once and used by BOTH the load below and the seek at the
+            // end of this arm: they must agree, or the load starts the track in
+            // the right place and the seek immediately drags it elsewhere.
+            let frame_position_ms =
+                frame_position_ms(*current_position_ms, current_track.as_ref(), renderer_state);
             let mut projection_renderer_state = renderer_state.clone();
             if projection_renderer_state.current_track.is_none() {
                 projection_renderer_state.current_track = current_track.clone();
@@ -355,16 +392,13 @@ pub async fn apply_renderer_command(
                         // by align_queue_cursor + ensure_remote_track_loaded
                         // below; legitimate seek-to-start from a peer
                         // controller can use the seek path with target>1s.
-                        // Resume the load at the cloud's reported position (same
-                        // source the seek block below uses). For a normal peer
-                        // track-change this is ~0; on a takeback whose first load
-                        // lands here it is the peer's position, so we stream from
-                        // there instead of from 0 + an ignored forward seek.
-                        let start_position_secs = renderer_state
-                            .current_position_ms
-                            .or(*current_position_ms)
-                            .map(|ms| ms / 1000)
-                            .unwrap_or(0);
+                        // Resume the load at the position this frame specifies
+                        // (same source the seek block below uses). For a normal
+                        // peer track-change that is 0; on a takeback whose first
+                        // load lands here it is the peer's position, so we stream
+                        // from there instead of from 0 + an ignored forward seek.
+                        let start_position_secs =
+                            frame_position_ms.map(|ms| ms / 1000).unwrap_or(0);
                         match ensure_remote_track_loaded(
                             engine,
                             sync_state,
@@ -437,11 +471,8 @@ pub async fn apply_renderer_command(
                         let cold_track = projection_renderer_state.current_track.as_ref();
                         if cold_engine && cold_track.is_some() {
                             let track_id = cold_track.map(|t| t.track_id).unwrap_or(0);
-                            let start_position_secs = renderer_state
-                                .current_position_ms
-                                .or(*current_position_ms)
-                                .map(|ms| ms / 1000)
-                                .unwrap_or(0);
+                            let start_position_secs =
+                                frame_position_ms.map(|ms| ms / 1000).unwrap_or(0);
                             match force_remote_track_stream(
                                 engine,
                                 sync_state,
@@ -486,9 +517,7 @@ pub async fn apply_renderer_command(
                 }
             }
 
-            if let Some(position_ms) =
-                renderer_state.current_position_ms.or(*current_position_ms)
-            {
+            if let Some(position_ms) = frame_position_ms {
                 let playback_state = engine.get_playback_state();
                 let current_pos_secs = playback_state.position;
                 let target_secs = position_ms / 1000;
@@ -1277,6 +1306,86 @@ mod tests {
         assert_eq!(calls.start_track_streams, vec![8], "loads the new track");
         assert_eq!(calls.start_positions, vec![0]);
         assert!(calls.seeks.is_empty(), "no redundant seek after the load");
+    }
+
+    /// moOde forum (the_bertrum, three 10.3.3 boxes): "play 20 seconds of a
+    /// track then skip to the next and the next track starts at 20 seconds in".
+    ///
+    /// The cloud's reducer updates `current_track` and `current_position_ms`
+    /// independently, each only when the command carries it. A next-track frame
+    /// names the new track and NO position, so the renderer view handed to us
+    /// already says track 8 while still holding track 7's 20 s. Preferring that
+    /// retained position broke the new track twice over — the load started
+    /// there, and the seek block then drove it there again.
+    #[tokio::test]
+    async fn apply_renderer_command_track_change_ignores_the_outgoing_position() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 7,
+            position: 20,
+            ..Default::default()
+        };
+        engine.queue_tracks = vec![mock_queue_track(7), mock_queue_track(8)];
+        engine.queue_index = Some(0);
+        engine.loaded_audio = true;
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PLAYING),
+            current_position_ms: None, // a track change carries no position
+            current_track: Some(qi(8, 1)),
+            next_track: None,
+        };
+        // What the reducer leaves behind: the new track, the OLD position.
+        let renderer_state = QConnectRendererState {
+            current_position_ms: Some(20_000),
+            current_track: Some(qi(8, 1)),
+            ..Default::default()
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &renderer_state)
+            .await
+            .unwrap();
+        let calls = engine.calls();
+        assert_eq!(calls.start_track_streams, vec![8], "loads the new track");
+        assert_eq!(
+            calls.start_positions,
+            vec![0],
+            "a track change with no position of its own starts from the beginning"
+        );
+        assert!(
+            calls.seeks.is_empty(),
+            "and nothing drags it to the outgoing track's position afterwards"
+        );
+    }
+
+    /// The other half of that rule: a frame that names NEITHER a track nor a
+    /// position is the takeback shape — SetActive landed before the cloud knew
+    /// our current_track — and there the retained renderer position is the only
+    /// thing carrying where the peer left off, so it must still be honored.
+    #[tokio::test]
+    async fn apply_renderer_command_state_only_resume_uses_the_retained_position() {
+        let engine = MockEngine::new(); // cold: no loaded audio
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PLAYING),
+            current_position_ms: None,
+            current_track: None,
+            next_track: None,
+        };
+        let renderer_state = QConnectRendererState {
+            current_position_ms: Some(106_000),
+            current_track: Some(qi(9, 0)),
+            ..Default::default()
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &renderer_state)
+            .await
+            .unwrap();
+        let calls = engine.calls();
+        assert_eq!(calls.start_track_streams, vec![9]);
+        assert_eq!(
+            calls.start_positions,
+            vec![106],
+            "resume the peer's position rather than restarting the track"
+        );
     }
 
     /// The peer whose render we just took over stops its own local playback,
