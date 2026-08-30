@@ -896,13 +896,16 @@ fn try_init_stream_with_backend(
         skip_sink_switch: audio_settings.skip_sink_switch,
     };
 
-    // For ALSA backend with hw: devices, try direct ALSA first (Linux only)
+    // For ALSA backend with a directly-openable device, try direct ALSA first
+    // (Linux only)
     #[cfg(target_os = "linux")]
     if backend_type == AudioBackendType::Alsa {
-        // Check if device is hw: or plughw:
+        // hw:/plughw:/front:, or a PCM somebody named in an ALSA config
         if let Some(ref device_id) = config.device_id {
-            if qbz_audio::AlsaDirectStream::is_hw_device(device_id) {
-                log::info!("Detected hw: device, using ALSA Direct for bit-perfect playback");
+            if qbz_audio::AlsaDirectStream::supports_direct_open(device_id) {
+                log::info!(
+                    "Device '{device_id}' can be opened directly, using ALSA Direct for bit-perfect playback"
+                );
 
                 // Downcast backend to AlsaBackend to access try_create_direct_stream
                 if let Some(alsa_backend) = backend

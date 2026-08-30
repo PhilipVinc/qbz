@@ -712,10 +712,10 @@ impl AlsaBackend {
     ) -> Option<Result<(super::AlsaDirectStream, super::backend::BitPerfectMode), String>> {
         let device_id = config.device_id.as_ref()?;
 
-        // Only use direct ALSA for hw:/plughw:/front: devices
-        if !super::AlsaDirectStream::is_hw_device(device_id) {
+        // Only use direct ALSA for hw:/plughw:/front: devices and named PCMs
+        if !super::AlsaDirectStream::supports_direct_open(device_id) {
             log::info!(
-                "[ALSA Backend] Device '{}' is not hw:/plughw:/front:, using CPAL",
+                "[ALSA Backend] Device '{}' is a generic alias, using CPAL",
                 device_id
             );
             return None;

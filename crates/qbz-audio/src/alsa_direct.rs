@@ -933,6 +933,45 @@ impl AlsaDirectStream {
             || device_id.starts_with("plughw:")
             || device_id.starts_with("front:CARD=")
     }
+
+    /// Whether the PCM direct path may open `device_id` by name.
+    ///
+    /// Wider than [`is_hw_device`], which stays as-is because the DSD paths
+    /// (DoP, native DSD) really do need a raw card: their formats cannot
+    /// survive any plugin in the way.
+    ///
+    /// A bare ALSA PCM name — no `:` — is one somebody defined on purpose, in
+    /// `/etc/alsa/conf.d` or `.asoundrc`, and it should be opened as written.
+    /// moOde is the case that forced this: its renderers are required to output
+    /// to the virtual `_audioout` device, which is where moOde routes CamillaDSP,
+    /// the equalizers, crossfeed and the multiroom sender, and which is a bare
+    /// `type copy` passthrough to the card when none of those are inserted.
+    /// Sending that through CPAL instead would open it at CPAL's chosen rate and
+    /// resample every Hi-Res track; opened directly, `type copy` hands our rate
+    /// straight to the slave and the track reaches the DAC untouched.
+    ///
+    /// The generic aliases are excluded: those name a sound server rather than a
+    /// device, and CPAL negotiates with them better than we would.
+    pub fn supports_direct_open(device_id: &str) -> bool {
+        const GENERIC_ALIASES: &[&str] = &[
+            "default",
+            "sysdefault",
+            "pulse",
+            "pipewire",
+            "jack",
+            "null",
+            "oss",
+            "speex",
+            "upmix",
+            "vdownmix",
+        ];
+        if Self::is_hw_device(device_id) {
+            return true;
+        }
+        !device_id.is_empty()
+            && !device_id.contains(':')
+            && !GENERIC_ALIASES.contains(&device_id)
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -968,5 +1007,38 @@ impl AlsaDirectStream {
     /// Check if device is a bit-perfect hardware device (always false on non-Linux)
     pub fn is_hw_device(_device_id: &str) -> bool {
         false
+    }
+
+    pub fn supports_direct_open(_device_id: &str) -> bool {
+        false
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::AlsaDirectStream;
+
+    #[test]
+    fn hardware_ids_open_directly() {
+        for id in ["hw:0,0", "hw:CARD=Modius,DEV=0", "plughw:1,0", "front:CARD=X"] {
+            assert!(AlsaDirectStream::supports_direct_open(id), "{id}");
+        }
+    }
+
+    /// moOde requires its renderers to output to `_audioout` (or `btstream`
+    /// when Bluetooth owns the output). Routing those through CPAL would open
+    /// them at CPAL's rate and resample every Hi-Res track.
+    #[test]
+    fn moode_virtual_devices_open_directly() {
+        assert!(AlsaDirectStream::supports_direct_open("_audioout"));
+        assert!(AlsaDirectStream::supports_direct_open("btstream"));
+    }
+
+    /// A sound server is not a device: CPAL negotiates with these better.
+    #[test]
+    fn generic_aliases_go_through_cpal() {
+        for id in ["default", "sysdefault", "pulse", "pipewire", "jack", ""] {
+            assert!(!AlsaDirectStream::supports_direct_open(id), "{id}");
+        }
     }
 }
