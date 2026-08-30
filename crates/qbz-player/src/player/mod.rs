@@ -47,6 +47,7 @@ use qbz_audio::{
     BitPerfectMode, DiagnosticSource, DynamicAmplify, LoudnessAnalyzer, LoudnessCache,
     TappedSource, VisualizerTap,
 };
+use qbz_cache::TrackBytes;
 use qbz_models::{AssetOrigin, ExternalStreamAsset, Quality, StreamQualityInfo};
 use qbz_qobuz::QobuzClient;
 
@@ -54,7 +55,7 @@ use qbz_qobuz::QobuzClient;
 enum AudioCommand {
     /// Play audio data with track ID, duration, and audio specs
     Play {
-        data: Vec<u8>,
+        data: TrackBytes,
         track_id: u64,
         duration_secs: u64,
         sample_rate: u32,
@@ -100,7 +101,7 @@ enum AudioCommand {
     ReleaseDevice,
     /// Append next track to current engine for gapless playback (Rodio only)
     PlayNext {
-        data: Vec<u8>,
+        data: TrackBytes,
         track_id: u64,
         sample_rate: u32,
         channels: u16,
@@ -122,17 +123,17 @@ enum AudioCommand {
 struct GaplessPending {
     track_id: u64,
     duration_secs: u64,
-    data: Vec<u8>,
+    data: TrackBytes,
     normalization_gain: Option<f32>,
 }
 
 struct CursorMediaSource {
-    inner: Cursor<Vec<u8>>,
+    inner: Cursor<TrackBytes>,
     len: u64,
 }
 
 impl CursorMediaSource {
-    fn new(data: Vec<u8>) -> Self {
+    fn new(data: TrackBytes) -> Self {
         let len = data.len() as u64;
         Self {
             inner: Cursor::new(data),
@@ -178,8 +179,8 @@ fn cpal_device_name(device: &rodio::cpal::Device) -> Option<String> {
         .map(|description| description.name().to_string())
 }
 
-fn decode_with_symphonia(data: &[u8]) -> Result<AudioSpecs, String> {
-    let source = Box::new(CursorMediaSource::new(data.to_vec())) as Box<dyn MediaSource>;
+fn decode_with_symphonia(data: &TrackBytes) -> Result<AudioSpecs, String> {
+    let source = Box::new(CursorMediaSource::new(data.clone())) as Box<dyn MediaSource>;
     let mss = MediaSourceStream::new(source, Default::default());
 
     let mut hint = Hint::new();
@@ -275,17 +276,17 @@ struct AudioMetadata {
 }
 
 #[allow(dead_code)]
-fn extract_audio_metadata(data: &[u8]) -> Result<(u32, u16), String> {
+fn extract_audio_metadata(data: &TrackBytes) -> Result<(u32, u16), String> {
     let meta = extract_audio_metadata_full(data)?;
     Ok((meta.sample_rate, meta.channels))
 }
 
-fn extract_audio_metadata_full(data: &[u8]) -> Result<AudioMetadata, String> {
+fn extract_audio_metadata_full(data: &TrackBytes) -> Result<AudioMetadata, String> {
     // For non-isomp4 files (FLAC, etc.), try symphonia directly to get all metadata
     // Symphonia gives us bits_per_sample which rodio doesn't expose
 
     // Use symphonia probe for codec params (no decode needed)
-    let source = Box::new(CursorMediaSource::new(data.to_vec())) as Box<dyn MediaSource>;
+    let source = Box::new(CursorMediaSource::new(data.clone())) as Box<dyn MediaSource>;
     let mss = MediaSourceStream::new(source, Default::default());
 
     let mut hint = Hint::new();
@@ -334,7 +335,7 @@ fn extract_audio_metadata_full(data: &[u8]) -> Result<AudioMetadata, String> {
 /// cache entry should be bypassed and the track re-fetched. Ported from
 /// the Tauri `cached_quality_below_requested` helper: an unparseable
 /// buffer is assumed compatible.
-fn cached_quality_below_requested(data: &[u8], requested: Quality) -> bool {
+fn cached_quality_below_requested(data: &TrackBytes, requested: Quality) -> bool {
     let meta = match extract_audio_metadata_full(data) {
         Ok(m) => m,
         Err(_) => return false,
@@ -360,8 +361,11 @@ fn cached_quality_below_requested(data: &[u8], requested: Quality) -> bool {
 /// `None` when Symphonia cannot probe the format (rodio-only MP4/AAC) or
 /// the seek fails; the caller then falls back to `decode_with_fallback` +
 /// `skip_duration`, which always works.
-fn seek_in_memory(data: &[u8], position: Duration) -> Option<Box<dyn Source<Item = f32> + Send>> {
-    let mut source = match InMemorySource::new(data.to_vec()) {
+fn seek_in_memory(
+    data: &TrackBytes,
+    position: Duration,
+) -> Option<Box<dyn Source<Item = f32> + Send>> {
+    let mut source = match InMemorySource::new(data.clone()) {
         Ok(source) => source,
         Err(err) => {
             log::warn!("Native seek: InMemorySource probe failed ({err})");
@@ -375,7 +379,7 @@ fn seek_in_memory(data: &[u8], position: Duration) -> Option<Box<dyn Source<Item
     Some(Box::new(source))
 }
 
-fn decode_with_fallback(data: &[u8]) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
+fn decode_with_fallback(data: &TrackBytes) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
     if is_isomp4(data) {
         return decode_with_symphonia(data).map(|specs| {
             log::info!("Decoded audio using symphonia fallback (isomp4)");
@@ -384,7 +388,7 @@ fn decode_with_fallback(data: &[u8]) -> Result<Box<dyn Source<Item = f32> + Send
     }
 
     let primary = panic::catch_unwind(AssertUnwindSafe(|| {
-        Decoder::new(BufReader::new(Cursor::new(data.to_vec())))
+        Decoder::new(BufReader::new(Cursor::new(data.clone())))
     }));
 
     match primary {
@@ -400,7 +404,7 @@ fn decode_with_fallback(data: &[u8]) -> Result<Box<dyn Source<Item = f32> + Send
     // Try mp4 fallback (rodio 0.22 removed Mp4Type hint)
     {
         let attempt = panic::catch_unwind(AssertUnwindSafe(|| {
-            Decoder::new_mp4(BufReader::new(Cursor::new(data.to_vec())))
+            Decoder::new_mp4(BufReader::new(Cursor::new(data.clone())))
         }));
 
         match attempt {
@@ -1670,7 +1674,7 @@ impl Player {
 
             let mut current_engine: Option<PlaybackEngine> = None;
             // Store audio data for seeking (we need to re-decode from the beginning)
-            let mut current_audio_data: Option<Vec<u8>> = None;
+            let mut current_audio_data: Option<TrackBytes> = None;
             // Store streaming source for resume (when download completes, we can get the data)
             let mut current_streaming_source: Option<Arc<BufferedMediaSource>> = None;
             // Track consecutive sink creation failures to detect broken streams
@@ -1695,7 +1699,7 @@ impl Player {
             let handle_command =
                 |command: AudioCommand,
                  current_engine: &mut Option<PlaybackEngine>,
-                 current_audio_data: &mut Option<Vec<u8>>,
+                 current_audio_data: &mut Option<TrackBytes>,
                  current_streaming_source: &mut Option<Arc<BufferedMediaSource>>,
                  stream_opt: &mut Option<StreamType>,
                  current_device_name: &mut Option<String>,
@@ -3215,7 +3219,7 @@ impl Player {
                                     /// Full file in memory: cache hit, local
                                     /// library, or a stream that finished
                                     /// downloading.
-                                    Memory(Vec<u8>),
+                                    Memory(TrackBytes),
                                     /// A still-streaming source whose feeder
                                     /// serves range requests, so the resume
                                     /// position is one request away instead of
@@ -3229,6 +3233,7 @@ impl Player {
                                     if streaming_src.is_complete() {
                                         match streaming_src.take_complete_data() {
                                             Some(data) => {
+                                                let data: TrackBytes = data.into();
                                                 log::info!("Resume: using complete streaming data ({} bytes)", data.len());
                                                 // Store it in current_audio_data for future use
                                                 *current_audio_data = Some(data.clone());
@@ -4026,7 +4031,7 @@ impl Player {
                                                     "Streaming promotion: full track buffered ({} bytes), enabling cached transition path",
                                                     full_data.len()
                                                 );
-                                                current_audio_data = Some(full_data);
+                                                current_audio_data = Some(full_data.into());
                                             }
                                         }
                                         clear_streaming_source = true;
@@ -4560,7 +4565,9 @@ impl Player {
             return Ok(());
         }
 
-        // Store the legacy download in the cache for instant replay.
+        // Store the legacy download in the cache for instant replay. Converted
+        // once here, then shared with both the cache and the audio thread.
+        let audio_data: TrackBytes = audio_data.into();
         if !skip_cache {
             self.audio_cache.insert(track_id, audio_data.clone());
         }
@@ -4696,7 +4703,7 @@ impl Player {
         client: &QobuzClient,
         track_id: u64,
         quality: Quality,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<TrackBytes> {
         // L1: in-memory cache.
         if let Some(cached) = self.audio_cache.get(track_id) {
             log::info!(
@@ -4713,6 +4720,7 @@ impl Player {
                     "[GAPLESS] Track {track_id} from DISK cache ({} bytes)",
                     audio_data.len()
                 );
+                let audio_data: TrackBytes = audio_data.into();
                 self.audio_cache.insert(track_id, audio_data.clone());
                 return Some(audio_data);
             }
@@ -4720,13 +4728,14 @@ impl Player {
 
         // CMAF full download (Akamai CDN), legacy full download as
         // fallback. Warm L1 so a re-gapless / replay skips the network.
-        let downloaded = match qbz_qobuz::cmaf::download_full(client, track_id, quality).await {
-            Ok(data) => Some(data),
+        let downloaded: Option<TrackBytes> =
+            match qbz_qobuz::cmaf::download_full(client, track_id, quality).await {
+                Ok(data) => Some(data.into()),
             Err(e) => {
                 log::warn!("[GAPLESS] CMAF failed for track {track_id}: {e}, trying legacy");
                 match client.get_stream_url_with_fallback(track_id, quality).await {
                     Ok(stream_url) => match self.download_audio(&stream_url.url).await {
-                        Ok(data) => Some(data),
+                        Ok(data) => Some(data.into()),
                         Err(e) => {
                             log::warn!("[GAPLESS] Legacy download failed for {track_id}: {e}");
                             None
@@ -4776,7 +4785,7 @@ impl Player {
                 cached.size_bytes
             );
             return Some(ExternalStreamAsset {
-                bytes: cached.data,
+                bytes: cached.data.to_vec(),
                 content_type: "audio/flac".to_string(),
                 quality: StreamQualityInfo::from_raw(0, None, None),
                 duration_secs: None,
@@ -4790,7 +4799,7 @@ impl Player {
                     "[CAST-FETCH] Track {track_id} from DISK cache ({} bytes)",
                     audio_data.len()
                 );
-                self.audio_cache.insert(track_id, audio_data.clone());
+                self.audio_cache.insert(track_id, audio_data.as_slice());
                 return Some(ExternalStreamAsset {
                     bytes: audio_data,
                     content_type: "audio/flac".to_string(),
@@ -4812,7 +4821,7 @@ impl Player {
                     q.bit_depth
                 );
                 // Warm L1 so a subsequent local replay skips the network.
-                self.audio_cache.insert(track_id, bytes.clone());
+                self.audio_cache.insert(track_id, bytes.as_slice());
                 return Some(ExternalStreamAsset {
                     bytes,
                     content_type: "audio/flac".to_string(),
@@ -4845,7 +4854,7 @@ impl Player {
                             q.format_id,
                             content_type
                         );
-                        self.audio_cache.insert(track_id, bytes.clone());
+                        self.audio_cache.insert(track_id, bytes.as_slice());
                         Some(ExternalStreamAsset {
                             bytes,
                             content_type,
@@ -5031,14 +5040,19 @@ impl Player {
     ///
     /// Bumps play generation so this call supersedes any in-flight
     /// `play_track` that has not yet applied audio.
-    pub fn play_data(&self, data: Vec<u8>, track_id: u64) -> Result<(), String> {
+    ///
+    /// Takes anything convertible into [`TrackBytes`]: a `Vec<u8>` straight off
+    /// the network is converted once here, while bytes already shared with the
+    /// cache are passed through without a copy.
+    pub fn play_data(&self, data: impl Into<TrackBytes>, track_id: u64) -> Result<(), String> {
         let _gen = self.begin_play();
         self.apply_play_data(data, track_id)
     }
 
     /// Send `Play` without bumping generation (used by `play_track` after
     /// its own `begin_play` + supersede checks).
-    fn apply_play_data(&self, data: Vec<u8>, track_id: u64) -> Result<(), String> {
+    fn apply_play_data(&self, data: impl Into<TrackBytes>, track_id: u64) -> Result<(), String> {
+        let data: TrackBytes = data.into();
         log::info!(
             "Player: Playing {} bytes of audio data for track {}",
             data.len(),
@@ -5084,7 +5098,8 @@ impl Player {
     }
 
     /// Queue next track for gapless playback (appends to current Sink without stopping)
-    pub fn play_next(&self, data: Vec<u8>, track_id: u64) -> Result<(), String> {
+    pub fn play_next(&self, data: impl Into<TrackBytes>, track_id: u64) -> Result<(), String> {
+        let data: TrackBytes = data.into();
         let meta = extract_audio_metadata_full(&data)
             .map_err(|e| format!("Failed to extract audio metadata for gapless: {}", e))?;
 

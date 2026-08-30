@@ -39,4 +39,5 @@ pub use player::{
     BufferWriter, BufferedMediaSource, FetchPlan, IncrementalStreamingSource, PlaybackEvent,
     PlaybackState, Player, SharedState, StreamSeekMode, StreamingConfig,
 };
+pub use qbz_cache::TrackBytes;
 pub use queue::QueueManager;

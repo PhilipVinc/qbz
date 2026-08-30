@@ -38,6 +38,7 @@ use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::default::{get_codecs, get_probe};
+use qbz_cache::TrackBytes;
 use tokio::sync::Notify;
 
 /// Configuration for the streaming buffer
@@ -1305,12 +1306,12 @@ impl Iterator for IncrementalStreamingSource {
 
 /// Cursor-backed MediaSource for in-memory audio data.
 struct InMemoryMediaSource {
-    inner: Cursor<Vec<u8>>,
+    inner: Cursor<TrackBytes>,
     len: u64,
 }
 
 impl InMemoryMediaSource {
-    fn new(data: Vec<u8>) -> Self {
+    fn new(data: TrackBytes) -> Self {
         let len = data.len() as u64;
         Self {
             inner: Cursor::new(data),
@@ -1366,7 +1367,7 @@ pub struct InMemorySource {
 }
 
 impl InMemorySource {
-    pub fn new(data: Vec<u8>) -> Result<Self, String> {
+    pub fn new(data: TrackBytes) -> Result<Self, String> {
         let source = Box::new(InMemoryMediaSource::new(data)) as Box<dyn MediaSource>;
         let mss = MediaSourceStream::new(source, Default::default());
 

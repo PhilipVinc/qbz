@@ -9,11 +9,20 @@ use std::time::{Duration, Instant};
 
 use crate::PlaybackCache;
 
+/// Audio bytes for one track, shared rather than copied.
+///
+/// A Hi-Res FLAC is 60-170 MB, and the same track is simultaneously held by
+/// the cache, the audio thread's resume/seek copy, and the decoder's cursor.
+/// With `Vec<u8>` each of those was a separate allocation — three to five
+/// resident copies of one track, which is what put a Pi 3B+ (1 GB) into swap
+/// during normal playback. `Arc<[u8]>` makes every hand-off a refcount bump.
+pub type TrackBytes = Arc<[u8]>;
+
 /// Cached audio data for a track
 #[derive(Clone)]
 pub struct CachedTrack {
     pub track_id: u64,
-    pub data: Vec<u8>,
+    pub data: TrackBytes,
     pub size_bytes: usize,
 }
 
@@ -94,7 +103,10 @@ impl AudioCache {
         self.playback_cache.as_ref()
     }
 
-    /// Get a track from cache if available
+    /// Get a track from cache if available.
+    ///
+    /// The clone is a refcount bump (see [`TrackBytes`]), not a copy of the
+    /// audio; callers may hold the result for as long as they need it.
     pub fn get(&self, track_id: u64) -> Option<CachedTrack> {
         let mut state = self.state.lock().unwrap();
 
@@ -161,8 +173,13 @@ impl AudioCache {
         self.state.lock().unwrap().failed.remove(&track_id);
     }
 
-    /// Insert a track into cache, evicting old entries to disk if needed
-    pub fn insert(&self, track_id: u64, data: Vec<u8>) {
+    /// Insert a track into cache, evicting old entries to disk if needed.
+    ///
+    /// Takes anything convertible into [`TrackBytes`]; passing an existing
+    /// `TrackBytes` shares the buffer the caller is already playing from,
+    /// while a `Vec<u8>` straight off the network is converted once here.
+    pub fn insert(&self, track_id: u64, data: impl Into<TrackBytes>) {
+        let data: TrackBytes = data.into();
         let size = data.len();
 
         // Don't cache if track is larger than max cache size
