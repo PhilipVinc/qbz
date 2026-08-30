@@ -36,6 +36,7 @@ pub mod mixtape;
 pub mod playback;
 pub mod purchase_serde;
 pub mod source;
+pub mod system_capabilities;
 pub mod traits;
 pub mod types;
 

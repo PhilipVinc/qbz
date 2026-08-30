@@ -4295,17 +4295,35 @@ impl Player {
             }
         });
 
-        // Two-level playback cache: L1 in memory (~400 MB), L2 on disk
-        // (~800 MB). A disk-cache failure degrades to L1-only rather than
-        // aborting player creation.
+        // Two-level playback cache: L1 in memory, L2 on disk (~800 MB). The
+        // L1 budget comes from the host's memory profile rather than a flat
+        // 400 MB: that figure is a desktop's, and on a 1 GB Pi it reserved
+        // 40 % of RAM for one subsystem, which is how qbzd ended up swapping
+        // to the SD card during ordinary playback. A disk-cache failure
+        // degrades to L1-only rather than aborting player creation.
+        let l1_max_bytes = match audio_settings.memory_cache_mb {
+            0 => {
+                let profile = qbz_models::system_capabilities::memory_profile();
+                log::info!(
+                    "[Player] L1 audio cache: {} MB (auto, from {} MB of RAM)",
+                    profile.audio_cache_l1_max_bytes / (1024 * 1024),
+                    profile.mem_total_kb / 1024
+                );
+                profile.audio_cache_l1_max_bytes
+            }
+            mb => {
+                log::info!("[Player] L1 audio cache: {mb} MB (audio.memory_cache_mb)");
+                usize::from(mb) * 1024 * 1024
+            }
+        };
         let audio_cache = match qbz_cache::PlaybackCache::new(800 * 1024 * 1024) {
             Ok(pc) => Arc::new(qbz_cache::AudioCache::with_playback_cache(
-                400 * 1024 * 1024,
+                l1_max_bytes,
                 Arc::new(pc),
             )),
             Err(e) => {
                 log::warn!("Playback disk cache unavailable: {e}; memory cache only");
-                Arc::new(qbz_cache::AudioCache::new(400 * 1024 * 1024))
+                Arc::new(qbz_cache::AudioCache::new(l1_max_bytes))
             }
         };
 

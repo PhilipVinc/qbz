@@ -43,20 +43,55 @@ pub struct MemoryProfile {
     /// (44.1 kHz / 16-bit FLAC) so each cached track stays under ~15 MB
     /// instead of ~60 MB.
     pub allow_hires_prefetch: bool,
-    /// Upper bound for the L1 (in-memory) audio cache. The default
-    /// 400 MB cap is sized for Normal-class desktops; on a Pi 3B (1 GB
-    /// total) that single subsystem could consume 40 % of RAM, which
-    /// guarantees swap thrash before the watchdog can react.
+    /// Upper bound for the L1 (in-memory) audio cache. The 400 MB figure
+    /// this is capped at is sized for Normal-class desktops; on a Pi 3B
+    /// (1 GB total) that single subsystem could consume 40 % of RAM, which
+    /// guarantees swap thrash before the watchdog can react. Scaled by
+    /// [`l1_cache_bytes_for_total_kb`] so a 2 GB Pi 5 — nominally
+    /// Normal-class — does not get a desktop's cache either.
     pub audio_cache_l1_max_bytes: usize,
+}
+
+/// Share of physical RAM the L1 audio cache may occupy, and the ceiling it is
+/// capped at.
+///
+/// A flat 400 MB was the old value at every size: ~40 % of a Pi 3B+ and ~20 %
+/// of a Pi 5 2 GB, both reported on the moOde forum as swapping during ordinary
+/// playback. One fraction covers every class — the point is to leave the rest of
+/// the box (MPD, nginx, php-fpm, the page cache) the room it needs, which is a
+/// proportional question, not a per-class one.
+///
+/// 17 % rather than a rounder number because of where it lands on real
+/// hardware: ~150 MB on a 1 GB Pi 3B+ and ~75 MB on a 512 MB Pi 3A. 150 MB is
+/// the number that matters — it still fits one Hi-Res track (~120 MB), so
+/// gapless keeps working on a 1 GB box instead of silently degrading, and
+/// `AudioCache::insert` refuses anything larger than the cap.
+const L1_CACHE_RAM_FRACTION_PCT: u64 = 17;
+const L1_CACHE_MAX_BYTES: usize = 400 * 1024 * 1024;
+
+/// L1 audio-cache budget for a host with `mem_total_kb` of RAM.
+pub fn l1_cache_bytes_for_total_kb(mem_total_kb: u64) -> usize {
+    let share = mem_total_kb
+        .saturating_mul(1024)
+        .saturating_mul(L1_CACHE_RAM_FRACTION_PCT)
+        / 100;
+    usize::try_from(share)
+        .unwrap_or(L1_CACHE_MAX_BYTES)
+        .min(L1_CACHE_MAX_BYTES)
 }
 
 impl MemoryProfile {
     /// Derive the profile from a total-memory figure (KB).
     fn from_total_kb(mem_total_kb: u64) -> Self {
-        // Threshold: 2 GiB. Anything with at least 2 GB physical RAM is
-        // assumed to have enough headroom for the WebView (~150 MB) plus
-        // 5 cached HiRes tracks (~300 MB) plus typical app overhead.
-        const NORMAL_FLOOR_KB: u64 = 2 * 1024 * 1024;
+        // Threshold: 1.75 GiB, not 2 GiB. A board sold as "2 GB" reports
+        // MemTotal slightly BELOW 2 GiB once the kernel and GPU have taken
+        // their reservations (a Pi 5 2 GB lands around 1.9 GiB), so a literal
+        // 2 GiB floor put real 2 GB hardware in the LowMemory class — and
+        // with it an L1 budget smaller than a single Hi-Res track, which
+        // stops that track being cached at all and silently kills gapless.
+        // 1.75 GiB separates 1 GB boards from 2 GB boards, which is what the
+        // split is actually for.
+        const NORMAL_FLOOR_KB: u64 = 1792 * 1024;
 
         if mem_total_kb >= NORMAL_FLOOR_KB {
             Self {
@@ -66,7 +101,7 @@ impl MemoryProfile {
                 max_initial_buffer_bytes: 2 * 1024 * 1024,
                 max_concurrent_prefetch: 2,
                 allow_hires_prefetch: true,
-                audio_cache_l1_max_bytes: 400 * 1024 * 1024,
+                audio_cache_l1_max_bytes: l1_cache_bytes_for_total_kb(mem_total_kb),
             }
         } else {
             Self {
@@ -76,7 +111,7 @@ impl MemoryProfile {
                 max_initial_buffer_bytes: 256 * 1024,
                 max_concurrent_prefetch: 1,
                 allow_hires_prefetch: false,
-                audio_cache_l1_max_bytes: 50 * 1024 * 1024,
+                audio_cache_l1_max_bytes: l1_cache_bytes_for_total_kb(mem_total_kb),
             }
         }
     }
@@ -181,16 +216,18 @@ pub fn memory_profile() -> &'static MemoryProfile {
         match profile.class {
             MemoryClass::LowMemory => {
                 log::info!(
-                    "[system] Low-memory profile active: {} MB total RAM, prefetch={}, max_initial_buffer={}KB, hires_prefetch=disabled",
+                    "[system] Low-memory profile active: {} MB total RAM, prefetch={}, max_initial_buffer={}KB, audio_cache_l1={}MB, hires_prefetch=disabled",
                     profile.mem_total_kb / 1024,
                     profile.prefetch_count,
                     profile.max_initial_buffer_bytes / 1024,
+                    profile.audio_cache_l1_max_bytes / (1024 * 1024),
                 );
             }
             MemoryClass::Normal => {
                 log::info!(
-                    "[system] Normal memory profile: {} MB total RAM",
-                    profile.mem_total_kb / 1024
+                    "[system] Normal memory profile: {} MB total RAM, audio_cache_l1={}MB",
+                    profile.mem_total_kb / 1024,
+                    profile.audio_cache_l1_max_bytes / (1024 * 1024)
                 );
             }
         }
@@ -245,10 +282,31 @@ SwapTotal:       2097152 kB
         assert_eq!(profile.max_concurrent_prefetch, 1);
         assert!(!profile.allow_hires_prefetch);
         assert!(profile.max_initial_buffer_bytes <= 256 * 1024);
-        // L1 cap must be a small fraction of total RAM — at most ~10 %
-        // of a Pi 3B, so we don't reserve four-tenths of memory for one
-        // subsystem on a 1 GB host.
-        assert!(profile.audio_cache_l1_max_bytes <= 100 * 1024 * 1024);
+        // L1 cap must be a small fraction of total RAM, not the four-tenths
+        // the old flat 400 MB reserved on a 1 GB host — but big enough to
+        // still hold one Hi-Res track, or gapless dies here.
+        assert!(profile.audio_cache_l1_max_bytes <= 160 * 1024 * 1024);
+        assert!(profile.audio_cache_l1_max_bytes >= 140 * 1024 * 1024);
+    }
+
+    #[test]
+    fn l1_cache_scales_with_ram_and_stays_under_the_ceiling() {
+        // Pi 5 2 GB: Normal-class, but must not get a desktop's 400 MB.
+        let pi5 = MemoryProfile::from_total_kb(2 * 1024 * 1024);
+        assert_eq!(
+            pi5.audio_cache_l1_max_bytes,
+            2 * 1024 * 1024 * 1024_usize * 17 / 100
+        );
+        assert!(pi5.audio_cache_l1_max_bytes < 400 * 1024 * 1024);
+        // 4 GB and up saturate at the ceiling.
+        assert_eq!(
+            MemoryProfile::from_total_kb(4 * 1024 * 1024).audio_cache_l1_max_bytes,
+            400 * 1024 * 1024
+        );
+        assert_eq!(
+            MemoryProfile::from_total_kb(32 * 1024 * 1024).audio_cache_l1_max_bytes,
+            400 * 1024 * 1024
+        );
     }
 
     #[test]
@@ -262,6 +320,10 @@ SwapTotal:       2097152 kB
     fn pi_zero_2w_512mb_resolves_to_low_memory() {
         let profile = MemoryProfile::from_total_kb(500 * 1024);
         assert_eq!(profile.class, MemoryClass::LowMemory);
+        // ~75 MB: too small for a Hi-Res track, which is correct on a box
+        // with 512 MB total, and still room for a Lossless one.
+        assert!(profile.audio_cache_l1_max_bytes <= 90 * 1024 * 1024);
+        assert!(profile.audio_cache_l1_max_bytes >= 70 * 1024 * 1024);
     }
 
     #[test]
@@ -274,9 +336,19 @@ SwapTotal:       2097152 kB
     }
 
     #[test]
-    fn machine_with_just_under_2gb_resolves_to_low_memory() {
-        let profile = MemoryProfile::from_total_kb(2 * 1024 * 1024 - 1);
+    fn machine_with_just_under_the_floor_resolves_to_low_memory() {
+        let profile = MemoryProfile::from_total_kb(1792 * 1024 - 1);
         assert_eq!(profile.class, MemoryClass::LowMemory);
+    }
+
+    #[test]
+    fn nominal_2gb_pi_resolves_to_normal() {
+        // A Pi 5 2 GB reports ~1.94 GiB of MemTotal, not a round 2 GiB. It
+        // must land Normal: its L1 budget has to fit a Hi-Res track or
+        // gapless stops working on a box that handles it fine.
+        let profile = MemoryProfile::from_total_kb(2_033_664);
+        assert_eq!(profile.class, MemoryClass::Normal);
+        assert!(profile.audio_cache_l1_max_bytes > 200 * 1024 * 1024);
     }
 
     #[test]

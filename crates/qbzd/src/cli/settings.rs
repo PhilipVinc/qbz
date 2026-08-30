@@ -73,6 +73,9 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     ("audio.stream_first_track", ApplyClass::Reload),
     ("audio.stream_buffer_seconds", ApplyClass::Reload),
     ("audio.streaming_only", ApplyClass::Reload),
+    // Read once when the player builds its cache, so neither Reinit nor Reload
+    // picks it up — it takes effect on the next daemon start.
+    ("audio.memory_cache_mb", ApplyClass::None),
     ("audio.limit_quality_to_device", ApplyClass::Reload),
     ("audio.allow_quality_fallback", ApplyClass::Reload),
     ("audio.quality_fallback_behavior", ApplyClass::Reload),
@@ -265,6 +268,24 @@ fn parse_f32(v: &str) -> Result<f32, String> {
         .map_err(|_| format!("invalid number '{v}'"))
 }
 
+/// `auto` (or `0`) hands sizing back to the host memory profile; anything else
+/// is a hard budget in MB, up to 1024.
+fn parse_memory_cache_mb(v: &str) -> Result<u16, String> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("auto") {
+        return Ok(0);
+    }
+    let n: u16 = v
+        .parse()
+        .map_err(|_| format!("invalid cache size '{v}' — expected 'auto' or 0-1024 (MB)"))?;
+    if n > 1024 {
+        return Err(format!(
+            "invalid cache size '{n}' — expected 'auto' or 0-1024 (MB)"
+        ));
+    }
+    Ok(n)
+}
+
 fn parse_stream_buffer_seconds(v: &str) -> Result<u8, String> {
     let n: u8 = v
         .trim()
@@ -338,6 +359,13 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
             "audio.stream_first_track" => render_bool(audio.stream_first_track),
             "audio.stream_buffer_seconds" => audio.stream_buffer_seconds.to_string(),
             "audio.streaming_only" => render_bool(audio.streaming_only),
+            "audio.memory_cache_mb" => {
+                if audio.memory_cache_mb == 0 {
+                    "auto".to_string()
+                } else {
+                    audio.memory_cache_mb.to_string()
+                }
+            }
             "audio.limit_quality_to_device" => render_bool(audio.limit_quality_to_device),
             "audio.allow_quality_fallback" => render_bool(audio.allow_quality_fallback),
             "audio.quality_fallback_behavior" => audio.quality_fallback_behavior.clone(),
@@ -474,6 +502,13 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         "audio.streaming_only" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
             open_audio(roots).map_err(SetError::Io)?.set_streaming_only(v).map_err(SetError::Io)?
+        }
+        "audio.memory_cache_mb" => {
+            let v = parse_memory_cache_mb(raw).map_err(SetError::Usage)?;
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_memory_cache_mb(v)
+                .map_err(SetError::Io)?
         }
         "audio.limit_quality_to_device" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;

@@ -27,6 +27,23 @@ pub struct AudioSettings {
     pub stream_buffer_seconds: u8,
     /// When true, skip L1+L2 cache writes (streaming-only mode). Offline cache still works.
     pub streaming_only: bool,
+    /// Hard budget for the L1 (in-memory) audio cache, in megabytes.
+    ///
+    /// `0` means auto: derive it from the host's RAM via
+    /// `qbz_models::system_capabilities` (17 %, capped at 400 MB), which is
+    /// right for every box we know of. An explicit value overrides that — for
+    /// a headless renderer sharing a Pi with MPD and a web stack, where the
+    /// integrator knows the budget better than a fraction does.
+    ///
+    /// Read once, when the player builds its cache: changing it needs a
+    /// daemon restart.
+    ///
+    /// Note that a value below one track's size stops that track being cached
+    /// at all (`AudioCache::insert` refuses anything over the cap), and gapless
+    /// needs the NEXT track cached — so setting this under ~120 MB disables
+    /// Hi-Res gapless, and under ~35 MB disables gapless entirely.
+    #[serde(default)]
+    pub memory_cache_mb: u16,
     /// When true, cap the REQUESTED streaming quality tier at the local output
     /// device's detected ceiling (#638 fix 3; consumed by the desktop's
     /// request-time resolution, never by the audio backends). Applies to local
@@ -110,6 +127,7 @@ impl Default for AudioSettings {
             stream_first_track: true, // On by default (opt-out)
             stream_buffer_seconds: 2, // 2 seconds initial buffer
             streaming_only: false, // Disabled by default (cache tracks for instant replay)
+            memory_cache_mb: 0,    // 0 = auto-size from host RAM
             limit_quality_to_device: false, // Opt-in. Off since 1.1.9 (#45); wired to the read-only probe in #638 fix 3
             device_max_sample_rate: None, // Set when device is selected
             device_sample_rate_limits: HashMap::new(), // Per-device limits (empty = no limit)
@@ -233,6 +251,10 @@ impl AudioSettingsStore {
             "ALTER TABLE audio_settings ADD COLUMN dsd_mode TEXT DEFAULT 'convert'",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE audio_settings ADD COLUMN memory_cache_mb INTEGER DEFAULT 0",
+            [],
+        );
 
         // Seed the single settings row on first run with the OOTB default backend
         // ("System"). INSERT OR IGNORE is a one-time seed: it only fires when the
@@ -298,7 +320,7 @@ impl AudioSettingsStore {
     pub fn get_settings(&self) -> Result<AudioSettings, String> {
         self.conn
             .query_row(
-                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode FROM audio_settings WHERE id = 1",
+                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb FROM audio_settings WHERE id = 1",
                 [],
                 |row| {
                     // Parse backend_type from JSON string
@@ -348,6 +370,7 @@ impl AudioSettingsStore {
                         dsd_mode: row
                             .get::<_, Option<String>>(22)?
                             .unwrap_or_else(default_dsd_mode),
+                        memory_cache_mb: row.get::<_, Option<i64>>(23)?.unwrap_or(0) as u16,
                     })
                 },
             )
@@ -472,6 +495,21 @@ impl AudioSettingsStore {
                 params![clamped as i64],
             )
             .map_err(|e| format!("Failed to set stream buffer seconds: {}", e))?;
+        Ok(())
+    }
+
+    /// Set the L1 audio-cache budget in MB. `0` restores auto-sizing.
+    ///
+    /// Clamped to 1024 MB: anything larger is a typo, and the L1 cache is not
+    /// where a gigabyte of RAM belongs.
+    pub fn set_memory_cache_mb(&self, megabytes: u16) -> Result<(), String> {
+        let clamped = megabytes.min(1024);
+        self.conn
+            .execute(
+                "UPDATE audio_settings SET memory_cache_mb = ?1 WHERE id = 1",
+                params![clamped as i64],
+            )
+            .map_err(|e| format!("Failed to set memory cache size: {}", e))?;
         Ok(())
     }
 
@@ -725,7 +763,8 @@ impl AudioSettingsStore {
                     sync_audio_on_startup = ?18,
                     skip_sink_switch = ?19,
                     allow_quality_fallback = ?20,
-                    reserve_dac_while_running = ?21
+                    reserve_dac_while_running = ?21,
+                    memory_cache_mb = ?22
                 WHERE id = 1",
                 params![
                     defaults.output_device,
@@ -749,6 +788,7 @@ impl AudioSettingsStore {
                     defaults.skip_sink_switch as i64,
                     defaults.allow_quality_fallback as i64,
                     defaults.reserve_dac_while_running as i64,
+                    defaults.memory_cache_mb as i64,
                 ],
             )
             .map_err(|e| format!("Failed to reset audio settings: {}", e))?;
