@@ -894,6 +894,8 @@ fn try_init_stream_with_backend(
         alsa_plugin: audio_settings.alsa_plugin,
         pw_force_bitperfect: audio_settings.pw_force_bitperfect,
         skip_sink_switch: audio_settings.skip_sink_switch,
+        alsa_mixer_device: Some(audio_settings.alsa_mixer_device.clone())
+            .filter(|d| !d.trim().is_empty()),
     };
 
     // For ALSA backend with a directly-openable device, try direct ALSA first

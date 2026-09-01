@@ -21,6 +21,15 @@ pub struct AudioSettings {
     pub backend_type: Option<AudioBackendType>, // None = auto-detect
     pub alsa_plugin: Option<AlsaPlugin>,        // Only used when backend is ALSA
     pub alsa_hardware_volume: bool,             // Use ALSA mixer for volume (only with hw: devices)
+    /// ALSA control device carrying the DAC's mixer, e.g. "hw:0" or
+    /// "hw:CARD=Modius". Empty means derive it from `output_device`, which is
+    /// right whenever that names a card.
+    ///
+    /// Set it when the output goes through a virtual PCM that has no mixer of
+    /// its own -- moOde's `_audioout`, a dmix, a user's `.asoundrc` chain --
+    /// and `alsa_hardware_volume` would otherwise have no mixer to open.
+    #[serde(default)]
+    pub alsa_mixer_device: String,
     /// When true, uncached tracks start playing via streaming instead of waiting for full download
     pub stream_first_track: bool,
     /// Initial buffer size in seconds before starting streaming playback (1-10, default 3)
@@ -124,6 +133,7 @@ impl Default for AudioSettings {
             backend_type: Some(AudioBackendType::default()),
             alsa_plugin: Some(AlsaPlugin::Hw), // Default to hw (bit-perfect)
             alsa_hardware_volume: false, // Disabled by default (maximum compatibility)
+            alsa_mixer_device: String::new(), // Empty = derive from output_device
             stream_first_track: true, // On by default (opt-out)
             stream_buffer_seconds: 2, // 2 seconds initial buffer
             streaming_only: false, // Disabled by default (cache tracks for instant replay)
@@ -255,6 +265,10 @@ impl AudioSettingsStore {
             "ALTER TABLE audio_settings ADD COLUMN memory_cache_mb INTEGER DEFAULT 0",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE audio_settings ADD COLUMN alsa_mixer_device TEXT DEFAULT ''",
+            [],
+        );
 
         // Seed the single settings row on first run with the OOTB default backend
         // ("System"). INSERT OR IGNORE is a one-time seed: it only fires when the
@@ -320,7 +334,7 @@ impl AudioSettingsStore {
     pub fn get_settings(&self) -> Result<AudioSettings, String> {
         self.conn
             .query_row(
-                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb FROM audio_settings WHERE id = 1",
+                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device FROM audio_settings WHERE id = 1",
                 [],
                 |row| {
                     // Parse backend_type from JSON string
@@ -371,6 +385,7 @@ impl AudioSettingsStore {
                             .get::<_, Option<String>>(22)?
                             .unwrap_or_else(default_dsd_mode),
                         memory_cache_mb: row.get::<_, Option<i64>>(23)?.unwrap_or(0) as u16,
+                        alsa_mixer_device: row.get::<_, Option<String>>(24)?.unwrap_or_default(),
                     })
                 },
             )
@@ -495,6 +510,18 @@ impl AudioSettingsStore {
                 params![clamped as i64],
             )
             .map_err(|e| format!("Failed to set stream buffer seconds: {}", e))?;
+        Ok(())
+    }
+
+    /// Set the ALSA control device holding the DAC's mixer. Empty restores
+    /// deriving it from the output device.
+    pub fn set_alsa_mixer_device(&self, device: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE audio_settings SET alsa_mixer_device = ?1 WHERE id = 1",
+                params![device],
+            )
+            .map_err(|e| format!("Failed to set ALSA mixer device: {}", e))?;
         Ok(())
     }
 
@@ -764,7 +791,8 @@ impl AudioSettingsStore {
                     skip_sink_switch = ?19,
                     allow_quality_fallback = ?20,
                     reserve_dac_while_running = ?21,
-                    memory_cache_mb = ?22
+                    memory_cache_mb = ?22,
+                    alsa_mixer_device = ?23
                 WHERE id = 1",
                 params![
                     defaults.output_device,
@@ -789,6 +817,7 @@ impl AudioSettingsStore {
                     defaults.allow_quality_fallback as i64,
                     defaults.reserve_dac_while_running as i64,
                     defaults.memory_cache_mb as i64,
+                    defaults.alsa_mixer_device.clone(),
                 ],
             )
             .map_err(|e| format!("Failed to reset audio settings: {}", e))?;

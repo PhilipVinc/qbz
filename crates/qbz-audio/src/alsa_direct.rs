@@ -99,6 +99,10 @@ pub struct AlsaDirectStream {
     channels: u16,
     format: Format,
     device_id: String,
+    /// ALSA control device holding the DAC's mixer, when it is not the one
+    /// `device_id` names. Set after construction (see `set_mixer_device`)
+    /// because it comes from settings, not from the PCM open.
+    mixer_device: Option<String>,
     /// D-Bus device reservation held for the entire stream lifetime
     /// (Lifetime A per the design spec). Acquired before `PCM::new()` in
     /// `Self::new()`; released on `Drop` *after* the PCM closes (see field-order
@@ -113,6 +117,32 @@ pub struct AlsaDirectStream {
     device_id: String,
 }
 
+/// The ALSA CONTROL device name for a PCM device id, for opening its mixer.
+///
+/// A mixer attaches to a control device, which is per-CARD: it takes no
+/// subdevice. So the PCM's device/subdevice component has to come off --
+/// `hw:0,0` -> `hw:0`, `hw:CARD=Modius,DEV=0` -> `hw:CARD=Modius` -- and
+/// `plughw:` has to become `hw:`, since `plughw` is a PCM plugin and names
+/// nothing in the control namespace.
+///
+/// `None` for anything that does not name a card, virtual PCMs included: they
+/// have no mixer, and that is the case `alsa_mixer_device` exists to answer.
+pub fn mixer_ctl_name(device_id: &str) -> Option<String> {
+    let rest = device_id
+        .strip_prefix("hw:")
+        .or_else(|| device_id.strip_prefix("plughw:"))
+        .or_else(|| device_id.strip_prefix("front:"))
+        .or_else(|| device_id.strip_prefix("sysdefault:"))
+        .or_else(|| device_id.strip_prefix("iec958:"))
+        .or_else(|| device_id.strip_prefix("hdmi:"))?;
+    // Keep only the card component: "0,0" -> "0", "CARD=Modius,DEV=0" -> "CARD=Modius".
+    let card = rest.split(',').next()?;
+    if card.is_empty() {
+        return None;
+    }
+    Some(format!("hw:{card}"))
+}
+
 /// Defensive settle delay between reservation acquisition and PCM open.
 ///
 /// Only applied when the reservation actually transitioned ownership (i.e.
@@ -121,6 +151,34 @@ pub struct AlsaDirectStream {
 /// `qbz-nix-docs/specs/2026-05-07-alsa-exclusive-hardening-design.md`.
 #[cfg(target_os = "linux")]
 const PIPEWIRE_VACATE_MARGIN: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Scale `selem`'s playback volume to `volume` (0.0-1.0) on every channel.
+///
+/// Per-channel failures are ignored on purpose: a mono or 2-channel element
+/// simply has no RearLeft to set, and that is not an error.
+#[cfg(target_os = "linux")]
+fn apply_playback_volume(
+    mixer_device: &str,
+    name: &str,
+    selem: &alsa::mixer::Selem<'_>,
+    volume: f32,
+) {
+    use alsa::mixer::SelemChannelId::*;
+
+    let (min, max) = selem.get_playback_volume_range();
+    let target = min + ((max - min) as f32 * volume) as i64;
+    log::info!(
+        "[ALSA Direct] Setting hardware volume on {} via '{}': {:.0}% (raw: {}/{})",
+        mixer_device,
+        name,
+        volume * 100.0,
+        target,
+        max
+    );
+    for channel in &[FrontLeft, FrontRight, FrontCenter, RearLeft, RearRight] {
+        let _ = selem.set_playback_volume(*channel, target);
+    }
+}
 
 #[cfg(target_os = "linux")]
 impl AlsaDirectStream {
@@ -257,6 +315,7 @@ impl AlsaDirectStream {
             channels,
             format: selected_format,
             device_id: device_id.to_string(),
+            mixer_device: None,
             // Last field: drops after `pcm` so the kernel-level exclusive
             // grip is released before the D-Bus bus name is freed.
             _reservation: reservation,
@@ -331,6 +390,7 @@ impl AlsaDirectStream {
             channels,
             format: Format::S32LE,
             device_id: device_id.to_string(),
+            mixer_device: None,
             // Last field: drops after `pcm` (see field-order note on the struct).
             _reservation: reservation,
         })
@@ -416,6 +476,7 @@ impl AlsaDirectStream {
                 channels,
                 format: selected.0,
                 device_id: device_id.to_string(),
+            mixer_device: None,
                 // Last field: drops after `pcm` (see field-order note).
                 _reservation: reservation,
             },
@@ -874,55 +935,78 @@ impl AlsaDirectStream {
         &self.device_id
     }
 
+    /// Name the ALSA control device holding the DAC's mixer, when it is not the
+    /// one the output device names.
+    ///
+    /// Called after construction because the value comes from settings
+    /// (`audio.alsa_mixer_device`) rather than from the PCM open. An empty or
+    /// absent value leaves the mixer derived from the output device.
+    pub fn set_mixer_device(&mut self, device: Option<String>) {
+        self.mixer_device = device.filter(|d| !d.trim().is_empty());
+    }
+
+    /// The control device this stream's hardware volume acts on: the configured
+    /// one if there is one, else derived from the PCM.
+    fn resolved_mixer_device(&self) -> Option<String> {
+        self.mixer_device
+            .clone()
+            .or_else(|| mixer_ctl_name(&self.device_id))
+    }
+
     /// Try to set hardware volume via ALSA mixer
     ///
     /// Returns error if:
+    /// - the output device names no card and no mixer device was configured
     /// - DAC doesn't have mixer controls (common for USB DACs)
     /// - Mixer API fails
     ///
     /// NOTE: Failure doesn't break playback, just means volume can't be controlled.
     pub fn set_hardware_volume(&self, volume: f32) -> Result<(), String> {
-        use alsa::mixer::SelemChannelId::*;
         use alsa::mixer::{Mixer, SelemId};
 
-        // Open mixer for device
-        let mixer = Mixer::new(&self.device_id, false)
-            .map_err(|e| format!("Failed to open mixer for {}: {}", self.device_id, e))?;
+        // A mixer attaches to a CONTROL device, which is per-card and takes no
+        // subdevice, so this is not simply `device_id` -- and when the output is
+        // a virtual PCM there is no card in the name at all, which is what
+        // `audio.alsa_mixer_device` is for.
+        let mixer_device = self.resolved_mixer_device().ok_or_else(|| {
+            format!(
+                "Output device '{}' names no card, so it has no mixer. \
+                 Set audio.alsa_mixer_device to the card holding the DAC's \
+                 volume control (e.g. hw:0).",
+                self.device_id
+            )
+        })?;
 
-        // Try to find a volume control element
-        // Common names: "Master", "PCM", "Speaker", "Headphone"
+        let mixer = Mixer::new(&mixer_device, false)
+            .map_err(|e| format!("Failed to open mixer {}: {}", mixer_device, e))?;
+
+        // Try the usual names first, in preference order.
         let control_names = ["Master", "PCM", "Speaker", "Headphone", "Digital"];
-
         for name in &control_names {
-            let selem_id = SelemId::new(name, 0);
-
-            if let Some(selem) = mixer.find_selem(&selem_id) {
-                // Check if this element has playback volume control
+            if let Some(selem) = mixer.find_selem(&SelemId::new(name, 0)) {
                 if selem.has_playback_volume() {
-                    let (min, max) = selem.get_playback_volume_range();
-                    let target = min + ((max - min) as f32 * volume) as i64;
-
-                    log::info!(
-                        "[ALSA Direct] Setting hardware volume via '{}': {:.0}% (raw: {}/{})",
-                        name,
-                        volume * 100.0,
-                        target,
-                        max
-                    );
-
-                    // Set volume on all channels
-                    for channel in &[FrontLeft, FrontRight, FrontCenter, RearLeft, RearRight] {
-                        let _ = selem.set_playback_volume(*channel, target);
-                    }
-
+                    apply_playback_volume(&mixer_device, name, &selem, volume);
                     return Ok(());
                 }
             }
         }
 
+        // Then take whatever the card does offer. Plenty of DACs name their
+        // control something not on that list ("Analogue", "DAC", "HP", the
+        // chip's own name), and refusing to look was the difference between
+        // hardware volume working and silently doing nothing.
+        for selem in mixer.iter().filter_map(alsa::mixer::Selem::new) {
+            if selem.has_playback_volume() {
+                let id = selem.get_id();
+                let name = id.get_name().unwrap_or("?");
+                apply_playback_volume(&mixer_device, name, &selem, volume);
+                return Ok(());
+            }
+        }
+
         Err(format!(
-            "No volume control found for {}. DAC may not support hardware mixer.",
-            self.device_id
+            "No playback volume control on {}. DAC may not support hardware mixer.",
+            mixer_device
         ))
     }
 
@@ -1012,6 +1096,8 @@ impl AlsaDirectStream {
     pub fn supports_direct_open(_device_id: &str) -> bool {
         false
     }
+
+    pub fn set_mixer_device(&mut self, _device: Option<String>) {}
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -1039,6 +1125,59 @@ mod tests {
     fn generic_aliases_go_through_cpal() {
         for id in ["default", "sysdefault", "pulse", "pipewire", "jack", ""] {
             assert!(!AlsaDirectStream::supports_direct_open(id), "{id}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod mixer_name_tests {
+    use super::mixer_ctl_name;
+
+    /// A mixer attaches to a CONTROL device, which is per-card and takes no
+    /// subdevice — the alsa crate documents `Mixer::new` as wanting a name
+    /// "like hw:0". Passing the PCM id straight through (`hw:CARD=Modius,DEV=0`)
+    /// could never attach, which is why hardware volume silently did nothing.
+    #[test]
+    fn strips_the_device_component() {
+        assert_eq!(mixer_ctl_name("hw:0,0").as_deref(), Some("hw:0"));
+        assert_eq!(mixer_ctl_name("hw:1,2").as_deref(), Some("hw:1"));
+        assert_eq!(
+            mixer_ctl_name("hw:CARD=Modius,DEV=0").as_deref(),
+            Some("hw:CARD=Modius")
+        );
+    }
+
+    /// `plughw` and the aliases are PCM plugins; they name nothing in the
+    /// control namespace, so they map onto the card's `hw:` control.
+    #[test]
+    fn maps_pcm_plugins_onto_the_cards_control() {
+        assert_eq!(mixer_ctl_name("plughw:0,0").as_deref(), Some("hw:0"));
+        assert_eq!(
+            mixer_ctl_name("front:CARD=Generic,DEV=0").as_deref(),
+            Some("hw:CARD=Generic")
+        );
+        assert_eq!(
+            mixer_ctl_name("iec958:CARD=sndrpihifiberry,DEV=0").as_deref(),
+            Some("hw:CARD=sndrpihifiberry")
+        );
+    }
+
+    /// A card already named without a device is left alone.
+    #[test]
+    fn accepts_a_bare_card() {
+        assert_eq!(mixer_ctl_name("hw:0").as_deref(), Some("hw:0"));
+        assert_eq!(
+            mixer_ctl_name("hw:CARD=Modius").as_deref(),
+            Some("hw:CARD=Modius")
+        );
+    }
+
+    /// Nothing to derive: these name no card, which is exactly the case
+    /// `audio.alsa_mixer_device` exists to answer.
+    #[test]
+    fn no_card_means_no_mixer() {
+        for id in ["_audioout", "btstream", "default", "pulse", "hw:", ""] {
+            assert_eq!(mixer_ctl_name(id), None, "{id}");
         }
     }
 }

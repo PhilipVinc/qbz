@@ -64,6 +64,7 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     ("audio.device", ApplyClass::Reinit),
     ("audio.alsa_plugin", ApplyClass::Reinit),
     ("audio.alsa_hardware_volume", ApplyClass::Reinit),
+    ("audio.alsa_mixer_device", ApplyClass::Reinit),
     ("audio.exclusive_mode", ApplyClass::Reinit),
     ("audio.dac_passthrough", ApplyClass::Reinit),
     ("audio.skip_sink_switch", ApplyClass::Reinit),
@@ -268,6 +269,23 @@ fn parse_f32(v: &str) -> Result<f32, String> {
         .map_err(|_| format!("invalid number '{v}'"))
 }
 
+/// `auto` (or empty) hands the mixer back to whatever the output device names.
+/// Anything else is an ALSA CONTROL name, which is per-card and carries no
+/// subdevice -- `hw:0` or `hw:CARD=Modius`, not `hw:0,0`.
+fn parse_alsa_mixer_device(v: &str) -> Result<String, String> {
+    let v = v.trim();
+    if v.is_empty() || v.eq_ignore_ascii_case("auto") {
+        return Ok(String::new());
+    }
+    if v.contains(',') {
+        return Err(format!(
+            "invalid mixer device '{v}' — an ALSA control name is per-card and takes no \
+             subdevice; use 'hw:0' rather than 'hw:0,0'"
+        ));
+    }
+    Ok(v.to_string())
+}
+
 /// `auto` (or `0`) hands sizing back to the host memory profile; anything else
 /// is a hard budget in MB, up to 1024.
 fn parse_memory_cache_mb(v: &str) -> Result<u16, String> {
@@ -351,6 +369,13 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
             "audio.device" => render_opt_string(&audio.output_device),
             "audio.alsa_plugin" => render_alsa_plugin(audio.alsa_plugin),
             "audio.alsa_hardware_volume" => render_bool(audio.alsa_hardware_volume),
+            "audio.alsa_mixer_device" => {
+                if audio.alsa_mixer_device.is_empty() {
+                    "auto".to_string()
+                } else {
+                    audio.alsa_mixer_device.clone()
+                }
+            }
             "audio.exclusive_mode" => render_bool(audio.exclusive_mode),
             "audio.dac_passthrough" => render_bool(audio.dac_passthrough),
             "audio.skip_sink_switch" => render_bool(audio.skip_sink_switch),
@@ -457,6 +482,13 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
             open_audio(roots)
                 .map_err(SetError::Io)?
                 .set_alsa_hardware_volume(v)
+                .map_err(SetError::Io)?
+        }
+        "audio.alsa_mixer_device" => {
+            let v = parse_alsa_mixer_device(raw).map_err(SetError::Usage)?;
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_alsa_mixer_device(&v)
                 .map_err(SetError::Io)?
         }
         "audio.exclusive_mode" => {

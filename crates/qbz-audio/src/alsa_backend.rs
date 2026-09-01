@@ -791,8 +791,9 @@ impl AlsaBackend {
             );
 
             match super::AlsaDirectStream::new(&hw_device, config.sample_rate, config.channels) {
-                Ok(stream) => {
+                Ok(mut stream) => {
                     log::info!("[ALSA Backend] ✓ Direct hw stream created successfully");
+                    stream.set_mixer_device(config.alsa_mixer_device.clone());
                     return Some(Ok((stream, super::backend::BitPerfectMode::DirectHardware)));
                 }
                 Err(e) => {

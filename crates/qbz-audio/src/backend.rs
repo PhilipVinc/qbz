@@ -142,6 +142,14 @@ pub struct BackendConfig {
     /// When true, skip `pactl set-default-sink` on stream creation.
     /// Preserves external routing (JACK, qjackctl, Reaper).
     pub skip_sink_switch: bool,
+
+    /// ALSA control device carrying the DAC's mixer, when it is not the one
+    /// the output device names. `None` means derive it from `device_id`.
+    ///
+    /// Needed whenever audio is routed through a virtual PCM: moOde requires
+    /// its renderers to output to `_audioout`, which has no mixer of its own,
+    /// so the card holding the volume control has to be named separately.
+    pub alsa_mixer_device: Option<String>,
 }
 
 /// Result type for backend operations
