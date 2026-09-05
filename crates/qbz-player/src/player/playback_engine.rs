@@ -498,9 +498,17 @@ impl PlaybackEngine {
     }
 
     /// Set volume (0.0 - 1.0)
+    ///
+    /// The fraction is the slider's position, not the amplitude multiplier:
+    /// software paths bend it through the configured curve
+    /// (`qbz_audio::volume_curve`), because scaling samples by the fraction
+    /// itself puts every useful listening level in the bottom tenth of the
+    /// travel. The hardware-mixer path passes it through untouched — an ALSA
+    /// mixer applies the card's own dB mapping.
     pub fn set_volume(&self, volume: f32) {
+        let software_gain = qbz_audio::volume_curve::gain_for(volume);
         match self {
-            Self::Rodio { sink } => sink.set_volume(volume),
+            Self::Rodio { sink } => sink.set_volume(software_gain),
             Self::AlsaDirect {
                 stream,
                 hardware_volume,
@@ -521,7 +529,7 @@ impl PlaybackEngine {
                     // volume control whatsoever the moment playback went direct
                     // — the controlling app's slider moved and the level did
                     // not. Unity is still bit-perfect: see alsa_writer_thread.
-                    software_volume.store(volume.to_bits(), Ordering::Relaxed);
+                    software_volume.store(software_gain.to_bits(), Ordering::Relaxed);
                 }
             }
             #[cfg(target_os = "linux")]

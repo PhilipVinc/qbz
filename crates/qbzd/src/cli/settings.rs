@@ -77,6 +77,8 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     // Read once when the player builds its cache, so neither Reinit nor Reload
     // picks it up — it takes effect on the next daemon start.
     ("audio.memory_cache_mb", ApplyClass::None),
+    // Read once when the player starts, like the cache budget above.
+    ("audio.volume_curve", ApplyClass::None),
     ("audio.limit_quality_to_device", ApplyClass::Reload),
     ("audio.allow_quality_fallback", ApplyClass::Reload),
     ("audio.quality_fallback_behavior", ApplyClass::Reload),
@@ -286,6 +288,14 @@ fn parse_alsa_mixer_device(v: &str) -> Result<String, String> {
     Ok(v.to_string())
 }
 
+/// `perceptual` (MPD's exponential mapping) or `linear` (amplitude scales with
+/// the fraction). Aliases: `mpd`/`exponential`, `amplitude`.
+fn parse_volume_curve(v: &str) -> Result<String, String> {
+    qbz_audio::volume_curve::VolumeCurve::from_key(v)
+        .map(|curve| curve.as_key().to_string())
+        .ok_or_else(|| format!("invalid volume curve '{v}' — expected 'perceptual' or 'linear'"))
+}
+
 /// `auto` (or `0`) hands sizing back to the host memory profile; anything else
 /// is a hard budget in MB, up to 1024.
 fn parse_memory_cache_mb(v: &str) -> Result<u16, String> {
@@ -391,6 +401,7 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
                     audio.memory_cache_mb.to_string()
                 }
             }
+            "audio.volume_curve" => audio.volume_curve.clone(),
             "audio.limit_quality_to_device" => render_bool(audio.limit_quality_to_device),
             "audio.allow_quality_fallback" => render_bool(audio.allow_quality_fallback),
             "audio.quality_fallback_behavior" => audio.quality_fallback_behavior.clone(),
@@ -540,6 +551,13 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
             open_audio(roots)
                 .map_err(SetError::Io)?
                 .set_memory_cache_mb(v)
+                .map_err(SetError::Io)?
+        }
+        "audio.volume_curve" => {
+            let v = parse_volume_curve(raw).map_err(SetError::Usage)?;
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_volume_curve(&v)
                 .map_err(SetError::Io)?
         }
         "audio.limit_quality_to_device" => {

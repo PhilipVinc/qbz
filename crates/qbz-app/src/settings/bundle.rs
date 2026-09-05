@@ -738,6 +738,7 @@ fn plan_audio(
                     | "alsa_hardware_volume"
                     | "alsa_mixer_device"
                     | "memory_cache_mb"
+                    | "volume_curve"
                     | "dsd_mode"
             )
             || k.eq_ignore_ascii_case("volume");
@@ -929,6 +930,12 @@ fn plan_audio_machine(
     // so it neither rides the device nor needs one.
     if let Some(v) = map.get("memory_cache_mb") {
         applied_line(plan, "audio.memory_cache_mb", v, "");
+    }
+
+    // volume_curve — how a percentage becomes a gain. Software volume only, and
+    // independent of which device or backend survives the import.
+    if let Some(v) = map.get("volume_curve") {
+        applied_line(plan, "audio.volume_curve", v, "");
     }
 
     // alsa_plugin / alsa_hardware_volume / alsa_mixer_device — apply only with a

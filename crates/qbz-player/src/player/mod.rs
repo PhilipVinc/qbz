@@ -4341,6 +4341,25 @@ impl Player {
             set_max_initial_buffer_bytes(profile.max_initial_buffer_bytes);
         }
 
+        // How a volume percentage becomes an amplitude multiplier. Read once
+        // here: the curve is a property of the host's configuration, and every
+        // engine variant applies it at the same point.
+        match qbz_audio::volume_curve::VolumeCurve::from_key(&audio_settings.volume_curve) {
+            Some(curve) => {
+                log::info!("[Player] volume curve: {}", curve.as_key());
+                qbz_audio::volume_curve::set_volume_curve(curve);
+            }
+            None => {
+                log::warn!(
+                    "[Player] unknown audio.volume_curve '{}' — using perceptual",
+                    audio_settings.volume_curve
+                );
+                qbz_audio::volume_curve::set_volume_curve(
+                    qbz_audio::volume_curve::VolumeCurve::Perceptual,
+                );
+            }
+        }
+
         let l1_max_bytes = match audio_settings.memory_cache_mb {
             0 => {
                 let profile = qbz_models::system_capabilities::memory_profile();

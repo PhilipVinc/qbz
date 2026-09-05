@@ -53,6 +53,13 @@ pub struct AudioSettings {
     /// Hi-Res gapless, and under ~35 MB disables gapless entirely.
     #[serde(default)]
     pub memory_cache_mb: u16,
+    /// How a volume percentage becomes an amplitude multiplier: `perceptual`
+    /// (MPD's exponential mapping, the default) or `linear` (the fraction
+    /// scales amplitude directly). See [`crate::volume_curve`] for why linear
+    /// makes a slider that is unusable below its top tenth. Software volume
+    /// only — an ALSA hardware mixer owns its own, already dB-scaled, mapping.
+    #[serde(default = "default_volume_curve")]
+    pub volume_curve: String,
     /// When true, cap the REQUESTED streaming quality tier at the local output
     /// device's detected ceiling (#638 fix 3; consumed by the desktop's
     /// request-time resolution, never by the audio backends). Applies to local
@@ -112,6 +119,13 @@ fn default_dsd_mode() -> String {
     "convert".to_string()
 }
 
+/// Perceptual by default: it is what every other player on the host does, and a
+/// linear amplitude fader is unusable above its bottom tenth
+/// (see [`crate::volume_curve`]).
+fn default_volume_curve() -> String {
+    crate::volume_curve::VolumeCurve::Perceptual.as_key().to_string()
+}
+
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
@@ -138,6 +152,7 @@ impl Default for AudioSettings {
             stream_buffer_seconds: 2, // 2 seconds initial buffer
             streaming_only: false, // Disabled by default (cache tracks for instant replay)
             memory_cache_mb: 0,    // 0 = auto-size from host RAM
+            volume_curve: default_volume_curve(),
             limit_quality_to_device: false, // Opt-in. Off since 1.1.9 (#45); wired to the read-only probe in #638 fix 3
             device_max_sample_rate: None, // Set when device is selected
             device_sample_rate_limits: HashMap::new(), // Per-device limits (empty = no limit)
@@ -269,6 +284,10 @@ impl AudioSettingsStore {
             "ALTER TABLE audio_settings ADD COLUMN alsa_mixer_device TEXT DEFAULT ''",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE audio_settings ADD COLUMN volume_curve TEXT DEFAULT 'perceptual'",
+            [],
+        );
 
         // Seed the single settings row on first run with the OOTB default backend
         // ("System"). INSERT OR IGNORE is a one-time seed: it only fires when the
@@ -334,7 +353,7 @@ impl AudioSettingsStore {
     pub fn get_settings(&self) -> Result<AudioSettings, String> {
         self.conn
             .query_row(
-                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device FROM audio_settings WHERE id = 1",
+                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device, volume_curve FROM audio_settings WHERE id = 1",
                 [],
                 |row| {
                     // Parse backend_type from JSON string
@@ -386,6 +405,10 @@ impl AudioSettingsStore {
                             .unwrap_or_else(default_dsd_mode),
                         memory_cache_mb: row.get::<_, Option<i64>>(23)?.unwrap_or(0) as u16,
                         alsa_mixer_device: row.get::<_, Option<String>>(24)?.unwrap_or_default(),
+                        volume_curve: row
+                            .get::<_, Option<String>>(25)?
+                            .filter(|v| !v.is_empty())
+                            .unwrap_or_else(default_volume_curve),
                     })
                 },
             )
@@ -515,6 +538,18 @@ impl AudioSettingsStore {
 
     /// Set the ALSA control device holding the DAC's mixer. Empty restores
     /// deriving it from the output device.
+    /// Set the software volume curve (`perceptual` or `linear`). Read once when
+    /// the player starts, so it takes effect on the next daemon start.
+    pub fn set_volume_curve(&self, curve: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE audio_settings SET volume_curve = ?1 WHERE id = 1",
+                params![curve],
+            )
+            .map_err(|e| format!("Failed to set volume curve: {}", e))?;
+        Ok(())
+    }
+
     pub fn set_alsa_mixer_device(&self, device: &str) -> Result<(), String> {
         self.conn
             .execute(
@@ -792,7 +827,8 @@ impl AudioSettingsStore {
                     allow_quality_fallback = ?20,
                     reserve_dac_while_running = ?21,
                     memory_cache_mb = ?22,
-                    alsa_mixer_device = ?23
+                    alsa_mixer_device = ?23,
+                    volume_curve = ?24
                 WHERE id = 1",
                 params![
                     defaults.output_device,
@@ -818,6 +854,7 @@ impl AudioSettingsStore {
                     defaults.reserve_dac_while_running as i64,
                     defaults.memory_cache_mb as i64,
                     defaults.alsa_mixer_device.clone(),
+                    defaults.volume_curve.clone(),
                 ],
             )
             .map_err(|e| format!("Failed to reset audio settings: {}", e))?;

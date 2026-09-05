@@ -55,6 +55,7 @@ pub mod network_throttle;
 pub mod output_sinks;
 pub mod settings;
 pub mod visualizer;
+pub mod volume_curve;
 
 // Re-export commonly used types
 #[cfg(target_os = "linux")]
