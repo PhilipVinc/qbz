@@ -940,13 +940,59 @@ pub async fn materialize_remote_queue(
     // `ensure_remote_track_loaded` keeps the shared dedup window, so a SetState
     // that DOES name this track right after cannot load it twice, and it
     // short-circuits when the engine already plays it.
-    if let Some(index) = selected_index {
-        let selected_track_id = queue_state.queue_items[index].track_id;
-        if current_playback_track_id != Some(selected_track_id)
+    // A queue REPLACEMENT that names nothing at all. Picking an album the
+    // renderer is not playing from pushes a whole new queue with
+    // `autoplay_reset` and `queue_position: null`, and every SetState that
+    // follows is state-only (`current_track: null`) while the cloud keeps
+    // reporting the OUTGOING track's position. The cursor move above re-points
+    // the queue, `qbzd status` and the overlay read that cursor — and the engine
+    // plays on. That is the "app shows the track I picked, speakers play the
+    // previous one" report, in its sticky form (the reconciler in `report.rs`
+    // cannot heal it: the audible track is no longer IN the queue).
+    //
+    // The renderer view naming a track that is ALSO absent from the pushed queue
+    // is what makes this safe. In a handoff the peer's track IS in the queue, so
+    // we stand down and let the SetState that follows resume it at the handed-off
+    // position instead of restarting it at 0.
+    let start_target = selected_index.or_else(|| {
+        let renderer_track_missing_from_remote = renderer_track_id
+            .map(|track_id| {
+                !queue_state
+                    .queue_items
+                    .iter()
+                    .any(|item| item.track_id == track_id)
+            })
+            .unwrap_or(false);
+        if local_track_missing_from_remote && renderer_track_missing_from_remote {
+            start_index
+        } else {
+            None
+        }
+    });
+
+    // Gated on the cloud reporting the session PLAYING: a queue staged while
+    // paused or stopped is the controller preparing something, not asking for
+    // audio. `ensure_remote_track_loaded` keeps the shared dedup window, so a
+    // SetState that DOES name this track right after cannot load it twice, and it
+    // short-circuits when the engine already plays it.
+    if let Some(index) = start_target {
+        let target_track_id = queue_state.queue_items[index].track_id;
+        // When the cloud's own view already names this track, the SetState that
+        // follows owns the load — and it carries a position (a takeback resumes
+        // mid-track). Starting it here would restart it at 0 and the dedup
+        // window would then swallow the frame that knew better.
+        let cloud_already_names_it = renderer_track_id == Some(target_track_id);
+        if !cloud_already_names_it
+            && current_playback_track_id != Some(target_track_id)
             && matches!(renderer_playing_state, Some(PLAYING_STATE_PLAYING))
         {
             log::info!(
-                "[QConnect] materialize_remote_queue: starting selected queue position {index} (track {selected_track_id}); the push named no SetState track"
+                "[QConnect] materialize_remote_queue: starting queue position {index} (track {target_track_id}); {}",
+                if selected_index.is_some() {
+                    "the push selected it"
+                } else {
+                    "the push replaced the queue and named no track"
+                }
             );
             // A freshly selected track starts at its beginning — the same rule
             // `frame_position_ms` applies to a frame that names a track and no
@@ -954,7 +1000,7 @@ pub async fn materialize_remote_queue(
             ensure_remote_track_loaded(
                 engine,
                 sync_state,
-                selected_track_id,
+                target_track_id,
                 renderer_max_audio_quality,
                 0,
             )
@@ -1894,6 +1940,99 @@ mod tests {
         assert!(
             engine.calls().start_track_streams.is_empty(),
             "a paused session gets no unrequested audio"
+        );
+    }
+
+    /// Picking an album the renderer is not playing from: the controller pushes
+    /// a whole new queue with `queue_position: null` and never names a current
+    /// track, while the cloud keeps reporting the OUTGOING track's position.
+    /// Moving the cursor is not enough — that is the "app shows the track I
+    /// picked, speakers play the previous one" report.
+    #[tokio::test]
+    async fn materialize_starts_the_head_when_a_replacement_names_no_track() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 29450960, // still playing, and absent from the new queue
+            ..Default::default()
+        };
+        let sync = sync();
+        {
+            let mut state = sync.lock().await;
+            state.last_renderer_queue_item_id = Some(6);
+            state.last_renderer_track_id = Some(29450960);
+            state.last_renderer_playing_state = Some(PLAYING_STATE_PLAYING);
+        }
+        let replacement = queue_state(
+            QueueVersion::new(14, 1),
+            vec![qi(3001, 0), qi(3002, 1), qi(3003, 2)],
+            false,
+            None,
+        );
+
+        materialize_remote_queue(&engine, &sync, &replacement)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            engine.calls().start_track_streams,
+            vec![3001],
+            "the new queue's head is played, not just pointed at"
+        );
+    }
+
+    /// The handoff shape must NOT be caught by the rule above: the peer's track
+    /// IS in the pushed queue, so the SetState that follows owns the load — and
+    /// it carries the handed-off position, which starting here would discard.
+    #[tokio::test]
+    async fn materialize_leaves_a_handoff_queue_to_the_following_setstate() {
+        let engine = MockEngine::new(); // nothing playing locally yet
+        let sync = sync();
+        {
+            let mut state = sync.lock().await;
+            state.last_renderer_queue_item_id = Some(1);
+            state.last_renderer_track_id = Some(3002);
+            state.last_renderer_playing_state = Some(PLAYING_STATE_PLAYING);
+        }
+        let handoff = queue_state(
+            QueueVersion::new(2, 0),
+            vec![qi(3001, 0), qi(3002, 1), qi(3003, 2)],
+            false,
+            None,
+        );
+
+        materialize_remote_queue(&engine, &sync, &handoff).await.unwrap();
+
+        assert!(
+            engine.calls().start_track_streams.is_empty(),
+            "the peer's track is in this queue; SetState resumes it at its position"
+        );
+    }
+
+    /// A cast pushes the queue with `queue_position` naming the very track the
+    /// cloud already reports as current — that is a handoff, not a new
+    /// selection. Starting it here would restart it at 0 and the dedup window
+    /// would then swallow the SetState carrying the handed-off position.
+    #[tokio::test]
+    async fn materialize_leaves_a_selection_the_cloud_already_names_to_setstate() {
+        let engine = MockEngine::new();
+        let sync = sync();
+        {
+            let mut state = sync.lock().await;
+            state.last_renderer_queue_item_id = Some(1);
+            state.last_renderer_track_id = Some(3002);
+            state.last_renderer_playing_state = Some(PLAYING_STATE_PLAYING);
+        }
+        let cast = pushed_queue_state(
+            QueueVersion::new(2, 0),
+            vec![qi(3001, 0), qi(3002, 1), qi(3003, 2)],
+            1, // the position the peer was playing
+        );
+
+        materialize_remote_queue(&engine, &sync, &cast).await.unwrap();
+
+        assert!(
+            engine.calls().start_track_streams.is_empty(),
+            "SetState owns this load; it knows the handed-off position"
         );
     }
 
