@@ -523,6 +523,39 @@ pub fn save_pairing_port_at(path: &Path, port: u16) {
     );
 }
 
+/// The volume to set on ourselves when a Connect session picks this device,
+/// as a percentage; `None` (unset or 0) keeps whatever the player already has.
+///
+/// A controller that has never spoken to this renderer sends its own idea of the
+/// volume, which for the iOS app is near 100 % — reported on the moOde forum as
+/// "after connecting, the volume in [the] qobuz app is near 100%" with no safety
+/// mechanism. Every comparable renderer has this knob (librespot's
+/// `--initial-volume`, and moOde exposes it for Spotify and Deezer), and it
+/// exists so a cast does not arrive at full scale on a system with no downstream
+/// volume control.
+pub fn load_initial_volume_at(path: &Path) -> Option<u8> {
+    let conn = open_qconnect_settings_conn_at(path)?;
+    conn.query_row(
+        "SELECT value FROM settings WHERE key = 'initial_volume'",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|v| v.trim().parse::<u8>().ok())
+    .filter(|pct| *pct > 0 && *pct <= 100)
+}
+
+/// Persist the join-time volume percentage; `0` disables it.
+pub fn save_initial_volume_at(path: &Path, percent: u8) {
+    let Some(conn) = open_qconnect_settings_conn_at(path) else {
+        return;
+    };
+    let _ = conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('initial_volume', ?1)",
+        rusqlite::params![percent.to_string()],
+    );
+}
+
 /// Build the WS transport config: env overrides first, then auto-discovery via
 /// `qws/createToken`. Mirrors the Tauri `resolve_transport_config` (the per-option
 /// knobs are deferred — the connect path uses defaults + env). `require_jwt =

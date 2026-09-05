@@ -59,6 +59,10 @@ pub struct DaemonSessionLoopHost {
     /// T10 (OD4): resolved volume policy — the deferred renderer join reports 100
     /// in `Locked` mode, the real player volume in `Software`.
     pub volume_mode: VolumeMode,
+    /// Volume to set on ourselves when a session picks this device, as a
+    /// percentage; `None` leaves the player alone. See
+    /// `transport::load_initial_volume_at`.
+    pub initial_volume: Option<u8>,
     /// DAEMON-ONLY (pairing): reconnect credential re-resolve prefers a live
     /// handed-over token, mirroring the preference in `connect()`.
     pub pairing_store: super::pairing::PairingStore,
@@ -119,6 +123,7 @@ impl SessionLoopHost for DaemonSessionLoopHost {
             &self.sync_state,
             &self.runtime,
             self.volume_mode, // T10 (OD4): 100 in Locked, real in Software
+            self.initial_volume,
             &session_uuid,
             reason,
             force_active,
@@ -219,6 +224,7 @@ pub async fn deferred_renderer_join(
     sync_state: &Arc<Mutex<QconnectRemoteSyncState>>,
     runtime: &Runtime,
     volume_mode: VolumeMode, // T10 (OD4): join-time volume report policy
+    initial_volume: Option<u8>, // join-time volume safety (qconnect.initial_volume)
     session_uuid: &str,
     join_reason: i32,
     force_active: bool, // DAEMON-ONLY (pairing): handoff join claims the render
@@ -348,6 +354,19 @@ pub async fn deferred_renderer_join(
     );
     if let Err(err) = app.send_renderer_report_command(state_report).await {
         log::error!("[QConnect] Deferred renderer state report failed: {err}");
+    }
+
+    // Join-time volume safety: a controller that has not spoken to this
+    // renderer before sends its own volume, which for the iOS app is near 100 %.
+    // Setting ours BEFORE the report below means the daemon and the app agree on
+    // the number from the first frame, instead of the app pushing full scale at
+    // a system that may have no volume control after us.
+    if let Some(percent) = initial_volume {
+        let fraction = f32::from(percent.min(100)) / 100.0;
+        log::info!("[QConnect] Join-time volume: {percent}% (qconnect.initial_volume)");
+        if let Err(err) = runtime.core().set_volume(fraction) {
+            log::warn!("[QConnect] Could not apply the join-time volume: {err}");
+        }
     }
 
     // 3. Report volume and max audio quality.

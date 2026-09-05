@@ -42,6 +42,9 @@ pub struct DaemonEventSink {
     engine: DaemonRendererEngine,
     /// THE shared remote-sync accumulator (one Mutex, shared with `QconnectApp`).
     sync_state: Arc<Mutex<QconnectRemoteSyncState>>,
+    /// Daemon status latch, so `/api/status` can say whether the SESSION still
+    /// renders HERE — not merely that we hold a cloud connection.
+    shared: Arc<std::sync::Mutex<crate::state::DaemonShared>>,
     /// Late-bound weak handle to the owning app, wired via `set_app` after the
     /// app is built FROM this sink. Used to emit renderer reports (e.g.
     /// is_active=true after SetActive(true)) and to drive the session-apply +
@@ -61,10 +64,12 @@ impl DaemonEventSink {
     pub fn new(
         engine: DaemonRendererEngine,
         sync_state: Arc<Mutex<QconnectRemoteSyncState>>,
+        shared: Arc<std::sync::Mutex<crate::state::DaemonShared>>,
     ) -> Self {
         Self {
             engine,
             sync_state,
+            shared,
             app: Arc::new(OnceLock::new()),
             last_peer_active: std::sync::atomic::AtomicBool::new(false),
         }
@@ -112,6 +117,28 @@ impl DaemonEventSink {
     /// the returned `SessionApplyOutcome` asks for. Mirrors the Tauri
     /// `apply_session_management_event`; the post-lock ordering (loop mode ->
     /// local-playback handoff -> projection -> freeze -> watchdog) is identical.
+    /// Latch whether the session still renders HERE.
+    ///
+    /// `session_active` only says we hold a cloud connection, which stays true
+    /// when the controller moves playback to its own speakers — so moOde kept
+    /// the Qobuz overlay up after the app switched to local audio (reported by
+    /// Tim Curtis). The renderer ids are what actually answer the question.
+    async fn latch_render_ownership(&self) {
+        let renders_here = {
+            let state = self.sync_state.lock().await;
+            qconnect_app::session::is_local_renderer_active(&state.session)
+        };
+        if let Ok(mut shared) = self.shared.lock() {
+            if shared.qconnect.renders_here != renders_here {
+                log::info!(
+                    "[QConnect] Render ownership: {}",
+                    if renders_here { "this device" } else { "elsewhere" }
+                );
+            }
+            shared.qconnect.renders_here = renders_here;
+        }
+    }
+
     async fn apply_session_management_event(&self, message_type: &str, payload: &Value) {
         let Some(app) = self.app.get().and_then(Weak::upgrade) else {
             return;
@@ -136,6 +163,8 @@ impl DaemonEventSink {
         if let Some(renderer_id) = outcome.remote_projection_renderer_id {
             self.sync_active_renderer_projection(renderer_id).await;
         }
+
+        self.latch_render_ownership().await;
 
         if let Some(renderer_id) = outcome.disconnected_renderer_id {
             app.freeze_active_renderer_projection(

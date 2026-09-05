@@ -244,7 +244,11 @@ impl DaemonQconnectService {
             Arc::clone(&self.buffering),
             Arc::clone(&self.report_notify),
         );
-        let sink = Arc::new(DaemonEventSink::new(engine, Arc::clone(&sync_state)));
+        let sink = Arc::new(DaemonEventSink::new(
+            engine,
+            Arc::clone(&sync_state),
+            Arc::clone(&self.shared),
+        ));
         let app = Arc::new(QconnectApp::new(
             Arc::clone(&transport),
             Arc::clone(&sink),
@@ -289,6 +293,9 @@ impl DaemonQconnectService {
             runtime: Arc::clone(&self.runtime),
             shared: Arc::clone(&self.shared),
             volume_mode, // T10 (OD4): join-time volume report honors the mode
+            // Resolved at connect like the mode above, so a `settings set` is
+            // picked up on the next connect.
+            initial_volume: transport::load_initial_volume_at(&self.settings_db),
             pairing_store: Arc::clone(&self.pairing_store),
             handoff_join_pending: Arc::clone(&self.handoff_join_pending),
         });

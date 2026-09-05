@@ -102,6 +102,9 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     ("qconnect.device_name", ApplyClass::None),
     ("qconnect.startup_mode", ApplyClass::None),
     ("qconnect.volume_mode", ApplyClass::None),
+    // Applied when a session picks this device, so it takes effect on the next
+    // connect rather than needing a restart.
+    ("qconnect.initial_volume", ApplyClass::None),
     // Pairing surface (pairing.rs). Both apply on the NEXT daemon start: the
     // listener + mDNS registration are boot-time-only (reload does not
     // start/stop them).
@@ -311,6 +314,22 @@ fn parse_alsa_buffer_ms(v: &str) -> Result<u16, String> {
     Ok(n)
 }
 
+/// `off` (or `0`) leaves the player's volume alone when a session picks this
+/// device; anything else is a percentage, 1-100, applied at join time.
+fn parse_initial_volume(v: &str) -> Result<u8, String> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("off") || v.eq_ignore_ascii_case("none") {
+        return Ok(0);
+    }
+    let n: u8 = v
+        .parse()
+        .map_err(|_| format!("invalid volume '{v}' — expected 'off' or 1-100"))?;
+    if n > 100 {
+        return Err(format!("volume {n} out of range — expected 'off' or 1-100"));
+    }
+    Ok(n)
+}
+
 fn parse_volume_curve(v: &str) -> Result<String, String> {
     qbz_audio::volume_curve::VolumeCurve::from_key(v)
         .map(|curve| curve.as_key().to_string())
@@ -450,6 +469,9 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
             "qconnect.volume_mode" => {
                 qconnect_kv::load_volume_mode_at(&db).unwrap_or_else(|| "software".to_string())
             }
+            "qconnect.initial_volume" => qconnect_kv::load_initial_volume_at(&db)
+                .map(|pct| pct.to_string())
+                .unwrap_or_else(|| "off".to_string()),
             "qconnect.pairing" => if qconnect_kv::load_pairing_enabled_at(&db) {
                 "on"
             } else {
@@ -710,6 +732,10 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         "qconnect.volume_mode" => {
             let v = parse_volume_mode(raw).map_err(SetError::Usage)?;
             qconnect_kv::save_volume_mode_at(&qconnect_db(roots), &v)
+        }
+        "qconnect.initial_volume" => {
+            let v = parse_initial_volume(raw).map_err(SetError::Usage)?;
+            qconnect_kv::save_initial_volume_at(&qconnect_db(roots), v)
         }
         "qconnect.pairing" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;

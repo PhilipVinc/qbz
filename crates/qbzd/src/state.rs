@@ -99,6 +99,13 @@ pub struct QconnectStatus {
     pub enabled: bool,
     pub state: String, // "off"|"connecting"|"connected"|"retrying"|"exhausted"
     pub session_active: bool,
+    /// The session's ACTIVE RENDERER is this device.
+    ///
+    /// Distinct from `session_active`, which only says the cloud connection is
+    /// up: a controller that switches to its own speakers leaves us connected
+    /// but no longer rendering. moOde reads this to decide whether the Qobuz
+    /// overlay should still own the screen.
+    pub renders_here: bool,
     pub device_name: String,
     pub last_transport_reconnect: Option<String>,
     /// The /streamcore pairing listener is serving (mDNS advertisement is
