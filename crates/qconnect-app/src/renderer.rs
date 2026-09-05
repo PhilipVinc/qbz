@@ -606,7 +606,26 @@ pub async fn apply_renderer_command(
                     "[QConnect] SetActive(true): awaiting the session's SetState before loading"
                 );
             } else {
-                engine.stop()?;
+                // Standing down — but not if we just started a load. Joining a
+                // live session replays it as SetActive(true) -> SetState(PLAYING)
+                // -> SetActive(false) within ~10 ms, and obeying that last frame
+                // literally kills the track the SetState just started. Other
+                // Connect receivers hit the same replay and guard it with a
+                // timing window; ours already tracks the load, so key on that.
+                let just_loaded = {
+                    let state = sync_state.lock().await;
+                    state
+                        .last_load_attempt
+                        .is_some_and(|(_, at)| at.elapsed() < LOAD_ATTEMPT_DEDUP_WINDOW)
+                };
+                if just_loaded {
+                    log::info!(
+                        "[QConnect] SetActive(false) within the load window — join replay, not a handoff"
+                    );
+                } else {
+                    log::info!("[QConnect] SetActive(false): stopping, the session renders elsewhere");
+                    engine.stop()?;
+                }
             }
         }
         RendererCommand::SetMaxAudioQuality { max_audio_quality } => {

@@ -124,18 +124,18 @@ impl DaemonEventSink {
     /// the Qobuz overlay up after the app switched to local audio (reported by
     /// Tim Curtis). The renderer ids are what actually answer the question.
     async fn latch_render_ownership(&self) {
-        let renders_here = {
+        let is_active = {
             let state = self.sync_state.lock().await;
             qconnect_app::session::is_local_renderer_active(&state.session)
         };
         if let Ok(mut shared) = self.shared.lock() {
-            if shared.qconnect.renders_here != renders_here {
+            if shared.qconnect.is_active != is_active {
                 log::info!(
                     "[QConnect] Render ownership: {}",
-                    if renders_here { "this device" } else { "elsewhere" }
+                    if is_active { "this device" } else { "elsewhere" }
                 );
             }
-            shared.qconnect.renders_here = renders_here;
+            shared.qconnect.is_active = is_active;
         }
     }
 

@@ -349,6 +349,17 @@ fn decode_renderer_server_command(
             let Some(payload) = message.srvr_rndr_set_active else {
                 return Ok(None);
             };
+            // `active` is an OPTIONAL bool, and absent does not mean false. A
+            // takeover sends message 43 TWICE — first with no value (a pending
+            // notification), then with `true` — so reading the absent one as
+            // `false` turns the announcement of an incoming activation into a
+            // deactivation. Upstream gets away with `unwrap_or(false)` because
+            // it ignores SetActive(false) entirely; this fork STOPS on it
+            // (`renderer.rs`), so the same mistake stops playback.
+            if payload.active.is_none() {
+                log::debug!("[QConnect] SetActive with no value (pending) — ignored");
+                return Ok(None);
+            }
             map_srvr_rndr_set_active(payload)?
         }
         code if code == QConnectMessageType::MessageTypeSrvrRndrSetMaxAudioQuality as i32 => {
@@ -1087,7 +1098,7 @@ mod tests {
     use crate::queue_command_proto::{
         PlaybackErrorMessage, QConnectMessage, QConnectMessageType, QConnectMessages, QueueTrack,
         QueueTrackWithContext, QueueTracksAddedMessage, QueueTracksLoadedMessage, QueueVersionRef,
-        RendererMuteVolumeMessage, RendererSetStateMessage,
+        RendererMuteVolumeMessage, RendererSetActiveMessage, RendererSetStateMessage,
     };
     use crate::ErrorType;
 
@@ -1122,6 +1133,54 @@ mod tests {
         let parsed = decode_playback_error(&bytes).expect("playback error decoded");
         assert_eq!(parsed.queue_item_id, 55);
         assert_eq!(parsed.error_type, ErrorType::TrackNotStreamable);
+    }
+
+    /// `active` is an optional bool and absent is NOT false. A takeover sends
+    /// message 43 twice — pending (no value), then `true` — and reading the
+    /// pending one as a deactivation stops playback in a fork that acts on
+    /// SetActive(false), which this one does.
+    #[test]
+    fn set_active_without_a_value_is_not_a_deactivation() {
+        let message = QConnectMessage {
+            message_type: Some(QConnectMessageType::MessageTypeSrvrRndrSetActive as i32),
+            srvr_rndr_set_active: Some(RendererSetActiveMessage { active: None }),
+            ..Default::default()
+        };
+        let batch = QConnectMessages {
+            messages_time: None,
+            messages_id: None,
+            messages: vec![message],
+        };
+
+        let parsed = decode_renderer_server_commands(&batch.encode_to_vec())
+            .expect("batch decodes");
+
+        assert!(parsed.is_empty(), "a pending SetActive yields no command");
+    }
+
+    /// Both real values still decode, and carry through as themselves.
+    #[test]
+    fn set_active_with_a_value_decodes_it() {
+        for active in [true, false] {
+            let message = QConnectMessage {
+                message_type: Some(QConnectMessageType::MessageTypeSrvrRndrSetActive as i32),
+                srvr_rndr_set_active: Some(RendererSetActiveMessage {
+                    active: Some(active),
+                }),
+                ..Default::default()
+            };
+            let batch = QConnectMessages {
+                messages_time: None,
+                messages_id: None,
+                messages: vec![message],
+            };
+
+            let parsed = decode_renderer_server_commands(&batch.encode_to_vec())
+                .expect("batch decodes");
+
+            assert_eq!(parsed.len(), 1, "active={active}");
+            assert_eq!(parsed[0].payload["active"], active, "active={active}");
+        }
     }
 
     #[test]

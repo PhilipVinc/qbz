@@ -109,11 +109,15 @@ pub struct QconnectStatus {
     pub session_active: bool,
     /// The session's ACTIVE RENDERER is this device.
     ///
+    /// `is_active` is what every other Qobuz Connect implementation calls this,
+    /// and what the wire calls it (`RndrSrvrJoinSession.is_active`,
+    /// `SrvrRndrSetActive.active`).
+    ///
     /// Distinct from `session_active`, which only says the cloud connection is
     /// up: a controller that switches to its own speakers leaves us connected
     /// but no longer rendering. moOde reads this to decide whether the Qobuz
     /// overlay should still own the screen.
-    pub renders_here: bool,
+    pub is_active: bool,
     pub device_name: String,
     pub last_transport_reconnect: Option<String>,
     /// The /streamcore pairing listener is serving (mDNS advertisement is
