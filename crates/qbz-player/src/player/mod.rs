@@ -3175,7 +3175,7 @@ impl Player {
                                         *gapless_pending = Some(GaplessPending {
                                             track_id,
                                             duration_secs: duration,
-                                            data: Vec::new(),
+                                            data: TrackBytes::default(),
                                             normalization_gain: None,
                                         });
                                         thread_state.set_gapless_next_track_id(track_id);
