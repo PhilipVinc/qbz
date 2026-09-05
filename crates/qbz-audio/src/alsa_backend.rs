@@ -818,7 +818,13 @@ impl AlsaBackend {
                         // Records the sink so it is resumed on stop/teardown (#263).
                         suspend_default_sink_for_exclusive();
 
-                        let retry_delays_ms = [50, 100, 200, 400, 800];
+                        // ~6s, not the old ~1.5s. The old ladder was sized for our
+                        // own previous PCM releasing, or PipeWire letting go. On a
+                        // moOde box the holder is MPD, and it only stops when an
+                        // asynchronous event hook tells it to -- measured at about a
+                        // second AFTER the old ladder had already given up, which is
+                        // why casting while the radio played did nothing.
+                        let retry_delays_ms = [50, 100, 200, 400, 800, 1000, 1000, 1000, 1000];
                         for (i, delay_ms) in retry_delays_ms.iter().enumerate() {
                             std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
 
@@ -908,7 +914,8 @@ impl AlsaBackend {
                     log::info!("[ALSA Backend] plughw device busy — retrying with backoff");
                     suspend_default_sink_for_exclusive();
 
-                    let retry_delays_ms = [50, 100, 200, 400, 800];
+                    // Same ladder as the hw path above: the holder may need seconds.
+                    let retry_delays_ms = [50, 100, 200, 400, 800, 1000, 1000, 1000, 1000];
                     for (i, delay_ms) in retry_delays_ms.iter().enumerate() {
                         std::thread::sleep(std::time::Duration::from_millis(*delay_ms));
 
