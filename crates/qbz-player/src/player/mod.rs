@@ -3238,7 +3238,6 @@ impl Player {
                                     if streaming_src.is_complete() {
                                         match streaming_src.take_complete_data() {
                                             Some(data) => {
-                                                let data: TrackBytes = data.into();
                                                 log::info!("Resume: using complete streaming data ({} bytes)", data.len());
                                                 // Store it in current_audio_data for future use
                                                 *current_audio_data = Some(data.clone());
@@ -4028,18 +4027,37 @@ impl Player {
                                 let mut clear_streaming_source = false;
                                 if let Some(streaming_src) = current_streaming_source.as_ref() {
                                     if streaming_src.is_complete() {
-                                        if current_audio_data.is_none() {
-                                            if let Some(full_data) =
-                                                streaming_src.take_complete_data()
-                                            {
-                                                log::info!(
-                                                    "Streaming promotion: full track buffered ({} bytes), enabling cached transition path",
-                                                    full_data.len()
-                                                );
-                                                current_audio_data = Some(full_data.into());
+                                        // Promotion copies the whole track so the
+                                        // streaming buffer can be dropped. That is a
+                                        // fair trade on a desktop and a fatal one on a
+                                        // 1 GB Pi: for the seconds it takes, BOTH
+                                        // copies of a 200 MB+ Hi-Res track are resident.
+                                        // The buffer we already hold serves resume and
+                                        // seek perfectly well, so on a low-memory host
+                                        // we keep it and skip the copy entirely.
+                                        let profile =
+                                            qbz_models::system_capabilities::memory_profile();
+                                        let promote = profile.class
+                                            != qbz_models::system_capabilities::MemoryClass::LowMemory;
+                                        if promote {
+                                            if current_audio_data.is_none() {
+                                                if let Some(full_data) =
+                                                    streaming_src.take_complete_data()
+                                                {
+                                                    log::info!(
+                                                        "Streaming promotion: full track buffered ({} bytes), enabling cached transition path",
+                                                        full_data.len()
+                                                    );
+                                                    current_audio_data = Some(full_data);
+                                                }
                                             }
+                                            clear_streaming_source = true;
+                                        } else {
+                                            log::debug!(
+                                                "Streaming promotion skipped ({} bytes): low-memory host keeps the buffer instead of copying it",
+                                                streaming_src.buffer_size()
+                                            );
                                         }
-                                        clear_streaming_source = true;
                                     }
                                 }
                                 if clear_streaming_source {

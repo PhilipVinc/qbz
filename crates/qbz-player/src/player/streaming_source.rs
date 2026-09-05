@@ -645,7 +645,16 @@ impl BufferedMediaSource {
     /// 104s file). Cloning is the safe choice; the audible hiccup at
     /// promotion that the move attempted to fix needs a different
     /// approach (shared `Arc<Vec<u8>>` ownership, or off-thread copy).
-    pub fn take_complete_data(&self) -> Option<Vec<u8>> {
+    /// The whole track's bytes, as the shared [`TrackBytes`] every consumer
+    /// downstream expects.
+    ///
+    /// Returns `TrackBytes` rather than `Vec<u8>` on purpose. A Hi-Res track is
+    /// 200 MB+, and the old signature cost TWO full copies of it: the `Vec`
+    /// clone here, then `Arc<[u8]>` allocating and memcpying that `Vec` at the
+    /// call site (`Arc::from(Vec)` never adopts the buffer). Building the Arc
+    /// once, straight from the buffer's slice, halves the peak — which on a 1 GB
+    /// Pi is the difference between promoting a track and being OOM-killed.
+    pub fn take_complete_data(&self) -> Option<TrackBytes> {
         let state = self.shared.state.lock().ok()?;
         if !state.download_complete || state.download_error.is_some() {
             return None;
@@ -655,7 +664,9 @@ impl BufferedMediaSource {
             // the cache or replay in memory.
             return None;
         }
-        state.head_run().map(|seg| seg.data.clone())
+        state
+            .head_run()
+            .map(|seg| TrackBytes::from(seg.data.as_slice()))
     }
 
     /// Get a copy of the buffered file header (for metadata extraction).
@@ -1655,7 +1666,7 @@ mod tests {
         writer.complete().unwrap();
 
         let data = source.take_complete_data().unwrap();
-        assert_eq!(&data, b"HelloWorld");
+        assert_eq!(data.as_ref(), b"HelloWorld");
     }
 
     #[test]
