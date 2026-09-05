@@ -251,6 +251,47 @@ impl AudioCache {
         );
     }
 
+    /// Drop one track from L1, spilling it to L2 on the way out.
+    ///
+    /// LRU alone keeps a finished track resident until something else needs the
+    /// room. On a 1 GB Pi that means the track just played (~100 MB for Hi-Res)
+    /// sits beside the one now playing AND the gapless prefetch — the shape that
+    /// had qbzd at 465 MB RSS on a 905 MB box, swapping to the SD card. Releasing
+    /// at the transition is quality-neutral: the bytes land in the disk cache, so
+    /// a back-skip re-reads them from L2 instead of the network.
+    ///
+    /// Returns whether the track was resident. Safe to call for a track that
+    /// was never cached, or twice.
+    pub fn release(&self, track_id: u64) -> bool {
+        let released = {
+            let mut state = self.state.lock().unwrap();
+            match state.tracks.remove(&track_id) {
+                Some(track) => {
+                    state.current_size = state.current_size.saturating_sub(track.size_bytes);
+                    state.access_order.retain(|&id| id != track_id);
+                    Some(track)
+                }
+                None => None,
+            }
+        };
+
+        let Some(track) = released else {
+            return false;
+        };
+
+        log::info!(
+            "Released track {} ({} bytes) from the memory cache",
+            track_id,
+            track.size_bytes
+        );
+
+        // Spill outside the lock, exactly as LRU eviction does.
+        if let Some(playback_cache) = &self.playback_cache {
+            playback_cache.insert(track.track_id, &track.data);
+        }
+        true
+    }
+
     /// Clear all cached data (both L1 memory and L2 disk caches)
     pub fn clear(&self) {
         let mut state = self.state.lock().unwrap();
@@ -287,4 +328,38 @@ pub struct CacheStats {
     pub current_size_bytes: usize,
     pub max_size_bytes: usize,
     pub fetching_count: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The transition release: the finished track's bytes leave L1 immediately
+    /// and stop counting against the budget, while the track now playing stays.
+    #[test]
+    fn release_frees_one_track_and_leaves_the_rest() {
+        let cache = AudioCache::new(10 * 1024 * 1024);
+        cache.insert(1, vec![0u8; 1024]);
+        cache.insert(2, vec![0u8; 2048]);
+        assert_eq!(cache.stats().current_size_bytes, 3072);
+
+        assert!(cache.release(1), "track 1 was resident");
+        assert!(!cache.contains(1));
+        assert!(cache.contains(2), "the playing track is untouched");
+        assert_eq!(cache.stats().current_size_bytes, 2048);
+        assert_eq!(cache.stats().cached_tracks, 1);
+    }
+
+    /// Releasing a track that was never cached — or releasing twice — is a
+    /// no-op, so the driver can emit the action unconditionally.
+    #[test]
+    fn release_is_a_no_op_for_an_absent_track() {
+        let cache = AudioCache::new(10 * 1024 * 1024);
+        cache.insert(1, vec![0u8; 1024]);
+
+        assert!(!cache.release(99));
+        assert!(cache.release(1));
+        assert!(!cache.release(1));
+        assert_eq!(cache.stats().current_size_bytes, 0);
+    }
 }

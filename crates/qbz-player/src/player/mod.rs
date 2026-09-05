@@ -4306,6 +4306,23 @@ impl Player {
         // 40 % of RAM for one subsystem, which is how qbzd ended up swapping
         // to the SD card during ordinary playback. A disk-cache failure
         // degrades to L1-only rather than aborting player creation.
+        // The dynamic initial-buffer sizing (`StreamingConfig::from_speed_mbps`)
+        // grows to 2 MB on a slow connection. On a memory-pressured Pi that is
+        // the wrong direction — a slow download there is itself a symptom of
+        // swap thrash — so the host's profile caps it (256 KB on LowMemory).
+        // Process-wide and idempotent; the cap is uncapped by default.
+        {
+            let profile = qbz_models::system_capabilities::memory_profile();
+            log::info!(
+                "[Player] memory profile: {:?} ({} MB RAM) — initial buffer <= {} KB, hi-res prefetch {}",
+                profile.class,
+                profile.mem_total_kb / 1024,
+                profile.max_initial_buffer_bytes / 1024,
+                if profile.allow_hires_prefetch { "allowed" } else { "not allowed" },
+            );
+            set_max_initial_buffer_bytes(profile.max_initial_buffer_bytes);
+        }
+
         let l1_max_bytes = match audio_settings.memory_cache_mb {
             0 => {
                 let profile = qbz_models::system_capabilities::memory_profile();
@@ -4711,6 +4728,33 @@ impl Player {
     /// track id alone and carries no quality dimension.
     pub fn clear_audio_cache(&self) {
         self.audio_cache.clear();
+    }
+
+    /// A track just finished playing — free its bytes early, but only where the
+    /// memory actually matters.
+    ///
+    /// On a **LowMemory** host the previous track (~100 MB for Hi-Res) staying
+    /// resident beside the current one and the gapless prefetch is what puts a
+    /// 1 GB Pi into swap, so it goes now; it spills to the L2 disk cache, so a
+    /// back-skip re-reads it from disk rather than the network.
+    ///
+    /// On a **Normal** host there is nothing to gain by freeing early: keeping
+    /// it means an instant back-skip, and LRU already evicts it the moment
+    /// something else needs the room. So this is a no-op there.
+    ///
+    /// Returns whether the bytes were actually released.
+    pub fn release_finished_track(&self, track_id: u64) -> bool {
+        let profile = qbz_models::system_capabilities::memory_profile();
+        if profile.class != qbz_models::system_capabilities::MemoryClass::LowMemory {
+            log::debug!(
+                "Keeping finished track {} in the memory cache ({:?} host, {} MB RAM)",
+                track_id,
+                profile.class,
+                profile.mem_total_kb / 1024
+            );
+            return false;
+        }
+        self.audio_cache.release(track_id)
     }
 
     /// Fetch a track's audio bytes for a gapless handoff: L1 memory →

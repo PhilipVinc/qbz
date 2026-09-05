@@ -76,6 +76,11 @@ pub enum DriverAction {
     /// The current track ended and nothing is playable — stop
     /// (`playback.rs:4751`).
     QueueFinished,
+    /// The player moved off this track. On a memory-constrained host its bytes
+    /// are dropped from the L1 cache now (they spill to L2) instead of waiting
+    /// for LRU, which is one Hi-Res track too late there. On a roomy host the
+    /// handler ignores this — keeping them means an instant back-skip.
+    ReleaseCachedTrack(u64),
 }
 
 /// The previous tick's snapshot: the desktop loop's `last_track_id` /
@@ -202,6 +207,9 @@ pub fn plan_tick(
         && last.is_playing;
     if seamless_change {
         actions.push(DriverAction::SyncCursorTo(ev.track_id));
+        // The handed-off track is done and its bytes are still resident beside
+        // the new track's and the next gapless prefetch's.
+        actions.push(DriverAction::ReleaseCachedTrack(last.track_id));
         return actions;
     }
 
@@ -256,8 +264,14 @@ pub fn plan_tick(
             actions.push(DriverAction::PauseStopAfter);
         } else if queue.repeat == "one" || queue.repeat == "all" {
             actions.push(DriverAction::AdvanceAndPlay);
+            if queue.repeat != "one" {
+                // repeat=one replays these very bytes on the next tick; every
+                // other advance is done with them.
+                actions.push(DriverAction::ReleaseCachedTrack(last.track_id));
+            }
         } else if next_playable(&queue.upcoming, MAX_OFFLINE_SKIPS).is_some() {
             actions.push(DriverAction::AdvanceAndPlay);
+            actions.push(DriverAction::ReleaseCachedTrack(last.track_id));
         } else {
             actions.push(DriverAction::QueueFinished);
         }
@@ -430,6 +444,9 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                             log::warn!("[qbzd] driver: gapless play_next failed: {e}");
                         }
                     }
+                }
+                DriverAction::ReleaseCachedTrack(id) => {
+                    player.release_finished_track(*id);
                 }
                 DriverAction::PauseStopAfter => {
                     // The ended track is the queue's current track (playback.rs:4708).
@@ -791,6 +808,39 @@ mod tests {
         let a = plan_tick(&s, &ev(1, false, 581, 581), &q(1, &[(2, true)], "off", None), None);
         assert!(a.contains(&DriverAction::AdvanceAndPlay));
         assert!(a.contains(&DriverAction::ReportEdge)); // play-state edge
+    }
+
+    /// A finished track's bytes are released at the transition rather than left
+    /// to LRU: on a 1 GB Pi the previous Hi-Res track (~100 MB) otherwise stays
+    /// resident beside the current one and the gapless prefetch.
+    #[test]
+    fn advance_releases_the_finished_tracks_bytes() {
+        let s = DriverState::after(&ev(1, true, 580, 581));
+        let a = plan_tick(&s, &ev(1, false, 581, 581), &q(1, &[(2, true)], "off", None), None);
+        assert!(a.contains(&DriverAction::AdvanceAndPlay));
+        assert!(a.contains(&DriverAction::ReleaseCachedTrack(1)));
+    }
+
+    /// A seamless gapless hand-off is the other transition — the engine moved on
+    /// without ever stopping, so nothing else would drop the outgoing track.
+    #[test]
+    fn seamless_handoff_releases_the_outgoing_tracks_bytes() {
+        let s = DriverState::after(&ev(1, true, 580, 581));
+        let a = plan_tick(&s, &ev(2, true, 0, 400), &q(1, &[(3, true)], "off", None), None);
+        assert!(a.contains(&DriverAction::SyncCursorTo(2)));
+        assert!(a.contains(&DriverAction::ReleaseCachedTrack(1)));
+    }
+
+    /// repeat=one replays these very bytes on the next tick — releasing them
+    /// would trade memory for a needless L2 round-trip every single loop.
+    #[test]
+    fn repeat_one_keeps_the_tracks_bytes() {
+        let s = DriverState::after(&ev(1, true, 580, 581));
+        let a = plan_tick(&s, &ev(1, false, 581, 581), &q(1, &[(2, true)], "one", None), None);
+        assert!(a.contains(&DriverAction::AdvanceAndPlay));
+        assert!(!a
+            .iter()
+            .any(|action| matches!(action, DriverAction::ReleaseCachedTrack(_))));
     }
 
     #[test]
