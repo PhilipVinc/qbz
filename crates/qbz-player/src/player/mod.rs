@@ -4560,14 +4560,23 @@ impl Player {
                 usize::from(mb) * 1024 * 1024
             }
         };
-        let audio_cache = match qbz_cache::PlaybackCache::new(800 * 1024 * 1024) {
-            Ok(pc) => Arc::new(qbz_cache::AudioCache::with_playback_cache(
-                l1_max_bytes,
-                Arc::new(pc),
-            )),
-            Err(e) => {
-                log::warn!("Playback disk cache unavailable: {e}; memory cache only");
-                Arc::new(qbz_cache::AudioCache::new(l1_max_bytes))
+        // L2 on disk unless the host asked to stay in memory. Caching in RAM
+        // alone keeps gapless working with no card writes at all, which is worth
+        // having on a player with room for the current AND next track (~450 MB
+        // for a Hi-Res pair) — and is why the host, not the daemon, decides.
+        let audio_cache = if !audio_settings.cache_to_disk {
+            log::info!("[Player] L2 disk cache: off (audio.cache_to_disk) — nothing is written to the card");
+            Arc::new(qbz_cache::AudioCache::new(l1_max_bytes))
+        } else {
+            match qbz_cache::PlaybackCache::new(800 * 1024 * 1024) {
+                Ok(pc) => Arc::new(qbz_cache::AudioCache::with_playback_cache(
+                    l1_max_bytes,
+                    Arc::new(pc),
+                )),
+                Err(e) => {
+                    log::warn!("Playback disk cache unavailable: {e}; memory cache only");
+                    Arc::new(qbz_cache::AudioCache::new(l1_max_bytes))
+                }
             }
         };
 

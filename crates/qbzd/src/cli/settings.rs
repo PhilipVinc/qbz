@@ -79,6 +79,8 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     ("audio.memory_cache_mb", ApplyClass::None),
     // Read once when the player starts, like the cache budget above.
     ("audio.volume_curve", ApplyClass::None),
+    // Read when the player builds its cache: next daemon start.
+    ("audio.cache_to_disk", ApplyClass::None),
     // Read when a stream opens — Reinit so a change takes effect on the next
     // track rather than waiting for a daemon restart.
     ("audio.alsa_buffer_ms", ApplyClass::Reinit),
@@ -442,6 +444,7 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
                 }
             }
             "audio.volume_curve" => audio.volume_curve.clone(),
+            "audio.cache_to_disk" => render_bool(audio.cache_to_disk),
             "audio.alsa_buffer_ms" => {
                 if audio.alsa_buffer_ms == 0 {
                     "auto".to_string()
@@ -608,6 +611,13 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
             open_audio(roots)
                 .map_err(SetError::Io)?
                 .set_alsa_buffer_ms(v)
+                .map_err(SetError::Io)?
+        }
+        "audio.cache_to_disk" => {
+            let v = parse_bool(raw).map_err(SetError::Usage)?;
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_cache_to_disk(v)
                 .map_err(SetError::Io)?
         }
         "audio.volume_curve" => {

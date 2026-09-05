@@ -70,6 +70,15 @@ pub struct AudioSettings {
     /// latency no renderer listener can perceive.
     #[serde(default)]
     pub alsa_buffer_ms: u16,
+    /// Write cached tracks to the L2 disk cache.
+    ///
+    /// False keeps caching in memory only: gapless still works (the next track
+    /// is held in RAM), and the card is never written. Only sane on a host with
+    /// room for the current AND next track — a Hi-Res pair is ~450 MB — which is
+    /// why moOde offers it above 2 GB and not below. `streaming_only` remains the
+    /// setting that disables caching altogether.
+    #[serde(default = "default_cache_to_disk")]
+    pub cache_to_disk: bool,
     /// When true, cap the REQUESTED streaming quality tier at the local output
     /// device's detected ceiling (#638 fix 3; consumed by the desktop's
     /// request-time resolution, never by the audio backends). Applies to local
@@ -132,6 +141,12 @@ fn default_dsd_mode() -> String {
 /// Perceptual by default: it is what every other player on the host does, and a
 /// linear amplitude fader is unusable above its bottom tenth
 /// (see [`crate::volume_curve`]).
+/// Caching to disk is the default: it is what makes gapless work on the small
+/// players that are most of the fleet.
+fn default_cache_to_disk() -> bool {
+    true
+}
+
 fn default_volume_curve() -> String {
     crate::volume_curve::VolumeCurve::Perceptual.as_key().to_string()
 }
@@ -164,6 +179,7 @@ impl Default for AudioSettings {
             memory_cache_mb: 0,    // 0 = auto-size from host RAM
             volume_curve: default_volume_curve(),
             alsa_buffer_ms: 0, // 0 = derive from the sample rate
+            cache_to_disk: default_cache_to_disk(),
             limit_quality_to_device: false, // Opt-in. Off since 1.1.9 (#45); wired to the read-only probe in #638 fix 3
             device_max_sample_rate: None, // Set when device is selected
             device_sample_rate_limits: HashMap::new(), // Per-device limits (empty = no limit)
@@ -303,6 +319,10 @@ impl AudioSettingsStore {
             "ALTER TABLE audio_settings ADD COLUMN alsa_buffer_ms INTEGER DEFAULT 0",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE audio_settings ADD COLUMN cache_to_disk INTEGER DEFAULT 1",
+            [],
+        );
 
         // Seed the single settings row on first run with the OOTB default backend
         // ("System"). INSERT OR IGNORE is a one-time seed: it only fires when the
@@ -368,7 +388,7 @@ impl AudioSettingsStore {
     pub fn get_settings(&self) -> Result<AudioSettings, String> {
         self.conn
             .query_row(
-                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device, volume_curve, alsa_buffer_ms FROM audio_settings WHERE id = 1",
+                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device, volume_curve, alsa_buffer_ms, cache_to_disk FROM audio_settings WHERE id = 1",
                 [],
                 |row| {
                     // Parse backend_type from JSON string
@@ -425,6 +445,7 @@ impl AudioSettingsStore {
                             .filter(|v| !v.is_empty())
                             .unwrap_or_else(default_volume_curve),
                         alsa_buffer_ms: row.get::<_, Option<i64>>(26)?.unwrap_or(0) as u16,
+                        cache_to_disk: row.get::<_, Option<i64>>(27)?.unwrap_or(1) != 0,
                     })
                 },
             )
@@ -559,6 +580,18 @@ impl AudioSettingsStore {
     /// Set the ALSA direct-path buffer length in ms; `0` restores the
     /// rate-derived default. Read when a stream opens, so it applies to the
     /// next track (or the next renderer start).
+    /// Enable or disable L2 disk caching. Read when the player builds its cache,
+    /// so it takes effect on the next daemon start.
+    pub fn set_cache_to_disk(&self, enabled: bool) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE audio_settings SET cache_to_disk = ?1 WHERE id = 1",
+                params![enabled as i64],
+            )
+            .map_err(|e| format!("Failed to set cache_to_disk: {}", e))?;
+        Ok(())
+    }
+
     pub fn set_alsa_buffer_ms(&self, ms: u16) -> Result<(), String> {
         self.conn
             .execute(
@@ -858,7 +891,8 @@ impl AudioSettingsStore {
                     memory_cache_mb = ?22,
                     alsa_mixer_device = ?23,
                     volume_curve = ?24,
-                    alsa_buffer_ms = ?25
+                    alsa_buffer_ms = ?25,
+                    cache_to_disk = ?26
                 WHERE id = 1",
                 params![
                     defaults.output_device,
@@ -886,6 +920,7 @@ impl AudioSettingsStore {
                     defaults.alsa_mixer_device.clone(),
                     defaults.volume_curve.clone(),
                     defaults.alsa_buffer_ms as i64,
+                    defaults.cache_to_disk as i64,
                 ],
             )
             .map_err(|e| format!("Failed to reset audio settings: {}", e))?;

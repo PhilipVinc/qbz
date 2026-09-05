@@ -740,6 +740,7 @@ fn plan_audio(
                     | "memory_cache_mb"
                     | "volume_curve"
                     | "alsa_buffer_ms"
+                    | "cache_to_disk"
                     | "dsd_mode"
             )
             || k.eq_ignore_ascii_case("volume");
@@ -943,6 +944,12 @@ fn plan_audio_machine(
     // describes how much slack the host needs, not which device it has.
     if let Some(v) = map.get("alsa_buffer_ms") {
         applied_line(plan, "audio.alsa_buffer_ms", v, "");
+    }
+
+    // cache_to_disk — whether the L2 cache is written at all. A host preference
+    // about the storage, not about the output device.
+    if let Some(v) = map.get("cache_to_disk") {
+        applied_line(plan, "audio.cache_to_disk", v, "");
     }
 
     // alsa_plugin / alsa_hardware_volume / alsa_mixer_device — apply only with a

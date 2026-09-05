@@ -89,6 +89,11 @@ impl PlaybackCache {
             for entry in entries.flatten() {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
+                        // Sweep a write that a crash or power cut interrupted.
+                        if entry.file_name().to_str().is_some_and(|n| n.ends_with(".part")) {
+                            let _ = fs::remove_file(entry.path());
+                            continue;
+                        }
                         // Parse track ID from filename (format: {track_id}.audio)
                         if let Some(filename) = entry.file_name().to_str() {
                             if let Some(id_str) = filename.strip_suffix(".audio") {
@@ -215,10 +220,29 @@ impl PlaybackCache {
 
         let path = self.track_path(track_id);
 
-        // Write file
-        match fs::File::create(&path) {
+        // Write through a temp file and rename into place. A track is 30-220 MB
+        // and the write is not instant: a daemon killed mid-write used to leave
+        // a SHORT `<id>.audio` behind, which the startup rebuild then adopted as
+        // a complete entry — so that track decoded as garbage on every later
+        // play until something evicted it. A rename is atomic, so the cache only
+        // ever contains whole files; a crash leaves a `.part` that
+        // `rebuild_index` sweeps.
+        let temp_path = path.with_extension("part");
+        match fs::File::create(&temp_path) {
             Ok(mut file) => {
-                if file.write_all(data).is_ok() {
+                let written = file.write_all(data).is_ok()
+                    // Reach the platter before the rename: the point of the
+                    // rename is that whatever is under the real name is
+                    // complete, and on a power cut an unsynced write is not.
+                    && file.sync_all().is_ok()
+                    && {
+                        drop(file);
+                        fs::rename(&temp_path, &path).is_ok()
+                    };
+                if !written {
+                    let _ = fs::remove_file(&temp_path);
+                }
+                if written {
                     let mut state = self.state.lock().unwrap();
 
                     // Remove old entry if exists
@@ -246,7 +270,6 @@ impl PlaybackCache {
                     );
                 } else {
                     log::warn!("Failed to write playback cache file for track {}", track_id);
-                    let _ = fs::remove_file(&path);
                 }
             }
             Err(e) => {
@@ -330,4 +353,70 @@ pub struct PlaybackCacheStats {
     pub cached_tracks: usize,
     pub current_size_bytes: u64,
     pub max_size_bytes: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_cache(max_bytes: u64) -> (PlaybackCache, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "qbz-l2-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cache = PlaybackCache::with_path(dir.clone(), max_bytes).expect("cache");
+        (cache, dir)
+    }
+
+    /// A whole track lands under its real name, and nothing is left behind.
+    #[test]
+    fn insert_leaves_no_partial_file() {
+        let (cache, dir) = temp_cache(10 * 1024 * 1024);
+        cache.insert(42, &vec![7u8; 4096]);
+
+        assert_eq!(cache.get(42).map(|d| d.len()), Some(4096));
+        let leftovers: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".part"))
+            .collect();
+        assert!(leftovers.is_empty(), "a .part file survived the insert");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The startup scan sweeps an interrupted write instead of adopting it. A
+    /// truncated `<id>.audio` used to be indexed as a complete track and decoded
+    /// as garbage on every later play.
+    #[test]
+    fn rebuild_sweeps_an_interrupted_write() {
+        let (cache, dir) = temp_cache(10 * 1024 * 1024);
+        cache.insert(1, &vec![1u8; 1024]);
+        fs::write(dir.join("999.part"), vec![0u8; 512]).unwrap();
+
+        let reopened = PlaybackCache::with_path(dir.clone(), 10 * 1024 * 1024).expect("reopen");
+
+        assert!(reopened.contains(1), "the complete track is adopted");
+        assert!(!dir.join("999.part").exists(), "the partial file is swept");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The budget is enforced by evicting the least recently used file, so the
+    /// directory cannot grow without bound.
+    #[test]
+    fn insert_evicts_to_stay_under_the_budget() {
+        let (cache, dir) = temp_cache(8192);
+        cache.insert(1, &vec![0u8; 4096]);
+        cache.insert(2, &vec![0u8; 4096]);
+        cache.insert(3, &vec![0u8; 4096]);
+
+        assert!(!cache.contains(1), "the oldest track is evicted");
+        assert!(cache.contains(3));
+        assert!(cache.stats().current_size_bytes <= 8192);
+        assert!(!dir.join("1.audio").exists(), "its file is deleted too");
+        fs::remove_dir_all(&dir).ok();
+    }
 }
