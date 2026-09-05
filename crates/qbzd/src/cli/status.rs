@@ -155,7 +155,15 @@ fn render_audio(p: &Value) -> String {
     parts.push(head);
     parts.push(if present { "present".into() } else { "not present".into() });
     if let Some(bp) = bit_perfect {
-        parts.push(format!("bit-perfect: {bp}"));
+        // A named PCM is opened directly, but whatever its chain does next is
+        // invisible from here — with CamillaDSP or an equalizer behind the name
+        // the stream is converted before it reaches the DAC. Say so rather than
+        // printing a claim the daemon cannot stand behind.
+        if bp == "DirectNamedDevice" {
+            parts.push("direct to the named device (its chain decides)".into());
+        } else {
+            parts.push(format!("bit-perfect: {bp}"));
+        }
     }
     // Two rates, and the interesting case is when they disagree: the stream
     // is what the file holds, the output is what the device actually runs at,

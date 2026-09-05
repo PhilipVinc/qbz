@@ -234,6 +234,16 @@ impl AlsaDirectError {
 pub enum BitPerfectMode {
     /// Direct hardware access (hw:), guaranteed bit-perfect
     DirectHardware,
+    /// A NAMED PCM was opened directly (moOde's `_audioout`, a user's
+    /// `.asoundrc` chain). The stream reaches ALSA untouched, but what the
+    /// chain does with it afterwards is not ours to see: with nothing inserted
+    /// this is bit-perfect, and with CamillaDSP or an equalizer behind the name
+    /// it is emphatically not — verified on a Pi where qbzd fed `_audioout`
+    /// S24_3LE at 96 kHz and CamillaDSP handed the DAC S32_LE.
+    ///
+    /// Reporting these as `DirectHardware` was a lie of exactly the kind
+    /// someone checks this field to catch.
+    DirectNamedDevice,
     /// Plugin hardware fallback (plughw:), bit-perfect with format conversion only
     PluginFallback,
     /// Not using bit-perfect path (pcm, pipewire, pulse)

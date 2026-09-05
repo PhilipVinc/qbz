@@ -1272,6 +1272,7 @@ impl SharedState {
             Some(BitPerfectMode::Disabled) => 1,
             Some(BitPerfectMode::DirectHardware) => 2,
             Some(BitPerfectMode::PluginFallback) => 3,
+            Some(BitPerfectMode::DirectNamedDevice) => 4,
         };
         self.bit_perfect_mode.store(code, Ordering::SeqCst);
     }
@@ -1284,6 +1285,7 @@ impl SharedState {
             1 => Some(BitPerfectMode::Disabled),
             2 => Some(BitPerfectMode::DirectHardware),
             3 => Some(BitPerfectMode::PluginFallback),
+            4 => Some(BitPerfectMode::DirectNamedDevice),
             _ => None,
         }
     }

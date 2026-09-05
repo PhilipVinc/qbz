@@ -782,6 +782,14 @@ impl AlsaBackend {
             None => !hw_rate_unsupported, // Default: try hw first if rate is supported
         };
 
+        // A raw card is bit-perfect by construction; a named PCM only reaches ALSA
+        // untouched, and what its chain does next is invisible from here.
+        let direct_mode = if crate::alsa_direct::is_hw_device(&hw_device) {
+            super::backend::BitPerfectMode::DirectHardware
+        } else {
+            super::backend::BitPerfectMode::DirectNamedDevice
+        };
+
         if try_hw_first {
             log::info!(
                 "[ALSA Backend] Attempting DIRECT hw stream: {} ({}Hz, {}ch)",
@@ -794,7 +802,7 @@ impl AlsaBackend {
                 Ok(mut stream) => {
                     log::info!("[ALSA Backend] ✓ Direct hw stream created successfully");
                     stream.set_mixer_device(config.alsa_mixer_device.clone());
-                    return Some(Ok((stream, super::backend::BitPerfectMode::DirectHardware)));
+                    return Some(Ok((stream, direct_mode)));
                 }
                 Err(e) => {
                     let error = super::backend::AlsaDirectError::from_alsa_error(&e);
@@ -825,10 +833,7 @@ impl AlsaBackend {
                                         i + 1,
                                         delay_ms
                                     );
-                                    return Some(Ok((
-                                        stream,
-                                        super::backend::BitPerfectMode::DirectHardware,
-                                    )));
+                                    return Some(Ok((stream, direct_mode)));
                                 }
                                 Err(e2) => {
                                     log::warn!(

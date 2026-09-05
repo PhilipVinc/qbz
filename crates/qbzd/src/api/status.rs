@@ -217,13 +217,15 @@ fn assemble_live(state: &super::ApiState) -> StatusDoc {
     }
 }
 
-/// `BitPerfectMode` → its serde variant string (02 §3.3.3:
-/// `"DirectHardware"|"PluginFallback"|"Disabled"`). `None` = no active stream.
+/// `BitPerfectMode` → its serde variant string (02 §3.3.3, plus
+/// `"DirectNamedDevice"` for a named PCM whose chain we cannot see into).
+/// `None` = no active stream.
 fn bitperfect_label(m: Option<qbz_audio::BitPerfectMode>) -> Option<String> {
     use qbz_audio::BitPerfectMode as M;
     m.map(|m| {
         match m {
             M::DirectHardware => "DirectHardware",
+            M::DirectNamedDevice => "DirectNamedDevice",
             M::PluginFallback => "PluginFallback",
             M::Disabled => "Disabled",
         }
