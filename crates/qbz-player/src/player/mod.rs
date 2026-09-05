@@ -4361,7 +4361,16 @@ impl Player {
                                     && !gapless_request_armed
                                     && !thread_state.is_gapless_ready()
                                     && thread_state.get_gapless_next_track_id() == 0
-                                    && current_streaming_source.is_none()
+                                    // A stream that is still DOWNLOADING has no
+                                    // tail to hand over. A COMPLETE one does —
+                                    // and on a low-memory host, where promotion
+                                    // is skipped precisely so the buffer is not
+                                    // copied, it is never cleared, so requiring
+                                    // `is_none()` here meant gapless never armed
+                                    // at all. Same rule as the PlayNext guard.
+                                    && current_streaming_source
+                                        .as_ref()
+                                        .is_none_or(|source| source.is_complete())
                                 {
                                     log::info!("Gapless: approaching end of track ({}s/{}s), requesting next", pos, dur);
                                     thread_state.set_gapless_ready(true);
@@ -4506,6 +4515,16 @@ impl Player {
             );
             set_max_initial_buffer_bytes(profile.max_initial_buffer_bytes);
         }
+
+        // ALSA direct-path buffer length. Read here so it applies from the next
+        // stream open; 0 keeps the rate-derived default.
+        if audio_settings.alsa_buffer_ms > 0 {
+            log::info!(
+                "[Player] ALSA buffer: {} ms (audio.alsa_buffer_ms)",
+                audio_settings.alsa_buffer_ms
+            );
+        }
+        qbz_audio::alsa_direct::set_alsa_buffer_ms(u32::from(audio_settings.alsa_buffer_ms));
 
         // How a volume percentage becomes an amplitude multiplier. Read once
         // here: the curve is a property of the host's configuration, and every
@@ -4941,6 +4960,42 @@ impl Player {
         self.audio_cache
             .get_playback_cache()?
             .path_if_present(track_id)
+    }
+
+    /// Put `bytes` on disk and return the file, so a caller can hand the track
+    /// over as a path instead of keeping it resident.
+    ///
+    /// The L2 cache is normally written only as SPILL when L1 evicts something,
+    /// and L1 refuses a track larger than its budget outright — so on the very
+    /// host that needs this, a 217 MB Hi-Res track never reaches disk on its
+    /// own and there is no file to hand over. Writing it here is what makes the
+    /// disk hand-off possible at all.
+    ///
+    /// Returns `None` when there is no L2 cache configured, or the write did not
+    /// produce a readable file; the caller then keeps the in-memory path.
+    pub fn stage_track_on_disk(
+        &self,
+        track_id: u64,
+        bytes: &[u8],
+    ) -> Option<std::path::PathBuf> {
+        let cache = self.audio_cache.get_playback_cache()?;
+        if let Some(existing) = cache.path_if_present(track_id) {
+            return Some(existing);
+        }
+        cache.insert(track_id, bytes);
+        let path = cache.path_if_present(track_id);
+        match &path {
+            Some(p) => log::info!(
+                "Staged track {} on disk for a gapless hand-off ({} bytes -> {})",
+                track_id,
+                bytes.len(),
+                p.display()
+            ),
+            None => log::warn!(
+                "Could not stage track {track_id} on disk; keeping it in memory"
+            ),
+        }
+        path
     }
 
     /// Drop `track_id` from the L1 memory cache, unconditionally.
