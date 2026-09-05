@@ -736,6 +736,8 @@ fn plan_audio(
                     | "output_device"
                     | "alsa_plugin"
                     | "alsa_hardware_volume"
+                    | "alsa_mixer_device"
+                    | "memory_cache_mb"
                     | "dsd_mode"
             )
             || k.eq_ignore_ascii_case("volume");
@@ -922,9 +924,17 @@ fn plan_audio_machine(
         }
     }
 
-    // alsa_plugin / alsa_hardware_volume — apply only with a validated ALSA device.
+    // memory_cache_mb — a plain L1 budget in MB (0 = derive from this host's
+    // RAM). Unlike everything else here it says nothing about the output chain,
+    // so it neither rides the device nor needs one.
+    if let Some(v) = map.get("memory_cache_mb") {
+        applied_line(plan, "audio.memory_cache_mb", v, "");
+    }
+
+    // alsa_plugin / alsa_hardware_volume / alsa_mixer_device — apply only with a
+    // validated ALSA device.
     let resolved_backend_alsa = resolved_backend_is_alsa(map, current, fallback, forced_device);
-    for key in ["alsa_plugin", "alsa_hardware_volume"] {
+    for key in ["alsa_plugin", "alsa_hardware_volume", "alsa_mixer_device"] {
         let Some(v) = map.get(key) else { continue };
         let no_change = alsa_field_no_change(current, key, v);
         if no_change {
@@ -996,6 +1006,7 @@ fn intent_flag_current(current: &AudioSettings, flag: &str) -> bool {
 fn alsa_field_no_change(current: &AudioSettings, key: &str, v: &Value) -> bool {
     match key {
         "alsa_hardware_volume" => v.as_bool() == Some(current.alsa_hardware_volume),
+        "alsa_mixer_device" => v.as_str() == Some(current.alsa_mixer_device.as_str()),
         "alsa_plugin" => {
             let cur = serde_json::to_value(current.alsa_plugin).unwrap_or(Value::Null);
             *v == cur
