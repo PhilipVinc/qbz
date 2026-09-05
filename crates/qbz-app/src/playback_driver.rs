@@ -451,7 +451,15 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                         let profile = qbz_models::system_capabilities::memory_profile();
                         let from_disk = (profile.class
                             == qbz_models::system_capabilities::MemoryClass::LowMemory)
-                            .then(|| player.cached_track_file(*id))
+                            .then(|| {
+                                // Not `cached_track_file`: the L2 cache is
+                                // written only as spill from L1, and L1 refuses
+                                // a track bigger than its budget — so on this
+                                // host the file we want does not exist yet.
+                                player
+                                    .cached_track_file(*id)
+                                    .or_else(|| player.stage_track_on_disk(*id, &bytes))
+                            })
                             .flatten();
 
                         let mut queued = false;
