@@ -60,6 +60,16 @@ pub struct AudioSettings {
     /// only — an ALSA hardware mixer owns its own, already dB-scaled, mapping.
     #[serde(default = "default_volume_curve")]
     pub volume_curve: String,
+    /// ALSA buffer length in milliseconds for the direct (bit-perfect) path.
+    /// `0` keeps the rate-derived default (500 ms at 192 kHz+, 250 ms from
+    /// 96 kHz, 125 ms below); anything else is clamped to 50-4000 ms.
+    ///
+    /// Worth raising on a host where the writer thread competes with WiFi, an
+    /// SD card and a shared USB bus: an underrun there is an audible click and
+    /// a `Recovered from PCM error` line. Costs a few MB of DMA buffer and adds
+    /// latency no renderer listener can perceive.
+    #[serde(default)]
+    pub alsa_buffer_ms: u16,
     /// When true, cap the REQUESTED streaming quality tier at the local output
     /// device's detected ceiling (#638 fix 3; consumed by the desktop's
     /// request-time resolution, never by the audio backends). Applies to local
@@ -153,6 +163,7 @@ impl Default for AudioSettings {
             streaming_only: false, // Disabled by default (cache tracks for instant replay)
             memory_cache_mb: 0,    // 0 = auto-size from host RAM
             volume_curve: default_volume_curve(),
+            alsa_buffer_ms: 0, // 0 = derive from the sample rate
             limit_quality_to_device: false, // Opt-in. Off since 1.1.9 (#45); wired to the read-only probe in #638 fix 3
             device_max_sample_rate: None, // Set when device is selected
             device_sample_rate_limits: HashMap::new(), // Per-device limits (empty = no limit)
@@ -288,6 +299,10 @@ impl AudioSettingsStore {
             "ALTER TABLE audio_settings ADD COLUMN volume_curve TEXT DEFAULT 'perceptual'",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE audio_settings ADD COLUMN alsa_buffer_ms INTEGER DEFAULT 0",
+            [],
+        );
 
         // Seed the single settings row on first run with the OOTB default backend
         // ("System"). INSERT OR IGNORE is a one-time seed: it only fires when the
@@ -353,7 +368,7 @@ impl AudioSettingsStore {
     pub fn get_settings(&self) -> Result<AudioSettings, String> {
         self.conn
             .query_row(
-                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device, volume_curve FROM audio_settings WHERE id = 1",
+                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device, volume_curve, alsa_buffer_ms FROM audio_settings WHERE id = 1",
                 [],
                 |row| {
                     // Parse backend_type from JSON string
@@ -409,6 +424,7 @@ impl AudioSettingsStore {
                             .get::<_, Option<String>>(25)?
                             .filter(|v| !v.is_empty())
                             .unwrap_or_else(default_volume_curve),
+                        alsa_buffer_ms: row.get::<_, Option<i64>>(26)?.unwrap_or(0) as u16,
                     })
                 },
             )
@@ -540,6 +556,19 @@ impl AudioSettingsStore {
     /// deriving it from the output device.
     /// Set the software volume curve (`perceptual` or `linear`). Read once when
     /// the player starts, so it takes effect on the next daemon start.
+    /// Set the ALSA direct-path buffer length in ms; `0` restores the
+    /// rate-derived default. Read when a stream opens, so it applies to the
+    /// next track (or the next renderer start).
+    pub fn set_alsa_buffer_ms(&self, ms: u16) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE audio_settings SET alsa_buffer_ms = ?1 WHERE id = 1",
+                params![ms],
+            )
+            .map_err(|e| format!("Failed to set ALSA buffer ms: {}", e))?;
+        Ok(())
+    }
+
     pub fn set_volume_curve(&self, curve: &str) -> Result<(), String> {
         self.conn
             .execute(
@@ -828,7 +857,8 @@ impl AudioSettingsStore {
                     reserve_dac_while_running = ?21,
                     memory_cache_mb = ?22,
                     alsa_mixer_device = ?23,
-                    volume_curve = ?24
+                    volume_curve = ?24,
+                    alsa_buffer_ms = ?25
                 WHERE id = 1",
                 params![
                     defaults.output_device,
@@ -855,6 +885,7 @@ impl AudioSettingsStore {
                     defaults.memory_cache_mb as i64,
                     defaults.alsa_mixer_device.clone(),
                     defaults.volume_curve.clone(),
+                    defaults.alsa_buffer_ms as i64,
                 ],
             )
             .map_err(|e| format!("Failed to reset audio settings: {}", e))?;

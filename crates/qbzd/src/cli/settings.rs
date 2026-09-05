@@ -79,6 +79,9 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     ("audio.memory_cache_mb", ApplyClass::None),
     // Read once when the player starts, like the cache budget above.
     ("audio.volume_curve", ApplyClass::None),
+    // Read when a stream opens — Reinit so a change takes effect on the next
+    // track rather than waiting for a daemon restart.
+    ("audio.alsa_buffer_ms", ApplyClass::Reinit),
     ("audio.limit_quality_to_device", ApplyClass::Reload),
     ("audio.allow_quality_fallback", ApplyClass::Reload),
     ("audio.quality_fallback_behavior", ApplyClass::Reload),
@@ -290,6 +293,24 @@ fn parse_alsa_mixer_device(v: &str) -> Result<String, String> {
 
 /// `perceptual` (MPD's exponential mapping) or `linear` (amplitude scales with
 /// the fraction). Aliases: `mpd`/`exponential`, `amplitude`.
+/// `auto` (or `0`) keeps the rate-derived ALSA buffer; anything else is a
+/// length in milliseconds, 50-4000.
+fn parse_alsa_buffer_ms(v: &str) -> Result<u16, String> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("auto") {
+        return Ok(0);
+    }
+    let n: u16 = v
+        .parse()
+        .map_err(|_| format!("invalid buffer length '{v}' — expected 'auto' or 50-4000 (ms)"))?;
+    if n != 0 && !(50..=4000).contains(&n) {
+        return Err(format!(
+            "buffer length {n} ms out of range — expected 'auto' or 50-4000"
+        ));
+    }
+    Ok(n)
+}
+
 fn parse_volume_curve(v: &str) -> Result<String, String> {
     qbz_audio::volume_curve::VolumeCurve::from_key(v)
         .map(|curve| curve.as_key().to_string())
@@ -402,6 +423,13 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
                 }
             }
             "audio.volume_curve" => audio.volume_curve.clone(),
+            "audio.alsa_buffer_ms" => {
+                if audio.alsa_buffer_ms == 0 {
+                    "auto".to_string()
+                } else {
+                    audio.alsa_buffer_ms.to_string()
+                }
+            }
             "audio.limit_quality_to_device" => render_bool(audio.limit_quality_to_device),
             "audio.allow_quality_fallback" => render_bool(audio.allow_quality_fallback),
             "audio.quality_fallback_behavior" => audio.quality_fallback_behavior.clone(),
@@ -551,6 +579,13 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
             open_audio(roots)
                 .map_err(SetError::Io)?
                 .set_memory_cache_mb(v)
+                .map_err(SetError::Io)?
+        }
+        "audio.alsa_buffer_ms" => {
+            let v = parse_alsa_buffer_ms(raw).map_err(SetError::Usage)?;
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_alsa_buffer_ms(v)
                 .map_err(SetError::Io)?
         }
         "audio.volume_curve" => {

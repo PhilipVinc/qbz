@@ -12,6 +12,48 @@ use std::sync::atomic::AtomicBool;
 #[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
 
+/// Process-wide override for the ALSA period buffer, in milliseconds.
+/// `0` keeps the rate-derived default (see [`buffer_frames_for`]).
+static BUFFER_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Set the ALSA buffer length in milliseconds; `0` restores the default.
+///
+/// The default is sized for a desktop that is not doing anything else. A Pi
+/// streaming Hi-Res over WiFi to a USB DAC has to survive network jitter,
+/// an SD card and a shared USB bus with a quarter of a second of slack — an
+/// underrun there is an audible click, and `pcm.recover()` in the log. Trading
+/// a few MB of RAM for a longer cushion is the right trade on that host, and
+/// latency does not matter to a renderer nobody is monitoring live.
+pub fn set_alsa_buffer_ms(ms: u32) {
+    BUFFER_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn alsa_buffer_ms() -> u32 {
+    BUFFER_MS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Buffer length in frames for `sample_rate`, honouring the override.
+///
+/// The default scales with rate — 500 ms at 192 kHz and above, 250 ms from
+/// 96 kHz, 125 ms below — which is the shape this path has always had.
+#[cfg(target_os = "linux")]
+fn buffer_frames_for(sample_rate: u32) -> Frames {
+    let ms = alsa_buffer_ms();
+    if ms > 0 {
+        // Clamped so a typo cannot ask the driver for a 30-second buffer (or a
+        // 1 ms one, which would underrun continuously).
+        let ms = ms.clamp(50, 4000) as u64;
+        return ((u64::from(sample_rate) * ms) / 1000) as Frames;
+    }
+    if sample_rate >= 192_000 {
+        (sample_rate / 2) as Frames
+    } else if sample_rate >= 96_000 {
+        (sample_rate / 4) as Frames
+    } else {
+        (sample_rate / 8) as Frames
+    }
+}
+
 /// Log a PCM recovery and record it as a network-throttle underrun signal.
 ///
 /// Each call to ALSA's `pcm.recover()` that returns successfully indicates
@@ -268,17 +310,9 @@ impl AlsaDirectStream {
             hwp.set_rate(sample_rate, ValueOr::Nearest)
                 .map_err(|e| format!("Failed to set sample rate: {}", e))?;
 
-            // Set buffer size (larger buffer for high-res audio)
-            let buffer_size = if sample_rate >= 192000 {
-                // 500ms buffer for 192kHz+ (like MPD config)
-                (sample_rate / 2) as Frames
-            } else if sample_rate >= 96000 {
-                // 250ms buffer for 96kHz
-                (sample_rate / 4) as Frames
-            } else {
-                // 125ms buffer for lower rates
-                (sample_rate / 8) as Frames
-            };
+            // Buffer length: rate-derived by default, or whatever
+            // `audio.alsa_buffer_ms` asks for (see `buffer_frames_for`).
+            let buffer_size = buffer_frames_for(sample_rate);
 
             hwp.set_buffer_size_near(buffer_size)
                 .map_err(|e| format!("Failed to set buffer size: {}", e))?;
@@ -358,13 +392,7 @@ impl AlsaDirectStream {
                 .map_err(|e| format!("Failed to set channels: {}", e))?;
             hwp.set_rate(carrier_rate, ValueOr::Nearest)
                 .map_err(|e| format!("Failed to set DoP carrier rate {}: {}", carrier_rate, e))?;
-            let buffer_size = if carrier_rate >= 192000 {
-                (carrier_rate / 2) as Frames
-            } else if carrier_rate >= 96000 {
-                (carrier_rate / 4) as Frames
-            } else {
-                (carrier_rate / 8) as Frames
-            };
+            let buffer_size = buffer_frames_for(carrier_rate);
             hwp.set_buffer_size_near(buffer_size)
                 .map_err(|e| format!("Failed to set buffer size: {}", e))?;
             hwp.set_period_size_near(buffer_size / 10, ValueOr::Nearest)
@@ -448,7 +476,7 @@ impl AlsaDirectStream {
                 .map_err(|e| format!("Failed to set channels: {}", e))?;
             hwp.set_rate(rate, ValueOr::Nearest)
                 .map_err(|e| format!("Failed to set native DSD rate {}: {}", rate, e))?;
-            let buffer_size = (rate / 4) as Frames; // 250 ms
+            let buffer_size = buffer_frames_for(rate);
             hwp.set_buffer_size_near(buffer_size)
                 .map_err(|e| format!("Failed to set buffer size: {}", e))?;
             hwp.set_period_size_near(buffer_size / 10, ValueOr::Nearest)

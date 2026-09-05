@@ -739,6 +739,7 @@ fn plan_audio(
                     | "alsa_mixer_device"
                     | "memory_cache_mb"
                     | "volume_curve"
+                    | "alsa_buffer_ms"
                     | "dsd_mode"
             )
             || k.eq_ignore_ascii_case("volume");
@@ -936,6 +937,12 @@ fn plan_audio_machine(
     // independent of which device or backend survives the import.
     if let Some(v) = map.get("volume_curve") {
         applied_line(plan, "audio.volume_curve", v, "");
+    }
+
+    // alsa_buffer_ms — a length in ms for the ALSA direct path. Portable: it
+    // describes how much slack the host needs, not which device it has.
+    if let Some(v) = map.get("alsa_buffer_ms") {
+        applied_line(plan, "audio.alsa_buffer_ms", v, "");
     }
 
     // alsa_plugin / alsa_hardware_volume / alsa_mixer_device — apply only with a
