@@ -131,6 +131,21 @@ impl PlaybackCache {
         self.state.lock().unwrap().entries.contains_key(&track_id)
     }
 
+    /// The cached file for `track_id`, when one is actually on disk.
+    ///
+    /// For a caller that can decode from a file instead of a buffer: a Hi-Res
+    /// track is 120–220 MB, and once the prefetch has written it here, holding a
+    /// second copy in RAM until the gapless transition is pure cost. Checks the
+    /// filesystem rather than only the index, since [`Self::get`] documents that
+    /// entries can be deleted underneath us.
+    pub fn path_if_present(&self, track_id: u64) -> Option<PathBuf> {
+        if !self.contains(track_id) {
+            return None;
+        }
+        let path = self.track_path(track_id);
+        path.exists().then_some(path)
+    }
+
     /// Get a track from the cache
     pub fn get(&self, track_id: u64) -> Option<Vec<u8>> {
         let path = self.track_path(track_id);

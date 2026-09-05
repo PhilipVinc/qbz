@@ -440,8 +440,41 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                     if let Some(bytes) =
                         core.fetch_for_gapless_resolved(*id, quality, None, None).await
                     {
-                        if let Err(e) = player.play_next(bytes, *id) {
-                            log::warn!("[qbzd] driver: gapless play_next failed: {e}");
+                        // The fetch has just written this track to the L2 disk
+                        // cache. On a memory-constrained host, decode it from
+                        // there: a Hi-Res track is 120-220 MB, and holding it in
+                        // RAM beside the CURRENT track's buffer for the minutes
+                        // until the transition is what took a 1 GB Pi to 570 MB
+                        // RSS and into a reboot. Dropping the L1 copy is part of
+                        // the point — keeping it would move the same bytes, not
+                        // free them.
+                        let profile = qbz_models::system_capabilities::memory_profile();
+                        let from_disk = (profile.class
+                            == qbz_models::system_capabilities::MemoryClass::LowMemory)
+                            .then(|| player.cached_track_file(*id))
+                            .flatten();
+
+                        let mut queued = false;
+                        if let Some(path) = from_disk {
+                            match player.play_next_file(path, *id) {
+                                Ok(()) => {
+                                    player.drop_cached_track(*id);
+                                    queued = true;
+                                }
+                                Err(e) => {
+                                    // Not fatal: fall back to the resident path
+                                    // rather than lose the gapless transition.
+                                    log::warn!(
+                                        "[qbzd] driver: gapless from disk failed ({e}), using memory"
+                                    );
+                                }
+                            }
+                        }
+
+                        if !queued {
+                            if let Err(e) = player.play_next(bytes, *id) {
+                                log::warn!("[qbzd] driver: gapless play_next failed: {e}");
+                            }
                         }
                     }
                 }

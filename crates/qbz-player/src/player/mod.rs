@@ -101,7 +101,7 @@ enum AudioCommand {
     ReleaseDevice,
     /// Append next track to current engine for gapless playback (Rodio only)
     PlayNext {
-        data: TrackBytes,
+        audio: GaplessAudio,
         track_id: u64,
         sample_rate: u32,
         channels: u16,
@@ -119,11 +119,35 @@ enum AudioCommand {
     PlayNextDsdDop { path: std::path::PathBuf, track_id: u64 },
 }
 
+/// Where a gapless-queued track's audio lives between the prefetch and the
+/// transition.
+///
+/// `File` exists because the prefetch has ALREADY written the track to the L2
+/// disk cache by the time it is queued. A Hi-Res track is 120–220 MB, so holding
+/// a second copy in RAM for the minutes until the transition — beside the
+/// current track's own buffer — is what took a 1 GB Pi to 570 MB RSS and into a
+/// reboot. Decoding from the file costs the decoder's own buffers instead, and
+/// the page cache can evict what it likes under pressure.
+#[derive(Clone)]
+pub enum GaplessAudio {
+    Memory(TrackBytes),
+    File(std::path::PathBuf),
+}
+
+impl GaplessAudio {
+    fn describe(&self) -> String {
+        match self {
+            Self::Memory(data) => format!("{} bytes in memory", data.len()),
+            Self::File(path) => format!("file {}", path.display()),
+        }
+    }
+}
+
 /// Pending gapless track data (queued for seamless transition)
 struct GaplessPending {
     track_id: u64,
     duration_secs: u64,
-    data: TrackBytes,
+    audio: GaplessAudio,
     normalization_gain: Option<f32>,
 }
 
@@ -377,6 +401,41 @@ fn seek_in_memory(
         return None;
     }
     Some(Box::new(source))
+}
+
+/// Decode straight from a file on disk, for a track that is already in the L2
+/// cache (see [`GaplessAudio::File`]). The decoder reads through a `BufReader`,
+/// so the resident cost is its own buffers rather than the whole track.
+///
+/// Only the primary decoder is tried: the L2 cache holds decrypted FLAC written
+/// by this player, never the isomp4 shapes `decode_with_fallback` exists to
+/// rescue. A caller that gets `Err` here still has the in-memory path.
+fn decode_file_with_fallback(
+    path: &std::path::Path,
+) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("open cached track {}: {e}", path.display()))?;
+
+    let attempt =
+        panic::catch_unwind(AssertUnwindSafe(|| Decoder::new(BufReader::new(file))));
+
+    match attempt {
+        Ok(Ok(decoder)) => Ok(Box::new(decoder)),
+        Ok(Err(err)) => Err(format!("decode cached track {}: {err}", path.display())),
+        Err(_) => Err(format!("decode of {} panicked", path.display())),
+    }
+}
+
+/// The head of a cached file, for tag reads (ReplayGain lives in the FLAC
+/// metadata blocks at the start). Bounded so a 220 MB track costs kilobytes.
+fn read_tag_head(path: &std::path::Path) -> Option<TrackBytes> {
+    use std::io::Read;
+    const TAG_HEAD_BYTES: usize = 1024 * 1024;
+
+    let mut file = std::fs::File::open(path).ok()?;
+    let mut head = Vec::with_capacity(TAG_HEAD_BYTES.min(1024 * 64));
+    file.take(TAG_HEAD_BYTES as u64).read_to_end(&mut head).ok()?;
+    Some(TrackBytes::from(head.as_slice()))
 }
 
 fn decode_with_fallback(data: &TrackBytes) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
@@ -1680,6 +1739,11 @@ impl Player {
             let mut current_engine: Option<PlaybackEngine> = None;
             // Store audio data for seeking (we need to re-decode from the beginning)
             let mut current_audio_data: Option<TrackBytes> = None;
+            // Set instead of `current_audio_data` when the track arrived through a
+            // gapless hand-off that decoded straight from the L2 cache file
+            // (see `GaplessAudio::File`). Resume re-opens it rather than holding
+            // 120-220 MB of Hi-Res in RAM for the whole track.
+            let mut current_audio_file: Option<std::path::PathBuf> = None;
             // Store streaming source for resume (when download completes, we can get the data)
             let mut current_streaming_source: Option<Arc<BufferedMediaSource>> = None;
             // Track consecutive sink creation failures to detect broken streams
@@ -1705,6 +1769,7 @@ impl Player {
                 |command: AudioCommand,
                  current_engine: &mut Option<PlaybackEngine>,
                  current_audio_data: &mut Option<TrackBytes>,
+                 current_audio_file: &mut Option<std::path::PathBuf>,
                  current_streaming_source: &mut Option<Arc<BufferedMediaSource>>,
                  stream_opt: &mut Option<StreamType>,
                  current_device_name: &mut Option<String>,
@@ -2041,6 +2106,8 @@ impl Player {
                             }
 
                             *current_audio_data = Some(data.clone());
+
+                            *current_audio_file = None;
                             *current_streaming_source = None; // Clear streaming source for non-streaming playback
                             thread_state.set_loaded_audio(true);
 
@@ -2235,7 +2302,8 @@ impl Player {
                             // Store streaming source for resume capability
                             // When download completes, we can extract the data for resume
                             *current_streaming_source = Some(source.clone());
-                            *current_audio_data = None; // Clear regular audio data
+                            *current_audio_data = None;
+                            *current_audio_file = None; // Clear regular audio data
                             thread_state.set_loaded_audio(true);
 
                             // Track metadata is known-good at command time. Store the
@@ -2400,6 +2468,7 @@ impl Player {
                                         // would replay a track that never started.
                                         *current_streaming_source = None;
                                         *current_audio_data = None;
+                                        *current_audio_file = None;
                                         thread_state.set_loaded_audio(false);
                                         thread_state.is_playing.store(false, Ordering::SeqCst);
                                         thread_state.record_stream_error(
@@ -2442,6 +2511,7 @@ impl Player {
                                         // 0:00 forever (#508/#592).
                                         *current_streaming_source = None;
                                         *current_audio_data = None;
+                                        *current_audio_file = None;
                                         thread_state.set_loaded_audio(false);
                                         thread_state.is_playing.store(false, Ordering::SeqCst);
                                         thread_state.record_stream_error(e);
@@ -2487,6 +2557,7 @@ impl Player {
                                             );
                                             *current_streaming_source = None;
                                             *current_audio_data = None;
+                                            *current_audio_file = None;
                                             thread_state.set_loaded_audio(false);
                                             thread_state
                                                 .is_playing
@@ -2624,6 +2695,7 @@ impl Player {
                                 };
                                 *current_streaming_source = None;
                                 *current_audio_data = None;
+                                *current_audio_file = None;
                                 thread_state.set_loaded_audio(false);
                                 thread_state.is_playing.store(false, Ordering::SeqCst);
                                 thread_state.record_stream_error(err_msg);
@@ -2657,6 +2729,7 @@ impl Player {
                                         );
                                         *current_streaming_source = None;
                                         *current_audio_data = None;
+                                        *current_audio_file = None;
                                         thread_state.set_loaded_audio(false);
                                         thread_state.is_playing.store(false, Ordering::SeqCst);
                                         thread_state.record_stream_error(
@@ -2737,6 +2810,7 @@ impl Player {
                                     log::error!("Resume: feeder failed after the seek: {}", err);
                                     *current_streaming_source = None;
                                     *current_audio_data = None;
+                                    *current_audio_file = None;
                                     thread_state.set_loaded_audio(false);
                                     thread_state.is_playing.store(false, Ordering::SeqCst);
                                     thread_state.record_stream_error(format!(
@@ -2941,6 +3015,7 @@ impl Player {
                                 *current_track_sample_rate = Some(carrier);
                                 *current_track_channels = Some(2);
                                 *current_audio_data = None;
+                                *current_audio_file = None;
                                 *current_streaming_source = None;
 
                                 let mut engine = PlaybackEngine::new_alsa_dop(stream, false);
@@ -3059,6 +3134,7 @@ impl Player {
                                 *current_track_sample_rate = Some(rate);
                                 *current_track_channels = Some(2);
                                 *current_audio_data = None;
+                                *current_audio_file = None;
                                 *current_streaming_source = None;
 
                                 let mut engine = PlaybackEngine::new_alsa_dop(stream, true);
@@ -3175,7 +3251,7 @@ impl Player {
                                         *gapless_pending = Some(GaplessPending {
                                             track_id,
                                             duration_secs: duration,
-                                            data: TrackBytes::default(),
+                                            audio: GaplessAudio::Memory(TrackBytes::default()),
                                             normalization_gain: None,
                                         });
                                         thread_state.set_gapless_next_track_id(track_id);
@@ -3234,6 +3310,29 @@ impl Player {
 
                                 let resume_input = if let Some(ref data) = *current_audio_data {
                                     ResumeInput::Memory(data.clone())
+                                } else if let Some(ref path) = *current_audio_file {
+                                    // A track that arrived through a gapless
+                                    // hand-off decoded from the L2 cache file and
+                                    // deliberately kept no copy in RAM. Reading it
+                                    // back here is a one-off on a user action, not
+                                    // a resident cost.
+                                    match std::fs::read(path) {
+                                        Ok(bytes) => {
+                                            log::info!(
+                                                "Resume: re-reading {} ({} bytes) for the gapless-loaded track",
+                                                path.display(),
+                                                bytes.len()
+                                            );
+                                            ResumeInput::Memory(TrackBytes::from(bytes.as_slice()))
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "Audio thread: cannot resume - cached file {} unreadable: {e}",
+                                                path.display()
+                                            );
+                                            return;
+                                        }
+                                    }
                                 } else if let Some(ref streaming_src) = *current_streaming_source {
                                     if streaming_src.is_complete() {
                                         match streaming_src.take_complete_data() {
@@ -3241,6 +3340,7 @@ impl Player {
                                                 log::info!("Resume: using complete streaming data ({} bytes)", data.len());
                                                 // Store it in current_audio_data for future use
                                                 *current_audio_data = Some(data.clone());
+                                                *current_audio_file = None;
                                                 ResumeInput::Memory(data)
                                             }
                                             None => {
@@ -3475,6 +3575,7 @@ impl Player {
                                 engine.stop();
                             }
                             *current_audio_data = None;
+                            *current_audio_file = None;
                             *current_streaming_source = None;
                             *current_normalization_gain = None;
                             *current_gain_atomic = None;
@@ -3843,7 +3944,7 @@ impl Player {
                             log::info!("Audio thread: output device released");
                         }
                         AudioCommand::PlayNext {
-                            data,
+                            audio,
                             track_id,
                             sample_rate,
                             channels,
@@ -3896,8 +3997,21 @@ impl Player {
                                 return;
                             }
 
-                            // Decode the next track's audio
-                            let source = match decode_with_fallback(&data) {
+                            // Decode the next track's audio — from memory, or
+                            // straight off the L2 cache file when the prefetch
+                            // left it there (see `GaplessAudio`). `tag_bytes` is
+                            // whatever ReplayGain can be read from: the whole
+                            // track in the memory case, the head of the file
+                            // otherwise (FLAC tags live at the start).
+                            let (decoded, tag_bytes) = match &audio {
+                                GaplessAudio::Memory(data) => {
+                                    (decode_with_fallback(data), Some(data.clone()))
+                                }
+                                GaplessAudio::File(path) => {
+                                    (decode_file_with_fallback(path), read_tag_head(path))
+                                }
+                            };
+                            let source = match decoded {
                                 Ok(s) => s,
                                 Err(e) => {
                                     log::error!(
@@ -3922,7 +4036,9 @@ impl Player {
 
                             let (normalization, gain_atomic) =
                                 if let Some(target_lufs) = norm_settings {
-                                    let rg_gain = extract_replaygain(&data)
+                                    let rg_gain = tag_bytes
+                                        .as_ref()
+                                        .and_then(|bytes| extract_replaygain(bytes))
                                         .map(|rg| calculate_gain_factor(&rg, target_lufs));
                                     let atomic =
                                         Arc::new(AtomicU32::new(rg_gain.unwrap_or(1.0).to_bits()));
@@ -3985,10 +4101,14 @@ impl Player {
                             }
 
                             // Store pending gapless data for transition detection
+                            log::info!(
+                                "Gapless: track {track_id} queued from {}",
+                                audio.describe()
+                            );
                             *gapless_pending = Some(GaplessPending {
                                 track_id,
                                 duration_secs: actual_duration,
-                                data,
+                                audio,
                                 normalization_gain: normalization,
                             });
                             thread_state.set_gapless_next_track_id(track_id);
@@ -4010,6 +4130,7 @@ impl Player {
                             command,
                             &mut current_engine,
                             &mut current_audio_data,
+                            &mut current_audio_file,
                             &mut current_streaming_source,
                             &mut stream_opt,
                             &mut current_device_name,
@@ -4135,7 +4256,19 @@ impl Player {
                                             .duration
                                             .store(pending.duration_secs, Ordering::SeqCst);
                                         thread_state.start_playback_timer(0);
-                                        current_audio_data = Some(pending.data.clone());
+                                        match &pending.audio {
+                                            GaplessAudio::Memory(data) => {
+                                                current_audio_data = Some(data.clone());
+                                                current_audio_file = None;
+                                            }
+                                            GaplessAudio::File(path) => {
+                                                // Nothing to hold: the decoder is
+                                                // reading this file, and Resume
+                                                // re-opens it.
+                                                current_audio_data = None;
+                                                current_audio_file = Some(path.clone());
+                                            }
+                                        }
                                         current_normalization_gain = pending.normalization_gain;
                                         thread_state
                                             .set_normalization_gain(pending.normalization_gain);
@@ -4167,7 +4300,16 @@ impl Player {
                                                 .duration
                                                 .store(pending.duration_secs, Ordering::SeqCst);
                                             thread_state.start_playback_timer(0);
-                                            current_audio_data = Some(pending.data.clone());
+                                            match &pending.audio {
+                                                GaplessAudio::Memory(data) => {
+                                                    current_audio_data = Some(data.clone());
+                                                    current_audio_file = None;
+                                                }
+                                                GaplessAudio::File(path) => {
+                                                    current_audio_data = None;
+                                                    current_audio_file = Some(path.clone());
+                                                }
+                                            }
                                             current_normalization_gain = pending.normalization_gain;
                                             thread_state
                                                 .set_normalization_gain(pending.normalization_gain);
@@ -4291,6 +4433,7 @@ impl Player {
                                     command,
                                     &mut current_engine,
                                     &mut current_audio_data,
+                                    &mut current_audio_file,
                                     &mut current_streaming_source,
                                     &mut stream_opt,
                                     &mut current_device_name,
@@ -4319,6 +4462,7 @@ impl Player {
                             command,
                             &mut current_engine,
                             &mut current_audio_data,
+                            &mut current_audio_file,
                             &mut current_streaming_source,
                             &mut stream_opt,
                             &mut current_device_name,
@@ -4789,6 +4933,26 @@ impl Player {
         self.audio_cache.clear();
     }
 
+    /// The L2 cache file holding `track_id`, when the prefetch left one there.
+    ///
+    /// For the gapless hand-off: with a file in hand the caller can use
+    /// [`Self::play_next_file`] and skip the resident copy entirely.
+    pub fn cached_track_file(&self, track_id: u64) -> Option<std::path::PathBuf> {
+        self.audio_cache
+            .get_playback_cache()?
+            .path_if_present(track_id)
+    }
+
+    /// Drop `track_id` from the L1 memory cache, unconditionally.
+    ///
+    /// Distinct from [`Self::release_finished_track`], which is about a track
+    /// that has finished PLAYING and only fires on a memory-constrained host.
+    /// This one is for bytes we have decided to read from disk instead: keeping
+    /// the L1 copy would defeat the point.
+    pub fn drop_cached_track(&self, track_id: u64) -> bool {
+        self.audio_cache.release(track_id)
+    }
+
     /// A track just finished playing — free its bytes early, but only where the
     /// memory actually matters.
     ///
@@ -5224,6 +5388,44 @@ impl Player {
     }
 
     /// Queue next track for gapless playback (appends to current Sink without stopping)
+    /// Queue the next track for a gapless transition, decoding it from its L2
+    /// cache FILE instead of from bytes in memory.
+    ///
+    /// Same hand-off as [`Self::play_next`], minus the resident copy: the
+    /// prefetch has already written the track to disk, so holding 120–220 MB of
+    /// Hi-Res in RAM until the transition buys nothing. The caller picks this
+    /// when the file exists and the host is short of memory; on failure it can
+    /// still fall back to the in-memory path.
+    pub fn play_next_file(&self, path: std::path::PathBuf, track_id: u64) -> Result<(), String> {
+        // Probe the format the same way the decoder will read it, so a file we
+        // cannot decode fails HERE rather than at the transition, where the
+        // fallback is a gap.
+        let probe = decode_file_with_fallback(&path)?;
+        let sample_rate: u32 = probe.sample_rate().into();
+        let channels: u16 = probe.channels().into();
+        drop(probe);
+
+        log::info!(
+            "Player: Queueing gapless track {} from disk ({}Hz, {}ch, {})",
+            track_id,
+            sample_rate,
+            channels,
+            path.display()
+        );
+
+        self.tx
+            .send(AudioCommand::PlayNext {
+                audio: GaplessAudio::File(path),
+                track_id,
+                sample_rate,
+                channels,
+            })
+            .map_err(|e| {
+                log::error!("Player: Failed to send PlayNext (file) to audio thread: {e}");
+                format!("Failed to send gapless command: {e}")
+            })
+    }
+
     pub fn play_next(&self, data: impl Into<TrackBytes>, track_id: u64) -> Result<(), String> {
         let data: TrackBytes = data.into();
         let meta = extract_audio_metadata_full(&data)
@@ -5239,7 +5441,7 @@ impl Player {
 
         self.tx
             .send(AudioCommand::PlayNext {
-                data,
+                audio: GaplessAudio::Memory(data),
                 track_id,
                 sample_rate: meta.sample_rate,
                 channels: meta.channels,
