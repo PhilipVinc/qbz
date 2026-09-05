@@ -3875,9 +3875,23 @@ impl Player {
                                 }
                             }
 
-                            // Don't queue if already streaming
-                            if current_streaming_source.is_some() {
-                                log::info!("Gapless: streaming source active, ignoring PlayNext for track {}", track_id);
+                            // Don't queue while the current track is still
+                            // DOWNLOADING — its tail is not in memory, so there is
+                            // nothing to hand the writer thread after it.
+                            //
+                            // A COMPLETE source is fine: its buffer holds the whole
+                            // track, which is precisely what promotion used to copy
+                            // out before clearing it. On a low-memory host promotion
+                            // is skipped (the copy is what puts a 1 GB Pi in swap),
+                            // so this is the only path left to gapless there —
+                            // refusing it outright silently traded gapless for
+                            // memory. The transition clears the source, freeing the
+                            // finished track's buffer.
+                            if current_streaming_source
+                                .as_ref()
+                                .is_some_and(|source| !source.is_complete())
+                            {
+                                log::info!("Gapless: streaming source still downloading, ignoring PlayNext for track {}", track_id);
                                 thread_state.set_gapless_ready(false);
                                 return;
                             }
@@ -4160,6 +4174,14 @@ impl Player {
                                             gapless_pending = None;
                                             gapless_request_armed = false;
                                             transition_consumed_pending = true;
+                                            // The track that just ended owned this
+                                            // buffer; the new one plays from
+                                            // `current_audio_data`. Dropping it here
+                                            // is what frees a finished Hi-Res track
+                                            // on a host where promotion was skipped —
+                                            // and it leaves the next PlayNext an
+                                            // empty slot rather than a stale one.
+                                            current_streaming_source = None;
                                         }
                                     }
                                 }
