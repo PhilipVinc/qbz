@@ -784,7 +784,7 @@ impl AlsaBackend {
 
         // A raw card is bit-perfect by construction; a named PCM only reaches ALSA
         // untouched, and what its chain does next is invisible from here.
-        let direct_mode = if crate::alsa_direct::is_hw_device(&hw_device) {
+        let direct_mode = if super::AlsaDirectStream::is_hw_device(&hw_device) {
             super::backend::BitPerfectMode::DirectHardware
         } else {
             super::backend::BitPerfectMode::DirectNamedDevice
