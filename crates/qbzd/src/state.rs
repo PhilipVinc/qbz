@@ -71,6 +71,14 @@ impl DaemonShared {
     /// event (SSE `/api/events`, `qbzd watch`, the event hook). Call AFTER
     /// mutating `self.qconnect`; a best-effort no-op before the bus attaches
     /// or when no receiver is subscribed.
+    /// Publish an event on the daemon bus (SSE subscribers and the event hook).
+    /// A no-op before the bus exists, which is the case during early startup.
+    pub fn emit(&self, event: qbz_models::CoreEvent) {
+        if let Some(bus) = &self.bus {
+            let _ = bus.send(event);
+        }
+    }
+
     pub fn emit_qconnect_session_changed(&self) {
         if let Some(bus) = &self.bus {
             let _ = bus.send(qbz_models::CoreEvent::QconnectSessionChanged {

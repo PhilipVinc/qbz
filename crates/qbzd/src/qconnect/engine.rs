@@ -93,6 +93,9 @@ pub struct DaemonRendererEngine {
     /// DAEMON-ONLY: the track whose buffer is still filling, so renderer
     /// reports can say BUFFERING (see `BufferingLatch`).
     buffering: Arc<BufferingLatch>,
+    /// Daemon status + event bus, so a starting stream can announce itself to
+    /// the host BEFORE it takes the audio device (see `start_track_stream`).
+    shared: Arc<std::sync::Mutex<crate::state::DaemonShared>>,
     /// Pulsed when buffering starts so the report scheduler tells the
     /// controller within milliseconds instead of at its next 2 s tick.
     report_notify: Arc<tokio::sync::Notify>,
@@ -188,12 +191,14 @@ impl DaemonRendererEngine {
         volume_mode: VolumeMode,
         buffering: Arc<BufferingLatch>,
         report_notify: Arc<tokio::sync::Notify>,
+        shared: Arc<std::sync::Mutex<crate::state::DaemonShared>>,
     ) -> Self {
         Self {
             runtime,
             volume_mode,
             current_feeder: std::sync::Mutex::new(None),
             buffering,
+            shared,
             report_notify,
         }
     }
@@ -328,6 +333,27 @@ impl QconnectRendererEngine for DaemonRendererEngine {
         duration_secs: u64,
         start_position_secs: u64,
     ) -> Result<(), String> {
+        // Announce the load BEFORE anything touches the audio device.
+        //
+        // A host integration has to free the card for us: on moOde the event
+        // hook stops MPD, and MPD keeps its ALSA device for seconds after that.
+        // Until now the first thing the host heard about a cast was
+        // PlaybackError — the daemon went straight from `paused` to opening an
+        // exclusive device, failed because MPD still held it, and only then
+        // said so. Casting to a player that was already playing something
+        // simply did not work, which is the "Qobuz will not start while moOde
+        // is playing" report.
+        //
+        // Emitting `loading` here gives the host the whole stream-URL resolve
+        // (a network round-trip) plus the buffer fill to get out of the way,
+        // and it is also the honest state to show a controller that is
+        // otherwise told the renderer is paused while a track loads.
+        if let Ok(shared) = self.shared.lock() {
+            shared.emit(qbz_models::CoreEvent::PlaybackStateChanged {
+                state: qbz_models::PlaybackState::Loading,
+            });
+        }
+
         let stream_url = self
             .core()
             .get_stream_url(track_id, quality)

@@ -243,6 +243,7 @@ impl DaemonQconnectService {
             volume_mode,
             Arc::clone(&self.buffering),
             Arc::clone(&self.report_notify),
+            Arc::clone(&self.shared),
         );
         let sink = Arc::new(DaemonEventSink::new(
             engine,
