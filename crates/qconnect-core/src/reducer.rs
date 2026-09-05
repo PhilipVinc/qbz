@@ -32,6 +32,14 @@ pub fn apply_event(
     event: &QueueEvent,
     now_ms: u64,
 ) -> ReducerOutcome {
+    // A selection belongs to the push that carried it (see
+    // `QConnectQueueState::selected_queue_position`). Clear it for every other
+    // event so a later materialization can never act on a stale one; the
+    // `TracksLoaded` arm below sets it again from this event.
+    if !matches!(event, QueueEvent::TracksLoaded { .. }) {
+        state.selected_queue_position = None;
+    }
+
     match event {
         QueueEvent::QueueStateReplaced { state: next, .. } => {
             *state = next.clone();
@@ -69,12 +77,14 @@ pub fn apply_event(
         QueueEvent::TracksLoaded {
             version,
             tracks,
+            queue_position,
             shuffle_mode,
             autoplay_reset,
             autoplay_loading,
             ..
         } => {
             state.queue_items = tracks.clone();
+            state.selected_queue_position = *queue_position;
 
             if let Some(enabled) = shuffle_mode {
                 state.shuffle_mode = *enabled;
@@ -422,6 +432,48 @@ mod tests {
         assert!(state.shuffle_mode);
         assert_eq!(state.shuffle_order, None);
         assert!(state.autoplay_loading);
+        assert_eq!(
+            state.selected_queue_position,
+            Some(1),
+            "the controller's selection is kept for materialization"
+        );
+    }
+
+    /// The selection belongs to the push that carried it: the next queue event
+    /// clears it, so a later materialization can never act on a stale one.
+    #[test]
+    fn a_later_queue_event_clears_the_pushed_selection() {
+        let mut state = QConnectQueueState::default();
+        apply_event(
+            &mut state,
+            &QueueEvent::TracksLoaded {
+                action_uuid: None,
+                version: QueueVersion::new(1, 1),
+                tracks: vec![item(10), item(20), item(30)],
+                queue_position: Some(2),
+                shuffle_mode: None,
+                shuffle_seed: None,
+                shuffle_pivot_queue_item_id: None,
+                autoplay_reset: true,
+                autoplay_loading: false,
+            },
+            1234,
+        );
+        assert_eq!(state.selected_queue_position, Some(2));
+
+        apply_event(
+            &mut state,
+            &QueueEvent::TracksAdded {
+                action_uuid: None,
+                version: QueueVersion::new(1, 2),
+                tracks: vec![item(40)],
+                shuffle_seed: None,
+                autoplay_reset: false,
+                autoplay_loading: false,
+            },
+            1235,
+        );
+        assert_eq!(state.selected_queue_position, None);
     }
 
     #[test]

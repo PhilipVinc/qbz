@@ -717,6 +717,7 @@ pub async fn materialize_remote_queue(
         renderer_next_queue_item_id,
         renderer_next_track_id,
         renderer_playing_state,
+        renderer_max_audio_quality,
         should_skip,
     ) = {
         let mut state = sync_state.lock().await;
@@ -728,6 +729,7 @@ pub async fn materialize_remote_queue(
                 state.last_renderer_next_queue_item_id,
                 state.last_renderer_next_track_id,
                 state.last_renderer_playing_state,
+                state.last_renderer_max_audio_quality,
                 true,
             )
         } else {
@@ -738,6 +740,7 @@ pub async fn materialize_remote_queue(
                 state.last_renderer_next_queue_item_id,
                 state.last_renderer_next_track_id,
                 state.last_renderer_playing_state,
+                state.last_renderer_max_audio_quality,
                 false,
             )
         }
@@ -818,8 +821,20 @@ pub async fn materialize_remote_queue(
         0 => None,
         track_id => Some(track_id),
     };
-    let mut start_index =
-        resolve_remote_start_index(queue_state, renderer_queue_item_id, renderer_track_id);
+    // The controller's own selection, when the push carried one, outranks every
+    // projection below it: `selected_queue_position` says which entry the user
+    // just tapped in THIS queue, while the renderer projection only says what we
+    // were playing before it. They agree on a cast (the position is the playing
+    // track), and where they disagree the selection is the newer fact.
+    let selected_index = queue_state
+        .selected_queue_position
+        .and_then(|position| usize::try_from(position).ok())
+        .filter(|index| *index < queue_state.queue_items.len());
+    let mut start_index = selected_index;
+    if start_index.is_none() {
+        start_index =
+            resolve_remote_start_index(queue_state, renderer_queue_item_id, renderer_track_id);
+    }
     if start_index.is_none() {
         start_index = resolve_remote_start_index(
             queue_state,
@@ -911,6 +926,40 @@ pub async fn materialize_remote_queue(
             current_playback_track_id
         );
         let _ = engine.stop();
+    }
+
+    // Start the selection when nothing else will. A push that carries
+    // `selected_queue_position` is not always followed by a SetState naming the
+    // track — selecting the last entry with repeat off is the case that isn't
+    // (see `QConnectQueueState::selected_queue_position`) — and the cursor move
+    // above only re-points the queue, so without this the tap plays nothing and
+    // the outgoing track keeps going.
+    //
+    // Gated on the cloud reporting the session PLAYING: a selection made while
+    // paused or stopped is the controller staging a track, not asking for audio.
+    // `ensure_remote_track_loaded` keeps the shared dedup window, so a SetState
+    // that DOES name this track right after cannot load it twice, and it
+    // short-circuits when the engine already plays it.
+    if let Some(index) = selected_index {
+        let selected_track_id = queue_state.queue_items[index].track_id;
+        if current_playback_track_id != Some(selected_track_id)
+            && matches!(renderer_playing_state, Some(PLAYING_STATE_PLAYING))
+        {
+            log::info!(
+                "[QConnect] materialize_remote_queue: starting selected queue position {index} (track {selected_track_id}); the push named no SetState track"
+            );
+            // A freshly selected track starts at its beginning — the same rule
+            // `frame_position_ms` applies to a frame that names a track and no
+            // position.
+            ensure_remote_track_loaded(
+                engine,
+                sync_state,
+                selected_track_id,
+                renderer_max_audio_quality,
+                0,
+            )
+            .await?;
+        }
     }
 
     Ok(())
@@ -1134,6 +1183,20 @@ mod tests {
             autoplay_items: Vec::new(),
             updated_at_ms: 0,
             last_server_queue_hash: None,
+            selected_queue_position: None,
+        }
+    }
+
+    /// A queue the controller pushed with a selection, i.e. what
+    /// CTRL_SRVR_QUEUE_TRACKS_LOADED carries when the user taps a track.
+    fn pushed_queue_state(
+        version: QueueVersion,
+        items: Vec<QueueItem>,
+        selected_queue_position: u64,
+    ) -> QConnectQueueState {
+        QConnectQueueState {
+            selected_queue_position: Some(selected_queue_position),
+            ..queue_state(version, items, false, None)
         }
     }
 
@@ -1766,6 +1829,98 @@ mod tests {
                 "shuffle enabled once authoritative order present"
             );
         }
+    }
+
+    /// The 13-track album from the "last track of a playlist never plays" trace:
+    /// the user taps the LAST entry while entry 1 is playing. The push carries
+    /// `queue_position: 12` and the only frame that follows is a state-only
+    /// SetState (`current_track: null`), so this materialization is the sole
+    /// chance to start track 12 — and the renderer projection still names the
+    /// outgoing track, which is what used to win.
+    #[tokio::test]
+    async fn materialize_starts_the_pushed_selection_when_no_setstate_names_it() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 410609158,
+            ..Default::default()
+        };
+        let sync = sync();
+        {
+            let mut state = sync.lock().await;
+            state.last_renderer_queue_item_id = Some(1);
+            state.last_renderer_track_id = Some(410609158);
+            state.last_renderer_playing_state = Some(PLAYING_STATE_PLAYING);
+        }
+        let items: Vec<QueueItem> = (0..13).map(|i| qi(410609157 + i, i)).collect();
+        let pushed = pushed_queue_state(QueueVersion::new(4, 1), items, 12);
+
+        materialize_remote_queue(&engine, &sync, &pushed).await.unwrap();
+
+        assert_eq!(
+            sync.lock().await.last_materialized_start_index,
+            Some(12),
+            "the selection outranks the outgoing track's projection"
+        );
+        assert_eq!(
+            engine.calls().start_track_streams,
+            vec![410609169],
+            "the selected track is started, since no SetState will name it"
+        );
+    }
+
+    /// A selection made while the session is not playing is the controller
+    /// staging a track, not asking for audio: point the cursor at it, start
+    /// nothing.
+    #[tokio::test]
+    async fn materialize_stages_a_pushed_selection_without_playing_it() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 410609158,
+            ..Default::default()
+        };
+        let sync = sync();
+        {
+            let mut state = sync.lock().await;
+            state.last_renderer_queue_item_id = Some(1);
+            state.last_renderer_track_id = Some(410609158);
+            state.last_renderer_playing_state = Some(PLAYING_STATE_PAUSED);
+        }
+        let items: Vec<QueueItem> = (0..13).map(|i| qi(410609157 + i, i)).collect();
+        let pushed = pushed_queue_state(QueueVersion::new(4, 1), items, 12);
+
+        materialize_remote_queue(&engine, &sync, &pushed).await.unwrap();
+
+        assert_eq!(sync.lock().await.last_materialized_start_index, Some(12));
+        assert!(
+            engine.calls().start_track_streams.is_empty(),
+            "a paused session gets no unrequested audio"
+        );
+    }
+
+    /// A queue event that carries no selection (every mutation other than
+    /// TracksLoaded) keeps the previous behaviour exactly: the start index comes
+    /// from the renderer projection and nothing is started.
+    #[tokio::test]
+    async fn materialize_without_a_selection_keeps_the_projection_start_index() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 410609158,
+            ..Default::default()
+        };
+        let sync = sync();
+        {
+            let mut state = sync.lock().await;
+            state.last_renderer_queue_item_id = Some(1);
+            state.last_renderer_track_id = Some(410609158);
+            state.last_renderer_playing_state = Some(PLAYING_STATE_PLAYING);
+        }
+        let items: Vec<QueueItem> = (0..13).map(|i| qi(410609157 + i, i)).collect();
+        let plain = queue_state(QueueVersion::new(4, 1), items, false, None);
+
+        materialize_remote_queue(&engine, &sync, &plain).await.unwrap();
+
+        assert_eq!(sync.lock().await.last_materialized_start_index, Some(1));
+        assert!(engine.calls().start_track_streams.is_empty());
     }
 
     /// #1 (takeback) — the prior controller->renderer stop() cleared the audio

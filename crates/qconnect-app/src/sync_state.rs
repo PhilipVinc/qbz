@@ -33,6 +33,11 @@ pub struct QconnectRemoteSyncState {
     pub last_renderer_track_id: Option<u64>,
     pub last_renderer_next_track_id: Option<u64>,
     pub last_renderer_playing_state: Option<i32>,
+    /// Last `max_audio_quality` the session announced. Cached because
+    /// `materialize_remote_queue` can now start a track (a push that carries
+    /// `selected_queue_position` and no following SetState) and has no renderer
+    /// state of its own to read the quality from.
+    pub last_renderer_max_audio_quality: Option<i32>,
     pub last_materialized_start_index: Option<usize>,
     pub last_materialized_core_shuffle_order: Option<Vec<usize>>,
     pub last_reported_file_audio_quality: Option<QconnectFileAudioQualitySnapshot>,
@@ -121,4 +126,9 @@ pub fn cache_renderer_snapshot(
         .as_ref()
         .map(|item| item.track_id);
     state.last_renderer_playing_state = renderer_snapshot.playing_state;
+    if renderer_snapshot.max_audio_quality.is_some() {
+        // SetMaxAudioQuality arrives once, on its own frame; later renderer
+        // snapshots carry None and must not erase it.
+        state.last_renderer_max_audio_quality = renderer_snapshot.max_audio_quality;
+    }
 }

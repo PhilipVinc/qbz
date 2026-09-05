@@ -41,6 +41,22 @@ pub struct QConnectQueueState {
     /// `queue_hashes_diverge` seam in qconnect-app (algorithm is a BLOCKING unknown).
     #[serde(default)]
     pub last_server_queue_hash: Option<Vec<u8>>,
+    /// `queue_position` from the CTRL_SRVR_QUEUE_TRACKS_LOADED that produced this
+    /// state: the index the controller selected inside the queue it just pushed.
+    ///
+    /// The controller does NOT always follow such a push with a SetState naming
+    /// the track. Selecting the LAST entry of a queue with repeat off pushes the
+    /// queue with `autoplay_reset` + this field, loads the autoplay continuation,
+    /// and then sends a state-only SetState (`current_track: null`,
+    /// `playing_state: null`) — so a renderer that ignores `queue_position` has
+    /// nothing to play, which is the "last track of a playlist never plays"
+    /// report. Repeat-all needs no autoplay continuation, so the controller takes
+    /// the ordinary path there and the same tap works.
+    ///
+    /// Set ONLY by `TracksLoaded`; every other queue mutation clears it, so a
+    /// selection never outlives the push that carried it.
+    #[serde(default)]
+    pub selected_queue_position: Option<u64>,
 }
 
 impl Default for QConnectQueueState {
@@ -55,6 +71,7 @@ impl Default for QConnectQueueState {
             autoplay_items: Vec::new(),
             updated_at_ms: 0,
             last_server_queue_hash: None,
+            selected_queue_position: None,
         }
     }
 }
