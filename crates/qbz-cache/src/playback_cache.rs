@@ -215,6 +215,33 @@ impl PlaybackCache {
             return;
         }
 
+        // Already on the card, byte-for-byte? Then this write is pure wear.
+        //
+        // A prefetched track reaches here TWICE: `stage_track_on_disk` writes it
+        // for the gapless hand-off, and a second later `drop_cached_track` ->
+        // `AudioCache::release` spills the same bytes again. Re-writing 23 MB
+        // (220 MB for Hi-Res) through `sync_all` to an SD card, to land on a
+        // file that is already identical, costs seconds of I/O and real card
+        // life. Touch the LRU and return.
+        //
+        // Size-matched, not just present: a short `<id>.audio` from an older
+        // build is exactly the corruption the temp-file-and-rename below exists
+        // to prevent, so a length mismatch must still overwrite.
+        {
+            let path = self.track_path(track_id);
+            let same_size = fs::metadata(&path).is_ok_and(|m| m.len() == size);
+            if same_size {
+                let mut state = self.state.lock().unwrap();
+                if let Some(entry) = state.entries.get_mut(&track_id) {
+                    entry.last_accessed = SystemTime::now();
+                    log::debug!(
+                        "Track {track_id} already in the playback cache at {size} bytes — not rewritten"
+                    );
+                    return;
+                }
+            }
+        }
+
         // Evict old entries if needed
         self.evict_if_needed(size);
 
@@ -359,14 +386,17 @@ pub struct PlaybackCacheStats {
 mod tests {
     use super::*;
 
+    /// A COUNTER, not a timestamp. `SystemTime::now()` is not fine-grained
+    /// enough on every platform to separate two tests that start together, and
+    /// a shared directory makes `insert_leaves_no_partial_file` — which scans
+    /// the whole directory — fail on another test's in-flight `.part`.
+    static TEMP_DIR_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     fn temp_cache(max_bytes: u64) -> (PlaybackCache, PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "qbz-l2-test-{}-{}",
             std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            TEMP_DIR_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         let cache = PlaybackCache::with_path(dir.clone(), max_bytes).expect("cache");
         (cache, dir)
@@ -417,6 +447,40 @@ mod tests {
         assert!(cache.contains(3));
         assert!(cache.stats().current_size_bytes <= 8192);
         assert!(!dir.join("1.audio").exists(), "its file is deleted too");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A prefetched track arrives here twice — once staged for the gapless
+    /// hand-off, once spilled when its L1 entry is dropped — and rewriting an
+    /// identical 220 MB file through `sync_all` is seconds of I/O and real SD
+    /// card life for nothing.
+    #[test]
+    fn insert_does_not_rewrite_an_identical_file() {
+        let (cache, dir) = temp_cache(10 * 1024 * 1024);
+        let data = vec![7u8; 4096];
+        cache.insert(1, &data);
+        let first = fs::metadata(dir.join("1.audio")).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cache.insert(1, &data);
+
+        let second = fs::metadata(dir.join("1.audio")).unwrap().modified().unwrap();
+        assert_eq!(first, second, "the file was not rewritten");
+        assert!(cache.contains(1));
+        assert_eq!(cache.stats().current_size_bytes, 4096, "counted once");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Present but the WRONG length is the truncated-write case, and it must
+    /// still be overwritten — that file decodes as garbage.
+    #[test]
+    fn insert_overwrites_a_file_of_a_different_size() {
+        let (cache, dir) = temp_cache(10 * 1024 * 1024);
+        cache.insert(1, &vec![7u8; 4096]);
+        cache.insert(1, &vec![9u8; 2048]);
+
+        assert_eq!(fs::read(dir.join("1.audio")).unwrap(), vec![9u8; 2048]);
+        assert_eq!(cache.stats().current_size_bytes, 2048);
         fs::remove_dir_all(&dir).ok();
     }
 }
