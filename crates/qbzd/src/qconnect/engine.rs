@@ -203,6 +203,16 @@ impl DaemonRendererEngine {
         }
     }
 
+    /// The 0-100 percent this renderer should be TELLING the controller, given
+    /// the player's real level and this session's volume policy.
+    ///
+    /// One place, because the join report and the join-time re-assertion must
+    /// not be able to disagree about it.
+    pub fn reported_volume_pct(&self) -> i32 {
+        self.volume_mode
+            .reported_volume_pct(self.core().get_playback_state().volume)
+    }
+
     /// Abort the previous track's feeder (no-op when none). The dropped
     /// FailGuard marks the OLD writer errored, which is correct — that buffer
     /// belongs to the abandoned source.

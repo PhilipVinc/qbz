@@ -58,7 +58,20 @@ pub struct DaemonEventSink {
     /// stale until the peer changes track. Edge-detected to avoid spamming on
     /// every periodic state-update frame.
     last_peer_active: std::sync::atomic::AtomicBool,
+    /// DAEMON-ONLY (qconnect.initial_volume): when this renderer last became the
+    /// session's active one, and whether the join-time volume has already been
+    /// defended once since. See `assert_join_volume`.
+    became_active_at: std::sync::Mutex<Option<std::time::Instant>>,
+    join_volume_asserted: std::sync::atomic::AtomicBool,
 }
+
+/// How long after taking the render a controller's volume still counts as its
+/// STALE slider rather than a deliberate change.
+///
+/// Observed on hardware: the desktop app pushed its own 75 % 0.7 s after
+/// SetActive. A few seconds covers that comfortably and is far short of anyone
+/// reaching for the slider on purpose.
+const JOIN_VOLUME_ASSERT_WINDOW: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl DaemonEventSink {
     pub fn new(
@@ -72,6 +85,8 @@ impl DaemonEventSink {
             shared,
             app: Arc::new(OnceLock::new()),
             last_peer_active: std::sync::atomic::AtomicBool::new(false),
+            became_active_at: std::sync::Mutex::new(None),
+            join_volume_asserted: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -110,6 +125,87 @@ impl DaemonEventSink {
         if let Err(err) = app.send_renderer_report_command(report).await {
             log::warn!("[QConnect] Failed to report active-renderer-ready: {err}");
         }
+    }
+
+    /// DAEMON-ONLY: send this renderer's real volume to the controller.
+    async fn report_volume(&self, reason: &str) {
+        let Some(app) = self.app.get().and_then(Weak::upgrade) else {
+            return;
+        };
+        let volume_pct = self.engine.reported_volume_pct();
+        log::info!("[QConnect] Reporting volume {volume_pct}% ({reason})");
+        let report = RendererReport::new(
+            RendererReportType::RndrSrvrVolumeChanged,
+            Uuid::new_v4().to_string(),
+            app.queue_state_snapshot().await.version,
+            serde_json::json!({ "volume": volume_pct }),
+        );
+        if let Err(err) = app.send_renderer_report_command(report).await {
+            log::warn!("[QConnect] Failed to report volume: {err}");
+        }
+    }
+
+    /// DAEMON-ONLY (qconnect.initial_volume): defend the join-time volume, once.
+    ///
+    /// "Volume on connect" exists so an app that has never spoken to this player
+    /// cannot push its own level — near full scale on the phone apps — at a
+    /// system that may have no volume control after us. It was being defeated
+    /// about a second after it applied, and silently:
+    ///
+    /// - the join reported our volume BEFORE `SetActive(true)` arrived, and the
+    ///   cloud discards a report from a renderer it does not yet consider
+    ///   active. Measured: every report sent while active is echoed back as
+    ///   CTRL_VOLUME_CHANGED within ~30 ms; the join-time one was never echoed.
+    /// - then the controller broadcast its own remembered level for us. That
+    ///   arrives as CTRL_VOLUME_CHANGED (87), a controller-facing view, NOT as a
+    ///   SetVolume command — so we correctly do not obey it, and the app and the
+    ///   player were simply left disagreeing until someone touched the slider.
+    ///
+    /// So: re-report ours when the cloud's view of US disagrees shortly after we
+    /// take the render. ONCE — the latch means a controller that insists still
+    /// wins, and after the window volume belongs to whoever is holding the
+    /// slider, which is the ordinary case this must not interfere with.
+    async fn assert_join_volume(&self, payload: &Value) {
+        use std::sync::atomic::Ordering;
+
+        if self.join_volume_asserted.load(Ordering::SeqCst) {
+            return;
+        }
+        let within_window = self
+            .became_active_at
+            .lock()
+            .ok()
+            .and_then(|at| *at)
+            .is_some_and(|at| at.elapsed() < JOIN_VOLUME_ASSERT_WINDOW);
+        if !within_window {
+            return;
+        }
+
+        let Some(renderer_id) = payload.get("renderer_id").and_then(Value::as_i64) else {
+            return;
+        };
+        let is_us = {
+            let state = self.sync_state.lock().await;
+            state.session.local_renderer_id == i32::try_from(renderer_id).ok()
+        };
+        if !is_us {
+            return;
+        }
+
+        let Some(theirs) = payload.get("volume").and_then(Value::as_i64) else {
+            return;
+        };
+        let ours = i64::from(self.engine.reported_volume_pct());
+        if theirs == ours {
+            return;
+        }
+
+        self.join_volume_asserted.store(true, Ordering::SeqCst);
+        log::info!(
+            "[QConnect] Controller says {theirs}% for us but we are at {ours}% — \
+             re-asserting the join-time volume"
+        );
+        self.report_volume("join-time volume, re-asserted").await;
     }
 
     /// Apply a server session-management event by delegating the locked critical
@@ -301,6 +397,9 @@ impl QconnectEventSink for DaemonEventSink {
                 );
                 self.apply_session_management_event(message_type, payload)
                     .await;
+                if message_type == "MESSAGE_TYPE_SRVR_CTRL_VOLUME_CHANGED" {
+                    self.assert_join_volume(payload).await;
+                }
             }
             QconnectAppEvent::RendererUpdated(renderer_state) => {
                 log::info!(
@@ -338,6 +437,16 @@ impl QconnectEventSink for DaemonEventSink {
                 log::info!("[QConnect] Renderer command applied: {:?}", command);
                 let became_active =
                     matches!(command, RendererCommand::SetActive { active: true });
+                // A real SetVolume means the controller has actually told us a
+                // level, so there is nothing stale to correct — stand the
+                // join-time assertion down for good. This is what keeps the
+                // assertion off the ordinary path entirely: it can only ever
+                // fire while the controller has said nothing and merely SHOWS a
+                // different number, never against someone moving the slider.
+                if matches!(command, RendererCommand::SetVolume { .. }) {
+                    self.join_volume_asserted
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 let sets_active = matches!(command, RendererCommand::SetActive { .. });
                 if let Err(err) = qconnect_app::renderer::apply_renderer_command(
                     &self.engine,
@@ -350,6 +459,19 @@ impl QconnectEventSink for DaemonEventSink {
                     log::warn!("[QConnect] Failed to apply renderer command: {err}");
                 } else if became_active {
                     self.report_active_renderer_ready().await;
+                    // Now, not at join. The join's own volume report goes out
+                    // before this command arrives, and the cloud discards a
+                    // report from a renderer it does not yet consider active —
+                    // which is how qconnect.initial_volume ended up invisible to
+                    // the app. See `assert_join_volume`.
+                    {
+                        use std::sync::atomic::Ordering;
+                        if let Ok(mut at) = self.became_active_at.lock() {
+                            *at = Some(std::time::Instant::now());
+                        }
+                        self.join_volume_asserted.store(false, Ordering::SeqCst);
+                    }
+                    self.report_volume("took the render").await;
                 }
                 // DAEMON-ONLY: re-latch the published role. The cloud states it
                 // outright in this message, and until now the latch ran ONLY on
