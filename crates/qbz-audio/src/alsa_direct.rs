@@ -171,9 +171,32 @@ pub fn f32_to_s32(sample: f32) -> i32 {
 /// the kernel still has the FD open — guaranteed `EBUSY` ping-pong on the next
 /// stream open. `_reservation` is intentionally the last field for that
 /// reason; do not rearrange.
+/// Reusable integer conversion buffers for [`AlsaDirectStream::write_f32`].
+///
+/// The writer thread calls `write_f32` for every chunk of audio for as long as
+/// something is playing, and each call used to allocate a fresh `Vec` to
+/// convert into and drop it again on return. The f32 buffer feeding it is
+/// already hoisted and `clear()`ed per chunk; only the conversion output was
+/// missed. Freeing and re-requesting the same few hundred KB thousands of times
+/// a track is pure allocator churn in the one thread that must never fall
+/// behind -- this is the thread whose underruns `audio.alsa_buffer_ms` exists
+/// to absorb.
+///
+/// Cleared, not reallocated: `Vec::clear` keeps the capacity, so after the
+/// first chunk of a track these never allocate again.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct ConvScratch {
+    i32s: Vec<i32>,
+    i16s: Vec<i16>,
+    bytes: Vec<u8>,
+}
+
 #[cfg(target_os = "linux")]
 pub struct AlsaDirectStream {
     pcm: Arc<Mutex<PCM>>,
+    /// Conversion buffers reused across `write_f32` calls (see [`ConvScratch`]).
+    scratch: Mutex<ConvScratch>,
     #[allow(dead_code)]
     is_playing: Arc<AtomicBool>,
     sample_rate: u32,
@@ -383,6 +406,7 @@ impl AlsaDirectStream {
 
         Ok(Self {
             pcm: Arc::new(Mutex::new(pcm)),
+            scratch: Mutex::new(ConvScratch::default()),
             is_playing: Arc::new(AtomicBool::new(false)),
             sample_rate,
             channels,
@@ -452,6 +476,7 @@ impl AlsaDirectStream {
 
         Ok(Self {
             pcm: Arc::new(Mutex::new(pcm)),
+            scratch: Mutex::new(ConvScratch::default()),
             is_playing: Arc::new(AtomicBool::new(false)),
             sample_rate: carrier_rate,
             channels,
@@ -751,6 +776,9 @@ impl AlsaDirectStream {
     /// Integer conversion is [`f32_to_s16`] / [`f32_to_s24`] / [`f32_to_s32`].
     pub fn write_f32(&self, samples_f32: &[f32]) -> Result<(), String> {
         let pcm = self.pcm.lock().unwrap();
+        // Reused across chunks; `clear` keeps the capacity so only the first
+        // chunk of a track allocates. See [`ConvScratch`].
+        let mut scratch = self.scratch.lock().unwrap();
         let frames = samples_f32.len() / self.channels as usize;
 
         match self.format {
@@ -782,16 +810,15 @@ impl AlsaDirectStream {
             }
             Format::S32LE => {
                 // f32 [-1.0, 1.0] -> i32 full range
-                let samples_i32: Vec<i32> = samples_f32
-                    .iter()
-                    .map(|&s| f32_to_s32(s))
-                    .collect();
+                let samples_i32 = &mut scratch.i32s;
+                samples_i32.clear();
+                samples_i32.extend(samples_f32.iter().map(|&s| f32_to_s32(s)));
 
                 let io = pcm
                     .io_i32()
                     .map_err(|e| format!("Failed to get PCM I/O: {}", e))?;
 
-                match io.writei(&samples_i32) {
+                match io.writei(samples_i32.as_slice()) {
                     Ok(written) => {
                         if written != frames {
                             log::warn!(
@@ -814,16 +841,15 @@ impl AlsaDirectStream {
             Format::S24LE => {
                 // f32 -> 24-bit in 32-bit container
                 // Clamp to 24-bit range: [-8388608, 8388607]
-                let samples_i32: Vec<i32> = samples_f32
-                    .iter()
-                    .map(|&s| f32_to_s24(s))
-                    .collect();
+                let samples_i32 = &mut scratch.i32s;
+                samples_i32.clear();
+                samples_i32.extend(samples_f32.iter().map(|&s| f32_to_s24(s)));
 
                 let io = pcm
                     .io_i32()
                     .map_err(|e| format!("Failed to get PCM I/O: {}", e))?;
 
-                match io.writei(&samples_i32) {
+                match io.writei(samples_i32.as_slice()) {
                     Ok(written) => {
                         if written != frames {
                             log::warn!(
@@ -846,7 +872,9 @@ impl AlsaDirectStream {
             Format::S243LE => {
                 // S24_3LE: 24-bit packed in 3 bytes, little-endian
                 // f32 -> 24-bit integer, packed into 3 bytes
-                let mut bytes: Vec<u8> = Vec::with_capacity(samples_f32.len() * 3);
+                let bytes = &mut scratch.bytes;
+                bytes.clear();
+                bytes.reserve(samples_f32.len() * 3);
 
                 for &sample in samples_f32 {
                     let s24 = f32_to_s24(sample);
@@ -858,7 +886,7 @@ impl AlsaDirectStream {
 
                 let io = pcm.io_bytes();
 
-                match io.writei(&bytes) {
+                match io.writei(bytes.as_slice()) {
                     Ok(written) => {
                         if written != frames {
                             log::warn!(
@@ -880,14 +908,15 @@ impl AlsaDirectStream {
             }
             Format::S16LE => {
                 // f32 -> i16
-                let samples_i16: Vec<i16> =
-                    samples_f32.iter().map(|&s| f32_to_s16(s)).collect();
+                let samples_i16 = &mut scratch.i16s;
+                samples_i16.clear();
+                samples_i16.extend(samples_f32.iter().map(|&s| f32_to_s16(s)));
 
                 let io = pcm
                     .io_i16()
                     .map_err(|e| format!("Failed to get PCM I/O: {}", e))?;
 
-                match io.writei(&samples_i16) {
+                match io.writei(samples_i16.as_slice()) {
                     Ok(written) => {
                         if written != frames {
                             log::warn!(

@@ -4307,96 +4307,98 @@ impl Player {
                                 // catch up on next tick) or the new track_id with cleared slots
                                 // (clean gapless transition), but never the inconsistent
                                 // mid-swap mix.
-                                if let Some(ref pending) = gapless_pending {
-                                    if dur > 0 && pos >= dur {
+                                // ONE transition, whichever signal reports it.
+                                //
+                                // There were two copies of this swap: a
+                                // position-based one (`pos >= dur`) and an
+                                // ALSA-direct one keyed on the writer thread's
+                                // atomic flag. They had drifted -- only the
+                                // ALSA copy released the finished track's
+                                // streaming buffer -- and the position copy runs
+                                // FIRST, so on this hardware it consumed the
+                                // pending and the ALSA copy found nothing to do.
+                                // The buffer was never released on the very
+                                // hosts that skip promotion to avoid holding it:
+                                // a Hi-Res track is 120-220 MB, kept until some
+                                // later non-gapless load replaced it.
+                                //
+                                // The flag is ALWAYS drained, pending or not, so
+                                // a stale one cannot fire later against a
+                                // different track.
+                                let engine_signalled = current_engine
+                                    .as_ref()
+                                    .is_some_and(|engine| engine.take_source_transition());
+                                let position_signalled = dur > 0 && pos >= dur;
+
+                                if gapless_pending.is_some() && (position_signalled || engine_signalled)
+                                {
+                                    let pending = gapless_pending
+                                        .take()
+                                        .expect("gapless_pending checked immediately above");
+                                    if position_signalled {
                                         log::info!(
                                             "Gapless transition: track {} -> {} (pos {}s >= dur {}s)",
                                             thread_state.current_track_id.load(Ordering::SeqCst),
-                                            pending.track_id, pos, dur
+                                            pending.track_id,
+                                            pos,
+                                            dur
                                         );
-                                        // Clear gapless slot markers FIRST so a racing reader
-                                        // never sees the inconsistent track_id-changed +
-                                        // slot-still-set combination.
-                                        thread_state.set_gapless_next_track_id(0);
-                                        thread_state.set_gapless_ready(false);
-                                        // Now safe to swap the track identity.
-                                        thread_state
-                                            .current_track_id
-                                            .store(pending.track_id, Ordering::SeqCst);
-                                        thread_state
-                                            .duration
-                                            .store(pending.duration_secs, Ordering::SeqCst);
-                                        thread_state.start_playback_timer(0);
-                                        match &pending.audio {
-                                            GaplessAudio::Memory(data) => {
-                                                current_audio_data = Some(data.clone());
-                                                current_audio_file = None;
-                                            }
-                                            GaplessAudio::File(path) => {
-                                                // Nothing to hold: the decoder is
-                                                // reading this file, and Resume
-                                                // re-opens it.
-                                                current_audio_data = None;
-                                                current_audio_file = Some(path.clone());
-                                            }
-                                        }
-                                        current_normalization_gain = pending.normalization_gain;
-                                        thread_state
-                                            .set_normalization_gain(pending.normalization_gain);
-                                        gapless_pending = None;
-                                        gapless_request_armed = false;
-                                        transition_consumed_pending = true;
+                                    } else {
+                                        log::info!(
+                                            "ALSA Direct gapless transition: track {} -> {}",
+                                            thread_state.current_track_id.load(Ordering::SeqCst),
+                                            pending.track_id
+                                        );
                                     }
-                                }
 
-                                // ALSA Direct gapless: the writer thread signals transitions
-                                // via an atomic flag instead of position-based detection.
-                                // Same ordering rationale as above.
-                                if let Some(ref engine) = current_engine {
-                                    if engine.take_source_transition() {
-                                        if let Some(ref pending) = gapless_pending {
-                                            log::info!(
-                                                "ALSA Direct gapless transition: track {} -> {}",
-                                                thread_state
-                                                    .current_track_id
-                                                    .load(Ordering::SeqCst),
-                                                pending.track_id
-                                            );
-                                            thread_state.set_gapless_next_track_id(0);
-                                            thread_state.set_gapless_ready(false);
-                                            thread_state
-                                                .current_track_id
-                                                .store(pending.track_id, Ordering::SeqCst);
-                                            thread_state
-                                                .duration
-                                                .store(pending.duration_secs, Ordering::SeqCst);
-                                            thread_state.start_playback_timer(0);
-                                            match &pending.audio {
-                                                GaplessAudio::Memory(data) => {
-                                                    current_audio_data = Some(data.clone());
-                                                    current_audio_file = None;
-                                                }
-                                                GaplessAudio::File(path) => {
-                                                    current_audio_data = None;
-                                                    current_audio_file = Some(path.clone());
-                                                }
-                                            }
-                                            current_normalization_gain = pending.normalization_gain;
-                                            thread_state
-                                                .set_normalization_gain(pending.normalization_gain);
-                                            gapless_pending = None;
-                                            gapless_request_armed = false;
-                                            transition_consumed_pending = true;
-                                            // The track that just ended owned this
-                                            // buffer; the new one plays from
-                                            // `current_audio_data`. Dropping it here
-                                            // is what frees a finished Hi-Res track
-                                            // on a host where promotion was skipped —
-                                            // and it leaves the next PlayNext an
-                                            // empty slot rather than a stale one.
-                                            current_streaming_source = None;
+                                    // ORDERING NOTE: the polling loop in lib.rs reads
+                                    // `track_id`, `gapless_next_track_id` and the rest as
+                                    // separate atomic loads, so it can observe an inconsistent
+                                    // intermediate state if these stores are not ordered
+                                    // carefully. The frontend's `isGaplessTransition` predicate
+                                    // requires `gapless_next_track_id === 0` AND
+                                    // `track_id !== currentTrack.id`; if the loop read
+                                    // `track_id` post-swap but `gapless_next_track_id`
+                                    // pre-reset, neither could hold and the transition was
+                                    // mis-read as an external track change, leaving the UI on
+                                    // the previous title while the audio played the new one.
+                                    //
+                                    // So clear the "transition complete" markers BEFORE
+                                    // mutating `track_id`. A racing reader then sees either the
+                                    // old id with cleared slots (catches up next tick) or the
+                                    // new id with cleared slots (a clean transition), never the
+                                    // mid-swap mix.
+                                    thread_state.set_gapless_next_track_id(0);
+                                    thread_state.set_gapless_ready(false);
+                                    thread_state
+                                        .current_track_id
+                                        .store(pending.track_id, Ordering::SeqCst);
+                                    thread_state
+                                        .duration
+                                        .store(pending.duration_secs, Ordering::SeqCst);
+                                    thread_state.start_playback_timer(0);
+                                    match &pending.audio {
+                                        GaplessAudio::Memory(data) => {
+                                            current_audio_data = Some(data.clone());
+                                            current_audio_file = None;
+                                        }
+                                        GaplessAudio::File(path) => {
+                                            // Nothing to hold: the decoder is reading
+                                            // this file, and Resume re-opens it.
+                                            current_audio_data = None;
+                                            current_audio_file = Some(path.clone());
                                         }
                                     }
+                                    current_normalization_gain = pending.normalization_gain;
+                                    thread_state.set_normalization_gain(pending.normalization_gain);
+                                    gapless_request_armed = false;
+                                    transition_consumed_pending = true;
+                                    // The track that just ended owned this buffer; the new one
+                                    // plays from `current_audio_data` / `current_audio_file`.
+                                    // Dropping it frees a finished Hi-Res track on a host where
+                                    // promotion was skipped, and leaves the next PlayNext an
+                                    // empty slot rather than a stale one.
+                                    current_streaming_source = None;
                                 }
 
                                 // Gapless readiness: signal the frontend that it
