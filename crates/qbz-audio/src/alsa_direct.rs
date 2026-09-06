@@ -121,6 +121,45 @@ fn ensure_exact_rate(hwp: &HwParams<'_>, requested: u32, kind: &str) -> Result<(
     Ok(())
 }
 
+/// Convert an f32 sample in [-1.0, 1.0] to signed PCM. Full scale is 2^(N-1).
+///
+/// # Full scale is 2^(N-1), never 2^(N-1) - 1
+///
+/// The tempting multiplier is the largest representable positive sample —
+/// 32767, 8388607, 2147483647 — and this path used all three. It is wrong,
+/// because it is not a power of two, so the conversion stops being an exact
+/// rescale. Decoding divides by 32768 (a power of two, exact), so a 16-bit
+/// source SHOULD land on exact multiples of 256 in a 24-bit word: a plain left
+/// shift by 8, which is what makes a bit-depth change lossless. Multiplying by
+/// 8388607 instead put every sample just under its multiple, where the
+/// truncating cast took it a further step down. Measured across the whole
+/// 16-bit range, 65535 of 65536 values came out one LSB short — every non-zero
+/// sample.
+///
+/// The error is -144 dBFS, some 48 dB below the dither already present in a
+/// 16-bit recording, so nobody was hearing it. It still meant the output was
+/// not bit-perfect, which is the one property this path exists to have.
+///
+/// With 2^(N-1) the product is exact for any integer source and the clamp
+/// engages only on a sample already at or past full scale. These live outside
+/// the `cfg(target_os = "linux")` block on purpose: the write path itself
+/// cannot be compiled or tested anywhere else, so the arithmetic is kept where
+/// it can be.
+pub fn f32_to_s16(sample: f32) -> i16 {
+    (sample * 32_768.0).clamp(-32_768.0, 32_767.0) as i16
+}
+
+/// See [`f32_to_s16`]. 24-bit, in the low 24 bits of an `i32`.
+pub fn f32_to_s24(sample: f32) -> i32 {
+    (sample * 8_388_608.0).clamp(-8_388_608.0, 8_388_607.0) as i32
+}
+
+/// See [`f32_to_s16`]. i32::MAX is not representable in f32 — a clamp to it
+/// would round up to 2^31 and do nothing — so the saturating cast is the guard.
+pub fn f32_to_s32(sample: f32) -> i32 {
+    (sample * 2_147_483_648.0) as i32
+}
+
 /// Direct ALSA PCM stream for hw: devices
 ///
 /// Field order is significant: Rust drops struct fields top-to-bottom, so the
@@ -708,6 +747,8 @@ impl AlsaDirectStream {
     ///
     /// f32 has 24 bits of significand, so 24-bit audio is preserved losslessly.
     /// This is the primary write path for the f32 pipeline.
+    ///
+    /// Integer conversion is [`f32_to_s16`] / [`f32_to_s24`] / [`f32_to_s32`].
     pub fn write_f32(&self, samples_f32: &[f32]) -> Result<(), String> {
         let pcm = self.pcm.lock().unwrap();
         let frames = samples_f32.len() / self.channels as usize;
@@ -743,7 +784,7 @@ impl AlsaDirectStream {
                 // f32 [-1.0, 1.0] -> i32 full range
                 let samples_i32: Vec<i32> = samples_f32
                     .iter()
-                    .map(|&s| (s * 2_147_483_647.0) as i32)
+                    .map(|&s| f32_to_s32(s))
                     .collect();
 
                 let io = pcm
@@ -775,10 +816,7 @@ impl AlsaDirectStream {
                 // Clamp to 24-bit range: [-8388608, 8388607]
                 let samples_i32: Vec<i32> = samples_f32
                     .iter()
-                    .map(|&s| {
-                        let scaled = s * 8_388_607.0;
-                        scaled.clamp(-8_388_608.0, 8_388_607.0) as i32
-                    })
+                    .map(|&s| f32_to_s24(s))
                     .collect();
 
                 let io = pcm
@@ -811,8 +849,7 @@ impl AlsaDirectStream {
                 let mut bytes: Vec<u8> = Vec::with_capacity(samples_f32.len() * 3);
 
                 for &sample in samples_f32 {
-                    let scaled = sample * 8_388_607.0;
-                    let s24 = scaled.clamp(-8_388_608.0, 8_388_607.0) as i32;
+                    let s24 = f32_to_s24(sample);
                     // Pack as 3 bytes in little-endian order
                     bytes.push((s24 & 0xFF) as u8); // LSB
                     bytes.push(((s24 >> 8) & 0xFF) as u8); // Middle
@@ -844,7 +881,7 @@ impl AlsaDirectStream {
             Format::S16LE => {
                 // f32 -> i16
                 let samples_i16: Vec<i16> =
-                    samples_f32.iter().map(|&s| (s * 32_767.0) as i16).collect();
+                    samples_f32.iter().map(|&s| f32_to_s16(s)).collect();
 
                 let io = pcm
                     .io_i16()
@@ -1159,7 +1196,7 @@ mod tests {
 
 #[cfg(test)]
 mod mixer_name_tests {
-    use super::mixer_ctl_name;
+    use super::{f32_to_s16, f32_to_s24, f32_to_s32, mixer_ctl_name};
 
     /// A mixer attaches to a CONTROL device, which is per-card and takes no
     /// subdevice — the alsa crate documents `Mixer::new` as wanting a name
@@ -1207,5 +1244,46 @@ mod mixer_name_tests {
         for id in ["_audioout", "btstream", "default", "pulse", "hw:", ""] {
             assert_eq!(mixer_ctl_name(id), None, "{id}");
         }
+    }
+
+    /// A 16-bit source must reach a 24-bit device as a plain left shift by 8.
+    /// That is what makes a bit-depth change lossless, and it only holds when
+    /// full scale is 2^23 rather than 2^23 - 1: with the latter, every non-zero
+    /// sample of the 65536 landed one LSB short.
+    #[test]
+    fn s24_conversion_is_an_exact_shift_for_every_16_bit_sample() {
+        let mut wrong = 0u32;
+        for v in i16::MIN..=i16::MAX {
+            // Decode side, unchanged: /32768.0, a power of two, exact.
+            let decoded = f32::from(v) / 32_768.0;
+            if f32_to_s24(decoded) != i32::from(v) << 8 {
+                wrong += 1;
+            }
+        }
+        assert_eq!(wrong, 0, "{wrong} of 65536 samples were not an exact <<8");
+    }
+
+    /// The same source through a 16-bit device is the identity.
+    #[test]
+    fn s16_conversion_round_trips_every_sample() {
+        for v in i16::MIN..=i16::MAX {
+            assert_eq!(f32_to_s16(f32::from(v) / 32_768.0), v, "sample {v}");
+        }
+    }
+
+    /// Full scale must saturate, never wrap. -1.0 is the most negative sample;
+    /// +1.0 cannot be represented and clamps to the largest positive one.
+    #[test]
+    fn full_scale_saturates_in_both_directions() {
+        assert_eq!(f32_to_s16(-1.0), i16::MIN);
+        assert_eq!(f32_to_s16(1.0), i16::MAX);
+        assert_eq!(f32_to_s24(-1.0), -8_388_608);
+        assert_eq!(f32_to_s24(1.0), 8_388_607);
+        assert_eq!(f32_to_s32(-1.0), i32::MIN);
+        assert_eq!(f32_to_s32(1.0), i32::MAX);
+        // Past full scale (a gain stage overshooting) must clamp, not wrap.
+        assert_eq!(f32_to_s24(1.5), 8_388_607);
+        assert_eq!(f32_to_s24(-1.5), -8_388_608);
+        assert_eq!(f32_to_s16(2.0), i16::MAX);
     }
 }
