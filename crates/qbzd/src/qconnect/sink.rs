@@ -117,16 +117,25 @@ impl DaemonEventSink {
     /// the returned `SessionApplyOutcome` asks for. Mirrors the Tauri
     /// `apply_session_management_event`; the post-lock ordering (loop mode ->
     /// local-playback handoff -> projection -> freeze -> watchdog) is identical.
-    /// Latch whether the session still renders HERE.
+    /// DAEMON-ONLY: latch whether the session still renders HERE, for
+    /// `/api/status`.
     ///
     /// `session_active` only says we hold a cloud connection, which stays true
     /// when the controller moves playback to its own speakers — so moOde kept
     /// the Qobuz overlay up after the app switched to local audio (reported by
-    /// Tim Curtis). The renderer ids are what actually answer the question.
+    /// Tim Curtis). The renderer ids answer that one: the cloud sends no
+    /// `SetActive(false)` for a switch-away, it simply names another renderer.
+    ///
+    /// But the ids cannot answer while our own renderer id is unresolved, and
+    /// reading that window as "not active" would drop moOde's overlay
+    /// mid-playback. So `local_renderer_role` keeps the window as `None` and we
+    /// fall back to the last SetActive the renderer honoured, which is the
+    /// cloud saying it outright.
     async fn latch_render_ownership(&self) {
         let is_active = {
             let state = self.sync_state.lock().await;
-            qconnect_app::session::is_local_renderer_active(&state.session)
+            qconnect_app::session::local_renderer_role(&state.session)
+                .unwrap_or_else(|| state.local_render_active.unwrap_or(false))
         };
         if let Ok(mut shared) = self.shared.lock() {
             if shared.qconnect.is_active != is_active {
@@ -329,6 +338,7 @@ impl QconnectEventSink for DaemonEventSink {
                 log::info!("[QConnect] Renderer command applied: {:?}", command);
                 let became_active =
                     matches!(command, RendererCommand::SetActive { active: true });
+                let sets_active = matches!(command, RendererCommand::SetActive { .. });
                 if let Err(err) = qconnect_app::renderer::apply_renderer_command(
                     &self.engine,
                     &self.sync_state,
@@ -340,6 +350,16 @@ impl QconnectEventSink for DaemonEventSink {
                     log::warn!("[QConnect] Failed to apply renderer command: {err}");
                 } else if became_active {
                     self.report_active_renderer_ready().await;
+                }
+                // DAEMON-ONLY: re-latch the published role. The cloud states it
+                // outright in this message, and until now the latch ran ONLY on
+                // session-management events — so `/api/status` could still say
+                // `is_active: true` after a SetActive(false) had already stopped
+                // the engine, and moOde kept the overlay over a silent player.
+                // Runs on the error path too: whatever the engine did or failed
+                // to do, the ids and the honoured flag are the truth we publish.
+                if sets_active {
+                    self.latch_render_ownership().await;
                 }
             }
             QconnectAppEvent::RendererUnreachable { renderer_id } => {

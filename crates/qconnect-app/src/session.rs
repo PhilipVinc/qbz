@@ -346,13 +346,39 @@ pub fn is_peer_renderer_active(session: &QconnectSessionState) -> bool {
     }
 }
 
-pub fn is_local_renderer_active(session: &QconnectSessionState) -> bool {
+/// Whether the SESSION's active renderer is this device, as far as the renderer
+/// ids can tell — `None` when they cannot tell.
+///
+/// The ids answer the question outright in two of the three shapes:
+///
+/// | active id | local id | answer |
+/// |---|---|---|
+/// | a peer / us | known | `Some(a == l)` |
+/// | none (the cloud's `-1`) | anything | `Some(false)` — nobody renders |
+/// | someone | **not resolved yet** | `None` — undetermined |
+///
+/// That last row is the one worth separating. `local_renderer_id` is `None`
+/// until our own renderer shows up in the session's renderer list, so during
+/// that window "are we the active renderer?" has no answer from the ids — and
+/// collapsing it to `false`, as [`is_local_renderer_active`] must for its
+/// report gates, means a transient "id pending" reads exactly like "a peer took
+/// the render". Callers that publish the role rather than gate on it should
+/// keep the `None` and fall back to the last `SetActive` the cloud sent
+/// (`QconnectRemoteSyncState::local_render_active`), which is authoritative.
+pub fn local_renderer_role(session: &QconnectSessionState) -> Option<bool> {
     match (session.active_renderer_id, session.local_renderer_id) {
         (Some(active_renderer_id), Some(local_renderer_id)) => {
-            active_renderer_id == local_renderer_id
+            Some(active_renderer_id == local_renderer_id)
         }
-        _ => false,
+        // `normalize_active_renderer_id` maps the cloud's `-1` to `None`: the
+        // session genuinely has no active renderer, so we are not it.
+        (None, _) => Some(false),
+        (Some(_), None) => None,
     }
+}
+
+pub fn is_local_renderer_active(session: &QconnectSessionState) -> bool {
+    local_renderer_role(session).unwrap_or(false)
 }
 
 pub fn find_unique_renderer_id(
@@ -614,5 +640,38 @@ mod tests {
         assert_eq!(quality_from_max_audio_quality(Some(5)), Quality::UltraHiRes);
         assert_eq!(quality_from_max_audio_quality(None), Quality::UltraHiRes);
         assert_eq!(quality_from_max_audio_quality(Some(99)), Quality::UltraHiRes);
+    }
+
+    /// The ids answer the role outright in two shapes and cannot in the third.
+    /// Keeping the third as `None` is the whole point: a renderer whose own id
+    /// has not resolved yet is NOT the same thing as a renderer a peer took
+    /// over, and publishing them as the same value dropped moOde's overlay
+    /// mid-playback.
+    #[test]
+    fn local_renderer_role_separates_undetermined_from_not_active() {
+        let role = |active, local| {
+            let mut session = QconnectSessionState::default();
+            session.active_renderer_id = active;
+            session.local_renderer_id = local;
+            local_renderer_role(&session)
+        };
+
+        assert_eq!(role(Some(7), Some(7)), Some(true), "we are the active one");
+        assert_eq!(role(Some(9), Some(7)), Some(false), "a peer took it");
+        // `normalize_active_renderer_id` already mapped the cloud's -1 to None.
+        assert_eq!(role(None, Some(7)), Some(false), "nobody renders");
+        assert_eq!(role(None, None), Some(false), "idle session");
+        assert_eq!(role(Some(9), None), None, "our own id is not resolved yet");
+    }
+
+    /// The gating callers must keep behaving exactly as before — they are
+    /// report suppressors, and `None` has to collapse to "do not report".
+    #[test]
+    fn is_local_renderer_active_still_collapses_undetermined_to_false() {
+        let mut session = QconnectSessionState::default();
+        session.active_renderer_id = Some(9);
+        session.local_renderer_id = None;
+        assert_eq!(local_renderer_role(&session), None);
+        assert!(!is_local_renderer_active(&session));
     }
 }

@@ -605,6 +605,7 @@ pub async fn apply_renderer_command(
                 log::info!(
                     "[QConnect] SetActive(true): awaiting the session's SetState before loading"
                 );
+                sync_state.lock().await.local_render_active = Some(true);
             } else {
                 // Standing down — but not if we just started a load. Joining a
                 // live session replays it as SetActive(true) -> SetState(PLAYING)
@@ -624,6 +625,9 @@ pub async fn apply_renderer_command(
                     );
                 } else {
                     log::info!("[QConnect] SetActive(false): stopping, the session renders elsewhere");
+                    // Recorded only on the branch that actually stands down, so
+                    // the published role never contradicts the engine.
+                    sync_state.lock().await.local_render_active = Some(false);
                     engine.stop()?;
                 }
             }

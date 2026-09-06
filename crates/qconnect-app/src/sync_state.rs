@@ -60,6 +60,18 @@ pub struct QconnectRemoteSyncState {
     /// echo SetState arrives during the in-progress buffer/decode window of a
     /// previously triggered load.
     pub last_load_attempt: Option<(u64, Instant)>,
+    /// The last `SetActive` (message 43) this renderer actually HONOURED.
+    ///
+    /// The cloud states the active role outright, and this fork acts on it, so
+    /// the value is worth keeping: it is the only answer available while
+    /// `session.local_renderer_id` is still unresolved, which is exactly when
+    /// [`crate::session::local_renderer_role`] returns `None`.
+    ///
+    /// HONOURED, not merely received: a `SetActive(false)` inside the load
+    /// window is a join replay and is ignored by the renderer, so it must not
+    /// be recorded here either — otherwise the daemon keeps playing while its
+    /// published role says it stood down.
+    pub local_render_active: Option<bool>,
     /// Monotonic epoch for the renderer-liveness watchdog (P0-1). Every armed
     /// RENDERER_STATE_UPDATED bumps this; a spawned 12s task captures the value
     /// and no-ops on wake if it was superseded (reset/disarm). Disarm =
