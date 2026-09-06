@@ -149,6 +149,11 @@ struct GaplessPending {
     duration_secs: u64,
     audio: GaplessAudio,
     normalization_gain: Option<f32>,
+    /// The format this track was accepted for. Carried so a hand-off that has
+    /// to be re-queued (a seek replaces the engine) is checked against exactly
+    /// what it was checked against the first time.
+    sample_rate: u32,
+    channels: u16,
 }
 
 struct CursorMediaSource {
@@ -1505,6 +1510,11 @@ impl Player {
         diagnostic: AudioDiagnostic,
     ) -> Self {
         let (tx, rx) = mpsc::channel::<AudioCommand>();
+        // The audio thread sends to ITSELF in one place: after a seek rebuilds
+        // the engine, it re-issues the gapless hand-off it was holding (see the
+        // Seek arm). Re-running `PlayNext` is what keeps that path single —
+        // decode, ReplayGain, format check and append all stay in one handler.
+        let self_tx = tx.clone();
         let state = SharedState::new();
         let thread_state = state.clone();
 
@@ -3255,6 +3265,12 @@ impl Player {
                                             duration_secs: duration,
                                             audio: GaplessAudio::Memory(TrackBytes::default()),
                                             normalization_gain: None,
+                                            // Never re-queued: seeking is
+                                            // refused outright during DoP, and
+                                            // the audio here is deliberately
+                                            // empty anyway.
+                                            sample_rate: rate,
+                                            channels: 2,
                                         });
                                         thread_state.set_gapless_next_track_id(track_id);
                                         thread_state.set_gapless_ready(false);
@@ -3634,7 +3650,32 @@ impl Player {
                                 return;
                             }
                             *pause_suspend_deadline = None;
-                            // Cancel any pending gapless — seek creates a new engine
+                            // A seek builds a NEW engine, so the hand-off queued
+                            // into the old one is gone and this state has to be
+                            // cleared or it would claim a next track the engine
+                            // does not have.
+                            //
+                            // But seeking WITHIN a track does not change which
+                            // track comes next, and its bytes are still in hand
+                            // — so take them with us and re-queue them once the
+                            // new engine exists, instead of throwing away work
+                            // that is already done. Without this, seeking cost
+                            // the transition its gapless hand-off: observed on
+                            // hardware as `Starting dynamic streaming for track
+                            // N` where a seamless swap should have been, and if
+                            // the seek landed near the end of the track there
+                            // was not enough time left to prepare it again at
+                            // all.
+                            //
+                            // DoP is not a concern: a seek is refused above.
+                            let requeue_gapless = gapless_pending.as_ref().map(|pending| {
+                                (
+                                    pending.audio.clone(),
+                                    pending.track_id,
+                                    pending.sample_rate,
+                                    pending.channels,
+                                )
+                            });
                             *gapless_pending = None;
                             *gapless_request_armed = false;
                             thread_state.set_gapless_ready(false);
@@ -3880,6 +3921,32 @@ impl Player {
                                 position_secs,
                                 was_playing
                             );
+
+                            // Hand the prepared next track back, now that there
+                            // is an engine to hand it to. Re-issuing the command
+                            // rather than inlining the work keeps decode,
+                            // ReplayGain, the format check and the append in the
+                            // single handler that owns them — and that handler
+                            // re-validates everything, so a re-queue that is no
+                            // longer appropriate is refused exactly as a fresh
+                            // one would be.
+                            if let Some((audio, track_id, sample_rate, channels)) = requeue_gapless
+                            {
+                                log::info!(
+                                    "Gapless: re-queueing track {track_id} after the seek rebuilt the engine"
+                                );
+                                if let Err(e) = self_tx.send(AudioCommand::PlayNext {
+                                    audio,
+                                    track_id,
+                                    sample_rate,
+                                    channels,
+                                }) {
+                                    // Not fatal: the driver re-arms the prefetch
+                                    // on its own, which is what used to happen
+                                    // every time.
+                                    log::warn!("Gapless: could not re-queue after seek: {e}");
+                                }
+                            }
                         }
                         AudioCommand::ReinitDevice {
                             device_name: new_device,
@@ -4112,6 +4179,8 @@ impl Player {
                                 duration_secs: actual_duration,
                                 audio,
                                 normalization_gain: normalization,
+                                sample_rate,
+                                channels,
                             });
                             thread_state.set_gapless_next_track_id(track_id);
                             thread_state.set_gapless_ready(false); // Request fulfilled
