@@ -424,6 +424,80 @@ fn seek_in_memory(
 /// Asked twice, so it lives in one place: once before a download starts (the
 /// CMAF segment table gives the size up front, so a big track is written
 /// straight to the card as it decrypts) and once about bytes already in hand.
+/// Reset everything that must not survive into a NEW track, whatever path the
+/// track arrived on.
+///
+/// There is more than one way a track starts — `Play` for a buffer, and
+/// `PlayStreaming` for everything the Qobuz app selects — and each one used to
+/// carry its own copy of this ritual. `PlayStreaming` was missing it entirely,
+/// which meant selecting a track from another album left the PREVIOUS album's
+/// prepared successor in place: the prefetch for the new track could never arm
+/// (`request_armed` still true), and the stale `pending` named a track the
+/// freshly-rebuilt engine did not have queued, so the transition at the end of
+/// the new track swapped to it and stalled.
+///
+/// One function, called by both, so the next path that starts a track cannot
+/// quietly forget half of it.
+/// Every gate on "ask for the next track now".
+///
+/// Eight conditions that were only ever readable as one inline `&&` chain, which
+/// is how a stale `request_armed` — left set by a track change that forgot to
+/// clear it — could silently stop all prefetching with nothing in the log to say
+/// so. Named and tested here so each gate's purpose survives.
+/// Every gate on "ask for the next track now", in order:
+///
+/// * `enabled` — the user's setting AND the host being able to afford a second
+///   track at all.
+/// * `transition_consumed_pending` — a transition already fired this tick, so
+///   `pos`/`dur` still describe the OUTGOING track and arming would use stale
+///   numbers.
+/// * `duration_secs` — zero means the duration is not known yet.
+/// * `has_pending` — a successor is already prepared.
+/// * `request_armed` — a request is already outstanding, including one issued
+///   and not yet fulfilled. Cleared by the transition that consumes it, and by
+///   starting a new track (see [`begin_new_track`]).
+/// * `ready_flag` — the flag the driver watches; set means it has been told.
+/// * `next_track_id` — non-zero means a successor is queued on the engine.
+/// * `current_stream_complete` — a stream still DOWNLOADING has no tail to hand
+///   over; a COMPLETE one does.
+///
+/// Named and tested because as one inline `&&` chain it was unreadable, and a
+/// stale `request_armed` left by a track change that forgot to clear it stopped
+/// all prefetching with nothing in the log to say so.
+#[allow(clippy::too_many_arguments)]
+fn should_arm_prefetch(
+    enabled: bool,
+    transition_consumed_pending: bool,
+    duration_secs: u64,
+    has_pending: bool,
+    request_armed: bool,
+    ready_flag: bool,
+    next_track_id: u64,
+    current_stream_complete: bool,
+) -> bool {
+    enabled
+        && !transition_consumed_pending
+        && duration_secs > 0
+        && !has_pending
+        && !request_armed
+        && !ready_flag
+        && next_track_id == 0
+        && current_stream_complete
+}
+
+fn begin_new_track(
+    thread_state: &SharedState,
+    gapless_pending: &mut Option<GaplessPending>,
+    gapless_request_armed: &mut bool,
+    pause_suspend_deadline: &mut Option<Instant>,
+) {
+    *pause_suspend_deadline = None;
+    *gapless_pending = None;
+    *gapless_request_armed = false;
+    thread_state.set_gapless_ready(false);
+    thread_state.set_gapless_next_track_id(0);
+}
+
 pub(crate) fn spill_to_disk(total: usize, budget: usize) -> bool {
     total.saturating_mul(2) > budget
 }
@@ -1820,13 +1894,13 @@ impl Player {
                                 sample_rate,
                                 channels
                             );
-                            *pause_suspend_deadline = None;
+                            begin_new_track(
+                                &thread_state,
+                                gapless_pending,
+                                gapless_request_armed,
+                                pause_suspend_deadline,
+                            );
                             thread_state.set_dsd_mode(0);
-                            // Clear any pending gapless state (new Play supersedes queued gapless)
-                            *gapless_pending = None;
-                            *gapless_request_armed = false;
-                            thread_state.set_gapless_ready(false);
-                            thread_state.set_gapless_next_track_id(0);
 
                             let StreamRecreateDecision {
                                 needs_new_stream,
@@ -2322,26 +2396,12 @@ impl Player {
                             duration_secs,
                             start_position_secs
                         );
-                            *pause_suspend_deadline = None;
-                            // A new track supersedes whatever was prepared as
-                            // the NEXT one -- exactly as `Play` has always done,
-                            // and this arm never did.
-                            //
-                            // It matters twice over. The engine is rebuilt
-                            // below, so a hand-off queued into the old one is
-                            // gone; leaving `gapless_pending` set claims a next
-                            // track the engine does not have, and at the end of
-                            // THIS track the transition swaps identity to it and
-                            // stalls on an empty engine. And `gapless_request_armed`
-                            // staying true blocks the prefetch for the new track
-                            // from ever arming -- observed: selecting a track
-                            // from another album left the previous album's
-                            // successor pending, and nothing was fetched for
-                            // minutes.
-                            *gapless_pending = None;
-                            *gapless_request_armed = false;
-                            thread_state.set_gapless_ready(false);
-                            thread_state.set_gapless_next_track_id(0);
+                            begin_new_track(
+                                &thread_state,
+                                gapless_pending,
+                                gapless_request_armed,
+                                pause_suspend_deadline,
+                            );
 
                             // Store streaming source for resume capability
                             // When download completes, we can extract the data for resume
@@ -4563,17 +4623,18 @@ impl Player {
                                     .unwrap_or(false)
                                     && qbz_models::system_capabilities::memory_profile()
                                         .allow_gapless_prefetch;
-                                if gapless_enabled
-                                    && !transition_consumed_pending
-                                    && dur > 0
-                                    && gapless_pending.is_none()
-                                    && !gapless_request_armed
-                                    && !thread_state.is_gapless_ready()
-                                    && thread_state.get_gapless_next_track_id() == 0
-                                    && current_streaming_source
+                                if should_arm_prefetch(
+                                    gapless_enabled,
+                                    transition_consumed_pending,
+                                    dur,
+                                    gapless_pending.is_some(),
+                                    gapless_request_armed,
+                                    thread_state.is_gapless_ready(),
+                                    thread_state.get_gapless_next_track_id(),
+                                    current_streaming_source
                                         .as_ref()
-                                        .is_none_or(|source| source.is_complete())
-                                {
+                                        .is_none_or(|source| source.is_complete()),
+                                ) {
                                     log::info!(
                                         "Gapless: this track is buffered ({}s/{}s), fetching the next one",
                                         pos, dur
@@ -6665,5 +6726,115 @@ mod spill_rule_tests {
     #[test]
     fn an_overflowing_size_still_spills() {
         assert!(spill_to_disk(usize::MAX, PI_1GB));
+    }
+}
+
+#[cfg(test)]
+mod new_track_and_prefetch_tests {
+    use super::{begin_new_track, should_arm_prefetch, GaplessAudio, GaplessPending, SharedState};
+    use qbz_cache::TrackBytes;
+
+    fn a_pending(track_id: u64) -> GaplessPending {
+        GaplessPending {
+            track_id,
+            duration_secs: 300,
+            audio: GaplessAudio::Memory(TrackBytes::from(vec![0u8; 4])),
+            normalization_gain: None,
+            sample_rate: 44_100,
+            channels: 2,
+        }
+    }
+
+    /// THE regression. Starting a new track must leave nothing of the previous
+    /// track's prepared successor behind — on EVERY path a track can start.
+    ///
+    /// `Play` always did this; `PlayStreaming`, which is how every track picked
+    /// in the Qobuz app starts, never did. The result was that selecting a track
+    /// from another album left the old album's successor pending: the prefetch
+    /// for the new track could not arm, and the transition at the end of it
+    /// swapped to a track the rebuilt engine did not have and stalled.
+    #[test]
+    fn starting_a_track_clears_every_gapless_slot() {
+        let state = SharedState::new();
+        let mut pending = Some(a_pending(2_944_914));
+        let mut armed = true;
+        let mut deadline = Some(std::time::Instant::now());
+        state.set_gapless_ready(true);
+        state.set_gapless_next_track_id(2_944_914);
+
+        begin_new_track(&state, &mut pending, &mut armed, &mut deadline);
+
+        assert!(pending.is_none(), "a successor from the previous track must not survive");
+        assert!(!armed, "a stale armed flag blocks the new track's prefetch forever");
+        assert!(!state.is_gapless_ready());
+        assert_eq!(state.get_gapless_next_track_id(), 0);
+        assert!(deadline.is_none());
+    }
+
+    /// Idempotent: starting a track when nothing was prepared is a no-op, not a
+    /// surprise.
+    #[test]
+    fn starting_a_track_from_clean_state_changes_nothing() {
+        let state = SharedState::new();
+        let mut pending: Option<GaplessPending> = None;
+        let mut armed = false;
+        let mut deadline = None;
+
+        begin_new_track(&state, &mut pending, &mut armed, &mut deadline);
+
+        assert!(pending.is_none());
+        assert!(!armed);
+        assert!(!state.is_gapless_ready());
+        assert_eq!(state.get_gapless_next_track_id(), 0);
+    }
+
+    /// The happy path: buffered, nothing prepared, nothing outstanding.
+    #[test]
+    fn prefetch_arms_once_the_current_track_is_buffered() {
+        assert!(should_arm_prefetch(true, false, 300, false, false, false, 0, true));
+    }
+
+    /// Each gate refuses on its own. The `request_armed` line is the one that
+    /// bit: left set by a track change, it stops all prefetching silently.
+    #[test]
+    fn every_gate_can_refuse_alone() {
+        let cases: [(&str, bool); 8] = [
+            ("disabled", should_arm_prefetch(false, false, 300, false, false, false, 0, true)),
+            ("transition just fired", should_arm_prefetch(true, true, 300, false, false, false, 0, true)),
+            ("duration unknown", should_arm_prefetch(true, false, 0, false, false, false, 0, true)),
+            ("already prepared", should_arm_prefetch(true, false, 300, true, false, false, 0, true)),
+            ("request outstanding", should_arm_prefetch(true, false, 300, false, true, false, 0, true)),
+            ("driver already told", should_arm_prefetch(true, false, 300, false, false, true, 0, true)),
+            ("successor queued", should_arm_prefetch(true, false, 300, false, false, false, 7, true)),
+            ("still downloading", should_arm_prefetch(true, false, 300, false, false, false, 0, false)),
+        ];
+        for (why, armed) in cases {
+            assert!(!armed, "should not arm: {why}");
+        }
+    }
+
+    /// The two together, as they run in sequence: a track change clears the
+    /// slots, and the prefetch for the NEW track can then arm. Before the fix
+    /// the first half did not happen on the streaming path, so the second half
+    /// never became true.
+    #[test]
+    fn a_track_change_unblocks_the_next_prefetch() {
+        let state = SharedState::new();
+        let mut pending = Some(a_pending(2_944_914));
+        let mut armed = true;
+        let mut deadline = None;
+
+        // While the stale state stands, nothing can arm.
+        assert!(!should_arm_prefetch(
+            true, false, 774, pending.is_some(), armed,
+            state.is_gapless_ready(), state.get_gapless_next_track_id(), true
+        ));
+
+        begin_new_track(&state, &mut pending, &mut armed, &mut deadline);
+
+        assert!(should_arm_prefetch(
+            true, false, 774, pending.is_some(), armed,
+            state.is_gapless_ready(), state.get_gapless_next_track_id(), true
+        ));
     }
 }
