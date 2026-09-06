@@ -2323,6 +2323,25 @@ impl Player {
                             start_position_secs
                         );
                             *pause_suspend_deadline = None;
+                            // A new track supersedes whatever was prepared as
+                            // the NEXT one -- exactly as `Play` has always done,
+                            // and this arm never did.
+                            //
+                            // It matters twice over. The engine is rebuilt
+                            // below, so a hand-off queued into the old one is
+                            // gone; leaving `gapless_pending` set claims a next
+                            // track the engine does not have, and at the end of
+                            // THIS track the transition swaps identity to it and
+                            // stalls on an empty engine. And `gapless_request_armed`
+                            // staying true blocks the prefetch for the new track
+                            // from ever arming -- observed: selecting a track
+                            // from another album left the previous album's
+                            // successor pending, and nothing was fetched for
+                            // minutes.
+                            *gapless_pending = None;
+                            *gapless_request_armed = false;
+                            thread_state.set_gapless_ready(false);
+                            thread_state.set_gapless_next_track_id(0);
 
                             // Store streaming source for resume capability
                             // When download completes, we can extract the data for resume
