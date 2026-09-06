@@ -298,6 +298,19 @@ pub async fn download_full_sized(
             file.sync_all()
                 .map_err(|e| format!("sync {}: {e}", path.display()))?;
 
+            // The caller is about to RENAME this into the cache under the real
+            // name, and whatever sits under that name is treated as a complete
+            // track forever after. A short file would decode as garbage on every
+            // later play -- precisely the corruption the temp-and-rename pattern
+            // exists to prevent -- so refuse rather than publish one.
+            if written != total_size {
+                let _ = std::fs::remove_file(&path);
+                return Err(format!(
+                    "CMAF-DISK track {track_id}: wrote {written} bytes, segment table said \
+                     {total_size} -- refusing to publish a short file"
+                ));
+            }
+
             log::info!(
                 "[CMAF-DISK] Track {} written straight to disk: {:.2} MB FLAC, expected {:.2} MB",
                 track_id,
