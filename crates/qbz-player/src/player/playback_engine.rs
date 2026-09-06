@@ -447,8 +447,42 @@ impl PlaybackEngine {
                 should_stop.store(true, Ordering::SeqCst);
                 is_playing.store(false, Ordering::SeqCst);
 
+                // BOUNDED. The writer only notices `should_stop` between ALSA
+                // writes, and an ALSA write blocks until the device accepts the
+                // frames — so a card that has stopped draining pins it there
+                // forever. This join used to be unbounded, which made that a
+                // permanent, SILENT loss of the audio thread: no more playback
+                // for the life of the process, with the position counter still
+                // running off the playback timer. Seen once on hardware.
+                //
+                // Reordering `stream.stop()` before the join does NOT help:
+                // `write_f32` holds the PCM mutex for the whole write, and
+                // stopping needs that same mutex. Breaking a stuck writer out
+                // properly needs an interruptible (non-blocking + poll) write
+                // path, which is a change to make with a device to test on.
+                //
+                // Until then: give it a bounded wait and, if it does not exit,
+                // say so loudly and carry on rather than hanging. The thread is
+                // deliberately not joined in that case — it is wedged in the
+                // driver and joining is exactly what we are avoiding.
                 if let Some(handle) = playback_thread.take() {
-                    let _ = handle.join();
+                    const WRITER_EXIT_GRACE: std::time::Duration =
+                        std::time::Duration::from_secs(3);
+                    let deadline = std::time::Instant::now() + WRITER_EXIT_GRACE;
+                    while !handle.is_finished() && std::time::Instant::now() < deadline {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    if handle.is_finished() {
+                        let _ = handle.join();
+                    } else {
+                        log::error!(
+                            "[ALSA Direct Engine] Writer thread did not exit within {:?} — \
+                             it is stuck in a blocking write against a device that stopped \
+                             draining. Abandoning the join so the audio thread survives; \
+                             this stream is lost and the renderer needs a restart.",
+                            WRITER_EXIT_GRACE
+                        );
+                    }
                 }
 
                 if let Err(e) = stream.stop() {
@@ -673,6 +707,23 @@ impl PlaybackEngine {
 /// (gapless transition). If no next source is available, drains the ALSA
 /// buffer and waits for the next source or a stop signal.
 #[allow(clippy::too_many_arguments)]
+/// Should a writer that drained at a natural end resume for the source it has
+/// just picked up?
+///
+/// Only when a stop is NOT in progress. `stop_inner` sets `should_stop` and then
+/// `is_playing = false` before joining this thread, and the writer's pause gate
+/// is what notices: it re-checks `should_stop` and exits. Resuming here would
+/// sail straight past that gate into the blocking ALSA write below — and a
+/// device that has stopped draining never lets such a write return. The join
+/// then waits forever, the audio thread is gone for the life of the process, and
+/// playback is silent while the position counter keeps ticking. Observed once on
+/// hardware, after a seek.
+///
+/// `is_playing` already true means there is nothing to do.
+fn should_resume_after_drain(resume_pending: bool, should_stop: bool, is_playing: bool) -> bool {
+    resume_pending && !should_stop && !is_playing
+}
+
 fn alsa_writer_thread(
     stream: Arc<AlsaDirectStream>,
     is_playing: Arc<AtomicBool>,
@@ -731,9 +782,24 @@ fn alsa_writer_thread(
                     // "finished" as early as possible: this thread is the only
                     // writer of both halves it reads, and the queue is popped by
                     // the call just above.
+                    // NEVER against a stop in progress. `stop_inner` sets
+                    // `should_stop` and then `is_playing = false` before joining
+                    // this thread, and the pause gate below is what notices —
+                    // it re-checks `should_stop` and exits. Storing `is_playing`
+                    // back to true here would sail straight past that gate into
+                    // the blocking write below, and a device that has stopped
+                    // draining then never lets the write return. The join waits
+                    // forever, the audio thread is gone for the life of the
+                    // process, and playback is silent with a position counter
+                    // still ticking. Seen exactly once, on hardware.
                     if resume_on_next_source {
+                        let resume = should_resume_after_drain(
+                            resume_on_next_source,
+                            should_stop.load(Ordering::SeqCst),
+                            is_playing.load(Ordering::SeqCst),
+                        );
                         resume_on_next_source = false;
-                        if !is_playing.load(Ordering::SeqCst) {
+                        if resume {
                             log::info!(
                                 "[ALSA Direct Engine] Late hand-off after a drain — resuming playback"
                             );
@@ -1056,5 +1122,41 @@ fn dop_writer_thread(
             // else: the queued next source is picked up on the next iteration
             // with the PCM still running — the gapless DSD transition.
         }
+    }
+}
+
+#[cfg(test)]
+mod writer_stop_tests {
+    use super::should_resume_after_drain;
+
+    /// The regression this exists for. A writer that drained at a natural end
+    /// picks up a LATE gapless hand-off and turns playback back on — but if a
+    /// stop is already in progress, doing so defeats the pause gate that is the
+    /// writer's only way to notice it. It then enters a blocking ALSA write, and
+    /// against a device that has stopped draining that write never returns: the
+    /// join in `stop_inner` waits forever and the audio thread is lost for the
+    /// life of the process, silently.
+    #[test]
+    fn a_stop_in_progress_beats_a_late_hand_off() {
+        // resume_pending, should_stop, is_playing
+        assert!(!should_resume_after_drain(true, true, false), "stop wins");
+        assert!(!should_resume_after_drain(true, true, true), "stop wins");
+    }
+
+    /// The case the resume exists for: the writer drained, a hand-off arrived
+    /// late, nothing is stopping. Without this the writer parks holding a track
+    /// it will never play.
+    #[test]
+    fn a_late_hand_off_resumes_when_nothing_is_stopping() {
+        assert!(should_resume_after_drain(true, false, false));
+    }
+
+    /// Already playing, or nothing pending: no-ops. `is_playing` true means the
+    /// first source of a track, which `append` already started.
+    #[test]
+    fn nothing_to_do_when_already_playing_or_not_pending() {
+        assert!(!should_resume_after_drain(true, false, true));
+        assert!(!should_resume_after_drain(false, false, false));
+        assert!(!should_resume_after_drain(false, true, false));
     }
 }
