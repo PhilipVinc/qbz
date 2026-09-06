@@ -456,18 +456,48 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                         // it missed its own gapless hand-off — and a 220 MB
                         // Hi-Res track on a 4 GB player skipped the detour it
                         // did need.
-                        let from_disk = player
-                            .should_hand_over_as_file(bytes.len())
-                            .then(|| {
-                                // Not `cached_track_file`: the L2 cache is
-                                // written only as spill from L1, and L1 refuses
-                                // a track bigger than its budget — so the file
-                                // we want may not exist yet.
-                                player
-                                    .cached_track_file(*id)
-                                    .or_else(|| player.stage_track_on_disk(*id, &bytes))
-                            })
-                            .flatten();
+                        let from_disk = if player.should_hand_over_as_file(bytes.len()) {
+                            // Not `cached_track_file`: the L2 cache is written
+                            // only as spill from L1, and L1 refuses a track
+                            // bigger than its budget — so the file we want may
+                            // not exist yet.
+                            match player.cached_track_file(*id) {
+                                Some(path) => Some(path),
+                                None => {
+                                    // `spawn_blocking`: staging is a synchronous
+                                    // write of the WHOLE track plus an fsync —
+                                    // 98 MB took 7.5 s on the test Pi's card —
+                                    // and this is an async task. Running it here
+                                    // parked a tokio worker for those seconds,
+                                    // and the qconnect socket and report loop
+                                    // live on those workers.
+                                    //
+                                    // It does NOT fix the audio: the writer
+                                    // thread is a real OS thread that tokio
+                                    // cannot starve, but the card saturating
+                                    // starves it anyway (observed as
+                                    // "Recovered from PCM error" mid-write).
+                                    // That is what the pacing in
+                                    // `PlaybackCache::insert` is for.
+                                    let player = player.clone();
+                                    let bytes = bytes.clone(); // Arc: a refcount bump
+                                    let id = *id;
+                                    match tokio::task::spawn_blocking(move || {
+                                        player.stage_track_on_disk(id, &bytes)
+                                    })
+                                    .await
+                                    {
+                                        Ok(path) => path,
+                                        Err(e) => {
+                                            log::warn!("[qbzd] driver: staging task failed: {e}");
+                                            None
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            None
+                        };
 
                         let mut queued = false;
                         if let Some(path) = from_disk {
@@ -494,7 +524,15 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                     }
                 }
                 DriverAction::ReleaseCachedTrack(id) => {
-                    player.release_finished_track(*id);
+                    // Also blocking: releasing spills the track to L2, which is
+                    // the same whole-track write plus fsync as staging.
+                    let player = player.clone();
+                    let id = *id;
+                    if let Err(e) =
+                        tokio::task::spawn_blocking(move || player.release_finished_track(id)).await
+                    {
+                        log::warn!("[qbzd] driver: release task failed: {e}");
+                    }
                 }
                 DriverAction::PauseStopAfter => {
                     // The ended track is the queue's current track (playback.rs:4708).

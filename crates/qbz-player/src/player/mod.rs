@@ -3711,7 +3711,14 @@ impl Player {
                             //     playback reach this handler with
                             //     current_audio_data Some and skip the
                             //     streaming branch entirely (issue #335).
-                            if current_audio_data.is_none() && current_streaming_source.is_none() {
+                            //   * a track handed over as a FILE (the disk
+                            //     gapless path) — `current_audio_file` set,
+                            //     `current_audio_data` empty by design, because
+                            //     the whole point was not to hold the bytes.
+                            if current_audio_data.is_none()
+                                && current_streaming_source.is_none()
+                                && current_audio_file.is_none()
+                            {
                                 log::warn!("Audio thread: cannot seek - no audio data available");
                                 return;
                             }
@@ -3845,6 +3852,43 @@ impl Player {
                                         seek_abort(
                                             &thread_state,
                                             &format!("streaming source for seek failed: {e}"),
+                                        );
+                                        return;
+                                    }
+                                }
+                            } else if let Some(path) = current_audio_file.as_ref() {
+                                // Disk gapless hand-off: the bytes are a file, not
+                                // a buffer. Before this, the guard above refused
+                                // the seek outright ("cannot seek - no audio data")
+                                // because it only knew about the in-memory and
+                                // streaming cases — the file case postdates it.
+                                //
+                                // Native seek first; `skip_duration` decodes every
+                                // sample from zero, which on a 100 MB Hi-Res track
+                                // stalls the audio thread for seconds.
+                                match decode_file_with_fallback(path) {
+                                    Ok(mut src) => match src.try_seek(skip_duration) {
+                                        Ok(()) => src,
+                                        Err(e) => {
+                                            log::warn!(
+                                                "Native seek on cached file failed ({e}); falling back to skip_duration"
+                                            );
+                                            match decode_file_with_fallback(path) {
+                                                Ok(fb) => Box::new(fb.skip_duration(skip_duration)),
+                                                Err(e) => {
+                                                    seek_abort(
+                                                        &thread_state,
+                                                        &format!("decode of cached file for seek failed: {e}"),
+                                                    );
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        seek_abort(
+                                            &thread_state,
+                                            &format!("open of cached file for seek failed: {e}"),
                                         );
                                         return;
                                     }
