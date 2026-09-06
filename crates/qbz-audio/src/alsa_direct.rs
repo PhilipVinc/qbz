@@ -563,6 +563,7 @@ impl AlsaDirectStream {
         Ok((
             Self {
                 pcm: Arc::new(Mutex::new(pcm)),
+                scratch: Mutex::new(ConvScratch::default()),
                 is_playing: Arc::new(AtomicBool::new(false)),
                 sample_rate: rate,
                 channels,
