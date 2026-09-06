@@ -4330,51 +4330,73 @@ impl Player {
                                     }
                                 }
 
-                                // Gapless readiness: signal frontend that it's
-                                // time to prepare the next track.
+                                // Gapless readiness: signal the frontend that it
+                                // is time to prepare the next track.
                                 //
-                                // Lead time used to be 5s but that's too tight
-                                // for offline-cache v2 bundles: the AES-CTR
-                                // decrypt of a HiRes track on CPUs WITHOUT
-                                // AES-NI runs at ~10 MB/s — a 58 MB track
-                                // needs ~6s just to decrypt, which blows past
-                                // a 5s window and misses the gapless handoff.
+                                // The trigger is THIS track being fully
+                                // buffered, not a countdown to its end.
                                 //
-                                // 10s covers most HiRes tracks even on the
-                                // software-AES fallback path, and is
-                                // harmless when decrypt is fast (the bytes
-                                // just land in L1 a few seconds earlier and
-                                // sit there until the engine picks them up).
+                                // It used to be a fixed lead: 5s, then 10s once
+                                // an offline-cache HiRes decrypt was found to
+                                // need ~6s on a CPU without AES-NI. But a fixed
+                                // number is the wrong shape for a job whose cost
+                                // scales with the track. Measured on a Pi 3B
+                                // over WiFi at ~2.8 MB/s: a 22 MB track took
+                                // 8.1s to fetch plus 1.8s to stage on the card,
+                                // and missed a 10s lead by 0.85s; an 80 MB track
+                                // on the same playlist missed it by 15s. Hi-Res
+                                // is 21 MB/min, so a 10-minute movement (~210 MB)
+                                // could never have made a 10s window on any Pi.
+                                // The lead did not fail at the margin — it never
+                                // won.
                                 //
-                                // If the frontend ever exposes a user setting
-                                // for this, just plumb it through
-                                // AudioSettings and read here.
-                                const GAPLESS_LEAD_SECS: u64 = 10;
+                                // Arming on completion instead costs no PEAK
+                                // memory: either way two whole tracks are
+                                // resident at the hand-off, and the lead only
+                                // decides how LONG that peak is held, not how
+                                // high it is. On a low-memory host it is cheaper
+                                // still, because the prefetch is staged to disk
+                                // and dropped from L1 immediately. What it does
+                                // cost is a wasted download when the listener
+                                // jumps somewhere else in the queue — a plain
+                                // "next" is not waste, it plays exactly the
+                                // track just fetched.
+                                //
+                                // `is_complete()` on the current stream is the
+                                // signal, and it was already required here: a
+                                // stream still DOWNLOADING has no tail to hand
+                                // over, a COMPLETE one does. On a low-memory
+                                // host promotion is skipped precisely so the
+                                // buffer is not copied, so the slot is never
+                                // cleared and `is_none()` would never fire.
+                                // Same rule as the PlayNext guard.
+                                // The host floor is not a preference and is not
+                                // overridable by the setting: a prefetch is a
+                                // whole extra track allocated in RAM, and a
+                                // board that cannot afford one is not slow, it
+                                // is dead. See `GAPLESS_MIN_TOTAL_KB`.
                                 let gapless_enabled = thread_settings
                                     .lock()
                                     .ok()
                                     .map(|s| s.gapless_enabled)
-                                    .unwrap_or(false);
+                                    .unwrap_or(false)
+                                    && qbz_models::system_capabilities::memory_profile()
+                                        .allow_gapless_prefetch;
                                 if gapless_enabled
                                     && !transition_consumed_pending
                                     && dur > 0
-                                    && pos + GAPLESS_LEAD_SECS >= dur
                                     && gapless_pending.is_none()
                                     && !gapless_request_armed
                                     && !thread_state.is_gapless_ready()
                                     && thread_state.get_gapless_next_track_id() == 0
-                                    // A stream that is still DOWNLOADING has no
-                                    // tail to hand over. A COMPLETE one does —
-                                    // and on a low-memory host, where promotion
-                                    // is skipped precisely so the buffer is not
-                                    // copied, it is never cleared, so requiring
-                                    // `is_none()` here meant gapless never armed
-                                    // at all. Same rule as the PlayNext guard.
                                     && current_streaming_source
                                         .as_ref()
                                         .is_none_or(|source| source.is_complete())
                                 {
-                                    log::info!("Gapless: approaching end of track ({}s/{}s), requesting next", pos, dur);
+                                    log::info!(
+                                        "Gapless: this track is buffered ({}s/{}s), fetching the next one",
+                                        pos, dur
+                                    );
                                     thread_state.set_gapless_ready(true);
                                     gapless_request_armed = true;
                                 }
@@ -4515,6 +4537,17 @@ impl Player {
                 profile.max_initial_buffer_bytes / 1024,
                 if profile.allow_hires_prefetch { "allowed" } else { "not allowed" },
             );
+            // Say it plainly and say why: on a board below the floor, gapless
+            // silently not happening is otherwise indistinguishable from gapless
+            // being broken, and the next bug report is about the wrong thing.
+            if !profile.allow_gapless_prefetch {
+                log::warn!(
+                    "[Player] Gapless: OFF — this host has {} MB of RAM and prefetching the next \
+                     track needs at least {} MB. Tracks will still follow one another, with a gap.",
+                    profile.mem_total_kb / 1024,
+                    qbz_models::system_capabilities::GAPLESS_MIN_TOTAL_KB / 1024,
+                );
+            }
             set_max_initial_buffer_bytes(profile.max_initial_buffer_bytes);
         }
 
@@ -4953,6 +4986,23 @@ impl Player {
     /// a seamless handoff.
     pub fn is_track_cached(&self, track_id: u64) -> bool {
         self.audio_cache.contains(track_id)
+    }
+
+    /// Should a track of `bytes` be handed to the gapless path as a FILE rather
+    /// than kept in memory?
+    ///
+    /// Yes exactly when two of them will not fit in the L1 budget — the playing
+    /// track and the prefetched next one is the pair the cache exists to hold,
+    /// and when it cannot hold both, holding them anyway is what took a 1 GB Pi
+    /// into swap.
+    ///
+    /// This used to key on the host's MEMORY CLASS instead, which was wrong in
+    /// both directions: a 22 MB CD track on a 1 GB player paid 1.8 s of
+    /// `sync_all` to the SD card for a detour it did not need (and missed its
+    /// gapless hand-off by 0.85 s doing it), while a 220 MB Hi-Res track on a
+    /// 4 GB player skipped the detour and pinned a pair against the budget.
+    pub fn should_hand_over_as_file(&self, bytes: usize) -> bool {
+        bytes.saturating_mul(2) > self.audio_cache.budget_bytes()
     }
 
     /// Drop every cached audio byte (L1 memory + L2 disk). Called when the

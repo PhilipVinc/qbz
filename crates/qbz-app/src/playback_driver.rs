@@ -440,22 +440,29 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                     if let Some(bytes) =
                         core.fetch_for_gapless_resolved(*id, quality, None, None).await
                     {
-                        // The fetch has just written this track to the L2 disk
-                        // cache. On a memory-constrained host, decode it from
-                        // there: a Hi-Res track is 120-220 MB, and holding it in
-                        // RAM beside the CURRENT track's buffer for the minutes
-                        // until the transition is what took a 1 GB Pi to 570 MB
-                        // RSS and into a reboot. Dropping the L1 copy is part of
-                        // the point — keeping it would move the same bytes, not
-                        // free them.
-                        let profile = qbz_models::system_capabilities::memory_profile();
-                        let from_disk = (profile.class
-                            == qbz_models::system_capabilities::MemoryClass::LowMemory)
+                        // Decode the next track from a FILE when this one is big
+                        // enough that it and the playing track cannot both sit
+                        // in the L1 budget: a Hi-Res track is 120-220 MB, and
+                        // holding a pair in RAM for the minutes until the
+                        // transition is what took a 1 GB Pi to 570 MB RSS and
+                        // into a reboot. Dropping the L1 copy is part of the
+                        // point — keeping it would move the same bytes, not free
+                        // them.
+                        //
+                        // The test is the track's SIZE against this host's
+                        // budget, not the host's memory class. By class, a 22 MB
+                        // CD track on a 1 GB player took the detour it did not
+                        // need — 1.8 s of `sync_all` to an SD card, which is how
+                        // it missed its own gapless hand-off — and a 220 MB
+                        // Hi-Res track on a 4 GB player skipped the detour it
+                        // did need.
+                        let from_disk = player
+                            .should_hand_over_as_file(bytes.len())
                             .then(|| {
                                 // Not `cached_track_file`: the L2 cache is
                                 // written only as spill from L1, and L1 refuses
-                                // a track bigger than its budget — so on this
-                                // host the file we want does not exist yet.
+                                // a track bigger than its budget — so the file
+                                // we want may not exist yet.
                                 player
                                     .cached_track_file(*id)
                                     .or_else(|| player.stage_track_on_disk(*id, &bytes))

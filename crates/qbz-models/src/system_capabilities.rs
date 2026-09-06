@@ -50,7 +50,34 @@ pub struct MemoryProfile {
     /// [`l1_cache_bytes_for_total_kb`] so a 2 GB Pi 5 — nominally
     /// Normal-class — does not get a desktop's cache either.
     pub audio_cache_l1_max_bytes: usize,
+    /// Whether this host may prefetch the NEXT track at all — i.e. whether
+    /// gapless is possible here. See [`GAPLESS_MIN_TOTAL_KB`].
+    pub allow_gapless_prefetch: bool,
 }
+
+/// Least RAM a host needs before it may hold a second whole track.
+///
+/// A prefetch is not a cache decision, it is an allocation: `cmaf::download_full`
+/// returns the ENTIRE track as a `Vec<u8>`, and the L1 budget, the disk staging
+/// and the timing all happen downstream of it. At the default 24/192 (~42 MB per
+/// minute) a five-minute track is ~210 MB, and it lands beside the playing
+/// track's own full buffer. On a 512 MB board — which reports ~439 MB — that is
+/// the OOM killer, reported on the moOde forum as a Pi 3A rebooting mid-album.
+/// Nothing stood in its way: the `allow_hires_prefetch` flag written for this is
+/// referenced only by a log line, and the memory watchdog its `MemoryPressure`
+/// doc comment describes does not exist.
+///
+/// So the small boards do not prefetch. Playback still advances at the end of a
+/// track through the ordinary next-track path; it just has a gap, which is the
+/// right trade against a reboot.
+///
+/// 768 MiB rather than a round 512 MB, for the same reason [`NORMAL_FLOOR_KB`]
+/// is 1.75 GiB: a board reports well under its sticker once the kernel and GPU
+/// have taken their reservations. A 512 MB Pi 3A/Zero 2 W reports ~439 MB and a
+/// 1 GB Pi 3B reports ~905 MB, so the floor sits between them and separates the
+/// boards, not the marketing numbers. The 1 GB board is the one gapless is
+/// verified on.
+pub const GAPLESS_MIN_TOTAL_KB: u64 = 768 * 1024;
 
 /// Share of physical RAM the L1 audio cache may occupy, and the ceiling it is
 /// capped at.
@@ -66,8 +93,20 @@ pub struct MemoryProfile {
 /// the number that matters — it still fits one Hi-Res track (~120 MB), so
 /// gapless keeps working on a 1 GB box instead of silently degrading, and
 /// `AudioCache::insert` refuses anything larger than the cap.
+///
+/// The CEILING is a separate question from the fraction, and 400 MB was too low
+/// for it. It binds only above ~2.35 GB of RAM — a 4 GB Pi's 17 % share is
+/// 644 MB — and what it cut into there was room the box plainly had: a 4 GB
+/// player sits at ~410 MB used with 2.9 GB free while streaming Hi-Res. It also
+/// sat BELOW what `audio.memory_cache_mb` already lets anyone set by hand
+/// (clamped at 1024 MB), so the automatic answer was the conservative one.
+///
+/// 512 MB holds the pair the cache actually exists to hold — the playing track
+/// and the prefetched next one, ~220 MB each at Hi-Res — with headroom, and
+/// still stops a 32 GB desktop from handing 5 GB to audio bytes. Nothing changes
+/// at 2 GB or below, where the fraction binds first.
 const L1_CACHE_RAM_FRACTION_PCT: u64 = 17;
-const L1_CACHE_MAX_BYTES: usize = 400 * 1024 * 1024;
+const L1_CACHE_MAX_BYTES: usize = 512 * 1024 * 1024;
 
 /// L1 audio-cache budget for a host with `mem_total_kb` of RAM.
 pub fn l1_cache_bytes_for_total_kb(mem_total_kb: u64) -> usize {
@@ -102,6 +141,7 @@ impl MemoryProfile {
                 max_concurrent_prefetch: 2,
                 allow_hires_prefetch: true,
                 audio_cache_l1_max_bytes: l1_cache_bytes_for_total_kb(mem_total_kb),
+                allow_gapless_prefetch: mem_total_kb >= GAPLESS_MIN_TOTAL_KB,
             }
         } else {
             Self {
@@ -112,6 +152,7 @@ impl MemoryProfile {
                 max_concurrent_prefetch: 1,
                 allow_hires_prefetch: false,
                 audio_cache_l1_max_bytes: l1_cache_bytes_for_total_kb(mem_total_kb),
+                allow_gapless_prefetch: mem_total_kb >= GAPLESS_MIN_TOTAL_KB,
             }
         }
     }
@@ -297,15 +338,15 @@ SwapTotal:       2097152 kB
             pi5.audio_cache_l1_max_bytes,
             2 * 1024 * 1024 * 1024_usize * 17 / 100
         );
-        assert!(pi5.audio_cache_l1_max_bytes < 400 * 1024 * 1024);
+        assert!(pi5.audio_cache_l1_max_bytes < 512 * 1024 * 1024);
         // 4 GB and up saturate at the ceiling.
         assert_eq!(
             MemoryProfile::from_total_kb(4 * 1024 * 1024).audio_cache_l1_max_bytes,
-            400 * 1024 * 1024
+            512 * 1024 * 1024
         );
         assert_eq!(
             MemoryProfile::from_total_kb(32 * 1024 * 1024).audio_cache_l1_max_bytes,
-            400 * 1024 * 1024
+            512 * 1024 * 1024
         );
     }
 
@@ -452,5 +493,51 @@ MemTotal:        4194304 kB
         // The watchdog should treat this as critical.
         let p = pressure_from_figures(25 * 1024, 938 * 1024);
         assert!(p.is_critical);
+    }
+
+    /// The L1 budget on each board this actually ships to. The 926,832 kB row
+    /// is measured — it is the moOde test Pi 3B, and 161,342,914 bytes is the
+    /// figure its own `Cache size:` log line reports.
+    ///
+    /// The pair that matters is the playing track plus the prefetched next one,
+    /// so half the budget is the size above which a track is handed over as a
+    /// file instead (`Player::should_hand_over_as_file`). Hi-Res runs about
+    /// 21 MB/min, CD about 5-6.
+    #[test]
+    fn l1_budget_per_board() {
+        let mb = |bytes: usize| bytes / (1024 * 1024);
+
+        // Pi Zero 2 W / 3A+, 512 MB: below one Hi-Res track, by design.
+        assert_eq!(mb(l1_cache_bytes_for_total_kb(439_000)), 72);
+        // Pi 3B/3B+ and 1 GB Pi 4 — measured on the test player.
+        assert_eq!(l1_cache_bytes_for_total_kb(926_832), 161_342_914);
+        assert_eq!(mb(l1_cache_bytes_for_total_kb(926_832)), 153);
+        // Pi 4 / 5, 2 GB: the fraction still binds, the ceiling does not.
+        assert_eq!(mb(l1_cache_bytes_for_total_kb(1_986_000)), 329);
+        // Pi 4 / 5, 4 GB: 17 % would be 644 MB, so the ceiling binds here.
+        assert_eq!(mb(l1_cache_bytes_for_total_kb(3_881_000)), 512);
+        // And it keeps binding, however large the box.
+        assert_eq!(mb(l1_cache_bytes_for_total_kb(32 * 1024 * 1024)), 512);
+    }
+
+    /// A board that cannot afford a second whole track does not prefetch one.
+    /// The 512 MB Pi 3A / Zero 2 W is the case: `cmaf::download_full` allocates
+    /// the ENTIRE next track, ~210 MB at the default 24/192, on a box reporting
+    /// ~439 MB — and it was the OOM killer, not a slow transition.
+    #[test]
+    fn gapless_prefetch_needs_a_board_that_can_hold_two_tracks() {
+        // 512 MB boards: no prefetch.
+        assert!(!MemoryProfile::from_total_kb(439_000).allow_gapless_prefetch);
+        // 1 GB Pi 3B, measured — this is the board gapless is verified on.
+        assert!(MemoryProfile::from_total_kb(926_832).allow_gapless_prefetch);
+        // Everything larger, plainly.
+        assert!(MemoryProfile::from_total_kb(1_986_000).allow_gapless_prefetch);
+        assert!(MemoryProfile::from_total_kb(3_881_000).allow_gapless_prefetch);
+        // The floor is on RAM, not on the memory CLASS: a 1 GB board is
+        // LowMemory and still prefetches.
+        assert_eq!(
+            MemoryProfile::from_total_kb(926_832).class,
+            MemoryClass::LowMemory
+        );
     }
 }

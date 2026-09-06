@@ -103,6 +103,15 @@ impl AudioCache {
         self.playback_cache.as_ref()
     }
 
+    /// How many bytes this cache may hold, as configured for this host.
+    ///
+    /// For a caller deciding whether to keep a track in memory or hand it over
+    /// as a file: the useful question is not how big the track is, it is whether
+    /// two of them — the one playing and the one prefetched — can coexist here.
+    pub fn budget_bytes(&self) -> usize {
+        self.max_size_bytes
+    }
+
     /// Get a track from cache if available.
     ///
     /// The clone is a refcount bump (see [`TrackBytes`]), not a copy of the
