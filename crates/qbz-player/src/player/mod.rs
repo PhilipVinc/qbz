@@ -3668,30 +3668,6 @@ impl Player {
                             // all.
                             //
                             // DoP is not a concern: a seek is refused above.
-                            let requeue_gapless = gapless_pending.as_ref().map(|pending| {
-                                (
-                                    pending.audio.clone(),
-                                    pending.track_id,
-                                    pending.sample_rate,
-                                    pending.channels,
-                                )
-                            });
-                            *gapless_pending = None;
-                            // Stays ARMED when we are going to re-queue. The
-                            // re-issued PlayNext is delivered asynchronously, and
-                            // until it lands this state -- no pending, not armed,
-                            // ready false, next id 0 -- is exactly what the
-                            // "prepare the next track" check looks for. A tick in
-                            // that window would start a SECOND prefetch, and
-                            // PlayNext does not refuse one when a pending already
-                            // exists, so two sources would be appended to the
-                            // engine with only the later one described. Holding
-                            // the flag is also just the truth: a request for the
-                            // next track IS outstanding. The transition clears it,
-                            // exactly as it does for a normal arm.
-                            *gapless_request_armed = requeue_gapless.is_some();
-                            thread_state.set_gapless_ready(false);
-                            thread_state.set_gapless_next_track_id(0);
 
                             // Four cases reach this handler:
                             //   * full-file playback (current_audio_data set)
@@ -3774,6 +3750,47 @@ impl Player {
                             };
 
                             log::info!("Audio thread: seeking to {}s", position_secs);
+
+                            // ONLY NOW, past every early return above. This used
+                            // to run before them, so a REFUSED seek -- past the
+                            // buffered watermark, unknown progress, no audio for
+                            // the shape we were given -- still threw the prepared
+                            // next track away and returned without re-queueing it.
+                            // Worse, it left `gapless_request_armed` set, so the
+                            // driver never re-armed either: the hand-off was gone
+                            // for good and the transition drained. Observed as a
+                            // gap several minutes after a handful of rejected
+                            // seeks.
+                            //
+                            // The clear itself is still required: a seek builds a
+                            // NEW engine, so the hand-off queued into the old one
+                            // is gone and claiming otherwise would stall the
+                            // transition. But seeking WITHIN a track does not
+                            // change which track comes next, and its bytes are
+                            // still in hand, so they come with us and are
+                            // re-queued once the new engine exists.
+                            //
+                            // ARMED stays set while that re-queue is in flight:
+                            // the re-issued PlayNext is delivered asynchronously,
+                            // and until it lands, "no pending, not armed, ready
+                            // false, next id 0" is exactly what the prefetch check
+                            // looks for -- a tick there would start a SECOND
+                            // prefetch, and PlayNext appends unconditionally, so
+                            // two sources would be queued with only the later one
+                            // described. The transition clears the flag, as it
+                            // does for any normal arm.
+                            let requeue_gapless = gapless_pending.as_ref().map(|pending| {
+                                (
+                                    pending.audio.clone(),
+                                    pending.track_id,
+                                    pending.sample_rate,
+                                    pending.channels,
+                                )
+                            });
+                            *gapless_pending = None;
+                            *gapless_request_armed = requeue_gapless.is_some();
+                            thread_state.set_gapless_ready(false);
+                            thread_state.set_gapless_next_track_id(0);
 
                             // After take(), every failure path must clear playing
                             // state — otherwise UI can show "playing" with no engine.
