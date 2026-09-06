@@ -3677,7 +3677,19 @@ impl Player {
                                 )
                             });
                             *gapless_pending = None;
-                            *gapless_request_armed = false;
+                            // Stays ARMED when we are going to re-queue. The
+                            // re-issued PlayNext is delivered asynchronously, and
+                            // until it lands this state -- no pending, not armed,
+                            // ready false, next id 0 -- is exactly what the
+                            // "prepare the next track" check looks for. A tick in
+                            // that window would start a SECOND prefetch, and
+                            // PlayNext does not refuse one when a pending already
+                            // exists, so two sources would be appended to the
+                            // engine with only the later one described. Holding
+                            // the flag is also just the truth: a request for the
+                            // next track IS outstanding. The transition clears it,
+                            // exactly as it does for a normal arm.
+                            *gapless_request_armed = requeue_gapless.is_some();
                             thread_state.set_gapless_ready(false);
                             thread_state.set_gapless_next_track_id(0);
 
