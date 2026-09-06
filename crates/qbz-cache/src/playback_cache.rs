@@ -200,6 +200,88 @@ impl PlaybackCache {
         }
     }
 
+    /// Reserve room for a track that will be written STRAIGHT INTO the cache,
+    /// and return the temporary path to write to.
+    ///
+    /// [`Self::insert`] takes bytes that are already assembled in memory, which
+    /// means a big track is materialised whole in RAM and then pushed to the
+    /// card in one blocking, fsync'd burst — 117 MB took 8.6 s on a Pi's card,
+    /// long enough to starve the audio writer thread and underrun ALSA. A caller
+    /// that knows the size UP FRONT (the CMAF segment table gives it before a
+    /// single audio byte is fetched) can instead stream the track here as it
+    /// downloads, so the same bytes trickle out over the ~20 s the download
+    /// takes and never form a burst at all.
+    ///
+    /// The cache keeps ownership of what it should own: eviction happens here,
+    /// the write goes to `<id>.part`, and only [`Self::commit_write`] renames it
+    /// into place and indexes it — so a crash mid-write leaves a `.part` that
+    /// `rebuild_index` sweeps, exactly as for [`Self::insert`].
+    ///
+    /// `None` when the track cannot fit the cache at all.
+    pub fn begin_write(&self, track_id: u64, expected_size: u64) -> Option<PathBuf> {
+        if expected_size > self.max_size_bytes {
+            log::debug!(
+                "Track {} too large for playback cache ({} MB > {} MB)",
+                track_id,
+                expected_size / (1024 * 1024),
+                self.max_size_bytes / (1024 * 1024)
+            );
+            return None;
+        }
+        self.evict_if_needed(expected_size);
+        let part = self.track_path(track_id).with_extension("part");
+        if let Some(parent) = part.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        Some(part)
+    }
+
+    /// Publish a track written via [`Self::begin_write`]: rename `<id>.part`
+    /// into place and index it. Returns the final path.
+    ///
+    /// The rename is the atomicity guarantee — whatever sits under the real name
+    /// is always a whole file — so the caller must have flushed and synced the
+    /// `.part` before calling this.
+    pub fn commit_write(&self, track_id: u64, actual_size: u64) -> Option<PathBuf> {
+        let part = self.track_path(track_id).with_extension("part");
+        let path = self.track_path(track_id);
+        if let Err(e) = fs::rename(&part, &path) {
+            log::warn!("Failed to publish streamed track {}: {}", track_id, e);
+            let _ = fs::remove_file(&part);
+            return None;
+        }
+        let mut state = self.state.lock().unwrap();
+        if let Some(old) = state.entries.remove(&track_id) {
+            state.current_size = state.current_size.saturating_sub(old.size_bytes);
+        }
+        state.entries.insert(
+            track_id,
+            CacheEntry {
+                track_id,
+                size_bytes: actual_size,
+                last_accessed: SystemTime::now(),
+            },
+        );
+        state.current_size += actual_size;
+        log::info!(
+            "Streamed track {} into the playback cache ({} KB). Total: {} MB / {} MB",
+            track_id,
+            actual_size / 1024,
+            state.current_size / (1024 * 1024),
+            self.max_size_bytes / (1024 * 1024)
+        );
+        Some(path)
+    }
+
+    /// Discard a partial write. Safe to call when there is nothing to discard.
+    pub fn abort_write(&self, track_id: u64) {
+        let part = self.track_path(track_id).with_extension("part");
+        if part.exists() {
+            let _ = fs::remove_file(&part);
+            log::debug!("Discarded partial cache write for track {}", track_id);
+        }
+    }
+
     /// Insert a track into the cache (called when evicting from memory cache)
     pub fn insert(&self, track_id: u64, data: &[u8]) {
         let size = data.len() as u64;
