@@ -5001,7 +5001,19 @@ pub fn start_poll_loop(
                                 .await
                             {
                                 let player = runtime.core().player();
-                                if let Err(e) = player.play_next(data, next_id) {
+                                // A big track now arrives as a FILE — it was
+                                // written straight to the cache as it downloaded,
+                                // rather than assembled in RAM and dumped to disk
+                                // afterwards.
+                                let queued = match data {
+                                    qbz_player::GaplessAudio::File(path) => {
+                                        player.play_next_file(path, next_id)
+                                    }
+                                    qbz_player::GaplessAudio::Memory(bytes) => {
+                                        player.play_next(bytes, next_id)
+                                    }
+                                };
+                                if let Err(e) = queued {
                                     log::warn!(
                                         "[qbz-slint] [GAPLESS] play_next {next_id} failed: {e}"
                                     );

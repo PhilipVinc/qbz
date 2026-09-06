@@ -415,6 +415,19 @@ fn seek_in_memory(
 /// Only the primary decoder is tried: the L2 cache holds decrypted FLAC written
 /// by this player, never the isomp4 shapes `decode_with_fallback` exists to
 /// rescue. A caller that gets `Err` here still has the in-memory path.
+/// Should a track of `total` bytes be kept on DISK rather than in memory?
+///
+/// Yes exactly when two of them will not fit the L1 budget — the playing track
+/// and the prefetched next one is the pair the cache exists to hold, and when it
+/// cannot hold both, holding them anyway is what took a 1 GB Pi into swap.
+///
+/// Asked twice, so it lives in one place: once before a download starts (the
+/// CMAF segment table gives the size up front, so a big track is written
+/// straight to the card as it decrypts) and once about bytes already in hand.
+pub(crate) fn spill_to_disk(total: usize, budget: usize) -> bool {
+    total.saturating_mul(2) > budget
+}
+
 fn decode_file_with_fallback(
     path: &std::path::Path,
 ) -> Result<Box<dyn Source<Item = f32> + Send>, String> {
@@ -5151,7 +5164,7 @@ impl Player {
     /// gapless hand-off by 0.85 s doing it), while a 220 MB Hi-Res track on a
     /// 4 GB player skipped the detour and pinned a pair against the budget.
     pub fn should_hand_over_as_file(&self, bytes: usize) -> bool {
-        bytes.saturating_mul(2) > self.audio_cache.budget_bytes()
+        spill_to_disk(bytes, self.audio_cache.budget_bytes())
     }
 
     /// Drop every cached audio byte (L1 memory + L2 disk). Called when the
@@ -5258,62 +5271,107 @@ impl Player {
         client: &QobuzClient,
         track_id: u64,
         quality: Quality,
-    ) -> Option<TrackBytes> {
+    ) -> Option<GaplessAudio> {
         // L1: in-memory cache.
         if let Some(cached) = self.audio_cache.get(track_id) {
             log::info!(
                 "[GAPLESS] Track {track_id} from MEMORY cache ({} bytes)",
                 cached.size_bytes
             );
-            return Some(cached.data);
+            return Some(GaplessAudio::Memory(cached.data));
         }
 
-        // L2: on-disk plain-FLAC playback cache. Warm L1 on the way out.
+        // L2: already on disk — hand over the PATH. Reading it back into a
+        // buffer would put the whole track in RAM again, which is the cost the
+        // disk copy exists to avoid.
         if let Some(playback_cache) = self.audio_cache.get_playback_cache() {
-            if let Some(audio_data) = playback_cache.get(track_id) {
+            if let Some(path) = playback_cache.path_if_present(track_id) {
                 log::info!(
-                    "[GAPLESS] Track {track_id} from DISK cache ({} bytes)",
-                    audio_data.len()
+                    "[GAPLESS] Track {track_id} from DISK cache ({})",
+                    path.display()
                 );
-                let audio_data: TrackBytes = audio_data.into();
-                self.audio_cache.insert(track_id, audio_data.clone());
-                return Some(audio_data);
+                return Some(GaplessAudio::File(path));
             }
         }
 
-        // CMAF full download (Akamai CDN), legacy full download as
-        // fallback. Warm L1 so a re-gapless / replay skips the network.
-        let downloaded: Option<TrackBytes> =
-            match qbz_qobuz::cmaf::download_full(client, track_id, quality).await {
-                Ok(data) => Some(data.into()),
-            Err(e) => {
-                log::warn!("[GAPLESS] CMAF failed for track {track_id}: {e}, trying legacy");
-                match client.get_stream_url_with_fallback(track_id, quality).await {
-                    Ok(stream_url) => match self.download_audio(&stream_url.url).await {
-                        Ok(data) => Some(data.into()),
-                        Err(e) => {
-                            log::warn!("[GAPLESS] Legacy download failed for {track_id}: {e}");
-                            None
-                        }
-                    },
-                    Err(e) => {
-                        log::warn!("[GAPLESS] No stream URL for {track_id}: {e}");
-                        None
+        // Not cached anywhere. Decide WHERE the download lands before it starts:
+        // the segment table gives the exact size up front, so a track too big to
+        // sit in memory beside the one playing is written straight to the card as
+        // it decrypts. Assembling it in RAM and writing it out afterwards was a
+        // whole-track `Arc` copy plus an 11-15 s fsync'd burst that underran ALSA
+        // audibly, twice, measured mid-write.
+        let spill_cache = self.audio_cache.get_playback_cache().cloned();
+        let budget = self.audio_cache.budget_bytes();
+        let choose = move |total: usize| {
+            if spill_to_disk(total, budget) {
+                if let Some(cache) = spill_cache.as_ref() {
+                    if let Some(part) = cache.begin_write(track_id, total as u64) {
+                        log::info!(
+                            "[GAPLESS] Track {track_id} is {:.1} MB — streaming it to disk (L1 budget {:.1} MB)",
+                            total as f64 / (1024.0 * 1024.0),
+                            budget as f64 / (1024.0 * 1024.0),
+                        );
+                        return qbz_qobuz::TrackDestination::File(part);
                     }
                 }
             }
+            qbz_qobuz::TrackDestination::Memory
         };
 
-        if let Some(ref data) = downloaded {
-            log::info!(
-                "[GAPLESS] Track {track_id} downloaded for gapless ({} bytes)",
-                data.len()
-            );
-            self.audio_cache.insert(track_id, data.clone());
-        } else {
-            log::info!("[GAPLESS] Track {track_id} not available, gapless not possible");
+        match qbz_qobuz::cmaf::download_full_sized(client, track_id, quality, None, choose).await {
+            Ok(qbz_qobuz::DownloadedTrack::File(_)) => {
+                return match self
+                    .audio_cache
+                    .get_playback_cache()
+                    .and_then(|c| c.commit_write(track_id))
+                {
+                    Some(path) => Some(GaplessAudio::File(path)),
+                    None => {
+                        log::warn!("[GAPLESS] Track {track_id} could not be published to disk");
+                        None
+                    }
+                };
+            }
+            Ok(qbz_qobuz::DownloadedTrack::Memory(data)) => {
+                let bytes: TrackBytes = data.into();
+                log::info!(
+                    "[GAPLESS] Track {track_id} downloaded for gapless ({} bytes)",
+                    bytes.len()
+                );
+                self.audio_cache.insert(track_id, bytes.clone());
+                return Some(GaplessAudio::Memory(bytes));
+            }
+            Err(e) => {
+                log::warn!("[GAPLESS] CMAF failed for track {track_id}: {e}, trying legacy");
+                if let Some(cache) = self.audio_cache.get_playback_cache() {
+                    cache.abort_write(track_id);
+                }
+            }
         }
-        downloaded
+
+        // Legacy fallback: a plain URL download, always in memory — CMAF failed
+        // outright, so there is no segment table and no size to decide on.
+        match client.get_stream_url_with_fallback(track_id, quality).await {
+            Ok(stream_url) => match self.download_audio(&stream_url.url).await {
+                Ok(data) => {
+                    let bytes: TrackBytes = data.into();
+                    log::info!(
+                        "[GAPLESS] Track {track_id} downloaded for gapless ({} bytes)",
+                        bytes.len()
+                    );
+                    self.audio_cache.insert(track_id, bytes.clone());
+                    Some(GaplessAudio::Memory(bytes))
+                }
+                Err(e) => {
+                    log::warn!("[GAPLESS] Legacy download failed for {track_id}: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!("[GAPLESS] No stream URL for {track_id}: {e}");
+                None
+            }
+        }
     }
 
     /// Resolve a fully-materialized audio asset for an EXTERNAL renderer
@@ -6544,5 +6602,49 @@ mod tests {
         // Tier label from format id.
         assert_eq!(khz.tier_label(), "FLAC 24-bit/≤96kHz");
         assert_eq!(hz.tier_label(), "FLAC 24-bit/>96kHz");
+    }
+}
+
+#[cfg(test)]
+mod spill_rule_tests {
+    use super::spill_to_disk;
+
+    /// The 1 GB player this was measured on: 17 % of 905 MB.
+    const PI_1GB: usize = 161_342_914;
+    /// A 4 GB player, where the 512 MB ceiling binds.
+    const PI_4GB: usize = 512 * 1024 * 1024;
+
+    /// Real tracks from the test player, against the budget it actually had.
+    /// The pair is what matters — a 68 MB track fits twice in 153 MB, a 100 MB
+    /// one does not.
+    #[test]
+    fn the_rule_is_whether_two_of_them_fit() {
+        assert!(!spill_to_disk(22_400_000, PI_1GB), "22 MB CD track stays in RAM");
+        assert!(!spill_to_disk(68_348_026, PI_1GB), "68 MB fits twice, just");
+        assert!(spill_to_disk(100_589_129, PI_1GB), "100 MB does not");
+        assert!(spill_to_disk(204_683_730, PI_1GB), "a 195 MB Hi-Res movement does not");
+    }
+
+    /// The same tracks on a roomier board: the ones that had to spill no longer
+    /// do. The rule scales with the host instead of keying on its memory class,
+    /// which is what sent a 22 MB track to the card for no reason.
+    #[test]
+    fn a_bigger_budget_keeps_more_in_memory() {
+        assert!(!spill_to_disk(100_589_129, PI_4GB));
+        assert!(!spill_to_disk(204_683_730, PI_4GB), "195 MB fits twice in 512 MB");
+        assert!(spill_to_disk(300_000_000, PI_4GB), "but 286 MB does not");
+    }
+
+    /// Exactly at the line: two must FIT, so equal-to-budget stays in memory.
+    #[test]
+    fn the_boundary_is_inclusive() {
+        assert!(!spill_to_disk(50, 100), "two of these are exactly the budget");
+        assert!(spill_to_disk(51, 100), "one byte over and it spills");
+    }
+
+    /// A absurd size must not wrap into "fits".
+    #[test]
+    fn an_overflowing_size_still_spills() {
+        assert!(spill_to_disk(usize::MAX, PI_1GB));
     }
 }

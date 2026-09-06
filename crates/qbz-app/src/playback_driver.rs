@@ -437,90 +437,25 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                 }
                 DriverAction::ArmGapless(id) => {
                     let quality = (deps.quality)();
-                    if let Some(bytes) =
-                        core.fetch_for_gapless_resolved(*id, quality, None, None).await
-                    {
-                        // Decode the next track from a FILE when this one is big
-                        // enough that it and the playing track cannot both sit
-                        // in the L1 budget: a Hi-Res track is 120-220 MB, and
-                        // holding a pair in RAM for the minutes until the
-                        // transition is what took a 1 GB Pi to 570 MB RSS and
-                        // into a reboot. Dropping the L1 copy is part of the
-                        // point — keeping it would move the same bytes, not free
-                        // them.
-                        //
-                        // The test is the track's SIZE against this host's
-                        // budget, not the host's memory class. By class, a 22 MB
-                        // CD track on a 1 GB player took the detour it did not
-                        // need — 1.8 s of `sync_all` to an SD card, which is how
-                        // it missed its own gapless hand-off — and a 220 MB
-                        // Hi-Res track on a 4 GB player skipped the detour it
-                        // did need.
-                        let from_disk = if player.should_hand_over_as_file(bytes.len()) {
-                            // Not `cached_track_file`: the L2 cache is written
-                            // only as spill from L1, and L1 refuses a track
-                            // bigger than its budget — so the file we want may
-                            // not exist yet.
-                            match player.cached_track_file(*id) {
-                                Some(path) => Some(path),
-                                None => {
-                                    // `spawn_blocking`: staging is a synchronous
-                                    // write of the WHOLE track plus an fsync —
-                                    // 98 MB took 7.5 s on the test Pi's card —
-                                    // and this is an async task. Running it here
-                                    // parked a tokio worker for those seconds,
-                                    // and the qconnect socket and report loop
-                                    // live on those workers.
-                                    //
-                                    // It does NOT fix the audio: the writer
-                                    // thread is a real OS thread that tokio
-                                    // cannot starve, but the card saturating
-                                    // starves it anyway (observed as
-                                    // "Recovered from PCM error" mid-write).
-                                    // That is what the pacing in
-                                    // `PlaybackCache::insert` is for.
-                                    let player = player.clone();
-                                    let bytes = bytes.clone(); // Arc: a refcount bump
-                                    let id = *id;
-                                    match tokio::task::spawn_blocking(move || {
-                                        player.stage_track_on_disk(id, &bytes)
-                                    })
-                                    .await
-                                    {
-                                        Ok(path) => path,
-                                        Err(e) => {
-                                            log::warn!("[qbzd] driver: staging task failed: {e}");
-                                            None
-                                        }
-                                    }
-                                }
-                            }
-                        } else {
-                            None
-                        };
-
-                        let mut queued = false;
-                        if let Some(path) = from_disk {
-                            match player.play_next_file(path, *id) {
-                                Ok(()) => {
-                                    player.drop_cached_track(*id);
-                                    queued = true;
-                                }
-                                Err(e) => {
-                                    // Not fatal: fall back to the resident path
-                                    // rather than lose the gapless transition.
-                                    log::warn!(
-                                        "[qbzd] driver: gapless from disk failed ({e}), using memory"
-                                    );
-                                }
+                    // Where the bytes live is decided during the download now,
+                    // from the size the CMAF segment table gives up front — so
+                    // there is nothing left to arrange here. This used to
+                    // assemble the whole track in memory, ask whether it was too
+                    // big, and if so write it to the card in one blocking fsync'd
+                    // burst and drop the copy: a 195 MB `Arc` clone plus 11-15 s
+                    // of a pinned card, which underran ALSA audibly.
+                    match core.fetch_for_gapless_resolved(*id, quality, None, None).await {
+                        Some(qbz_player::GaplessAudio::File(path)) => {
+                            if let Err(e) = player.play_next_file(path, *id) {
+                                log::warn!("[qbzd] driver: gapless from disk failed: {e}");
                             }
                         }
-
-                        if !queued {
+                        Some(qbz_player::GaplessAudio::Memory(bytes)) => {
                             if let Err(e) = player.play_next(bytes, *id) {
                                 log::warn!("[qbzd] driver: gapless play_next failed: {e}");
                             }
                         }
+                        None => {}
                     }
                 }
                 DriverAction::ReleaseCachedTrack(id) => {

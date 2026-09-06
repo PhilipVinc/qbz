@@ -185,6 +185,170 @@ pub async fn setup_streaming(
     })
 }
 
+/// Where a downloaded track's bytes should go, decided by the caller at the one
+/// moment the real size is known.
+pub enum TrackDestination {
+    /// Assemble in memory and hand the buffer back.
+    Memory,
+    /// Write straight to this path as the download proceeds. The caller owns
+    /// publishing it (rename into place, index it) once this returns.
+    File(std::path::PathBuf),
+}
+
+/// What [`download_full_sized`] produced.
+pub enum DownloadedTrack {
+    Memory(Vec<u8>),
+    File(std::path::PathBuf),
+}
+
+/// Download a track, letting the caller choose in-memory or straight-to-disk
+/// ONCE THE SIZE IS KNOWN — before a single audio segment is fetched.
+///
+/// `choose` is called with the exact decrypted byte count, which the init
+/// segment's table gives up front. That is the whole point: a caller can only
+/// make a sensible decision about a 195 MB track if it learns the size BEFORE
+/// the bytes exist, and until now nothing exposed it.
+///
+/// The old shape — always assemble the whole track in memory, then let the
+/// caller write it out if it turned out to be too big — cost, on a Pi:
+///   * a 195 MB `Vec` that `Arc::from` then COPIED to share, and
+///   * a single blocking, fsync'd write of the whole track afterwards, 11-15 s
+///     with the card pinned, which underran ALSA and was audible (twice,
+///     measured, mid-write).
+/// Writing as the segments decrypt spreads the same bytes across the ~40 s the
+/// download already takes, so neither the copy nor the burst exists.
+pub async fn download_full_sized(
+    client: &QobuzClient,
+    track_id: u64,
+    quality: Quality,
+    on_progress: Option<CmafProgressCallback>,
+    choose: impl FnOnce(usize) -> TrackDestination,
+) -> std::result::Result<DownloadedTrack, String> {
+    use std::io::Write;
+
+    let setup = setup_streaming(client, track_id, quality).await?;
+    let http = build_cdn_client()?;
+
+    let total_size: usize = setup.flac_header.len()
+        + setup
+            .segment_table
+            .iter()
+            .map(|s| s.byte_len as usize)
+            .sum::<usize>();
+
+    match choose(total_size) {
+        TrackDestination::Memory => {
+            let mut output = Vec::with_capacity(total_size);
+            output.extend_from_slice(&setup.flac_header);
+            fetch_decrypt_in_order(
+                &http,
+                &setup.url_template,
+                setup.n_segments,
+                "CMAF-FULL",
+                on_progress,
+                &setup.content_key,
+                &mut Sink::Memory(&mut output),
+            )
+            .await?;
+            log::info!(
+                "[CMAF-FULL] Track {} complete in memory: {:.2} MB FLAC, expected {:.2} MB",
+                track_id,
+                output.len() as f64 / (1024.0 * 1024.0),
+                total_size as f64 / (1024.0 * 1024.0),
+            );
+            Ok(DownloadedTrack::Memory(output))
+        }
+        TrackDestination::File(path) => {
+            let file = std::fs::File::create(&path)
+                .map_err(|e| format!("create {} for streaming download: {e}", path.display()))?;
+            let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
+            writer
+                .write_all(&setup.flac_header)
+                .map_err(|e| format!("write FLAC header: {e}"))?;
+
+            let mut written = setup.flac_header.len();
+            let result = fetch_decrypt_in_order(
+                &http,
+                &setup.url_template,
+                setup.n_segments,
+                "CMAF-DISK",
+                on_progress,
+                &setup.content_key,
+                &mut Sink::File {
+                    writer: &mut writer,
+                    written: &mut written,
+                    scratch: Vec::new(),
+                },
+            )
+            .await;
+
+            if let Err(e) = result {
+                drop(writer);
+                let _ = std::fs::remove_file(&path);
+                return Err(e);
+            }
+
+            // Flush and sync before the caller renames: the rename is what makes
+            // the published file atomic, so what it publishes must be complete.
+            // This fsync is cheap where the burst one was not — the kernel has
+            // been writing back throughout the download and has little left.
+            let file = writer
+                .into_inner()
+                .map_err(|e| format!("flush {}: {e}", path.display()))?;
+            file.sync_all()
+                .map_err(|e| format!("sync {}: {e}", path.display()))?;
+
+            log::info!(
+                "[CMAF-DISK] Track {} written straight to disk: {:.2} MB FLAC, expected {:.2} MB",
+                track_id,
+                written as f64 / (1024.0 * 1024.0),
+                total_size as f64 / (1024.0 * 1024.0),
+            );
+            Ok(DownloadedTrack::File(path))
+        }
+    }
+}
+
+/// Where [`fetch_decrypt_in_order`] puts each decrypted segment.
+enum Sink<'a> {
+    Memory(&'a mut Vec<u8>),
+    File {
+        writer: &'a mut std::io::BufWriter<std::fs::File>,
+        written: &'a mut usize,
+        /// One reusable buffer: a segment is decrypted into it, written, and the
+        /// capacity kept for the next one.
+        scratch: Vec<u8>,
+    },
+}
+
+impl Sink<'_> {
+    fn append_segment(
+        &mut self,
+        seg_data: &[u8],
+        seg_number: usize,
+        content_key: &[u8; 16],
+    ) -> std::result::Result<(), String> {
+        use std::io::Write;
+        match self {
+            // Decrypts straight into the output; no intermediate copy.
+            Sink::Memory(out) => decrypt_segment_into(seg_data, seg_number, content_key, out),
+            Sink::File {
+                writer,
+                written,
+                scratch,
+            } => {
+                scratch.clear();
+                decrypt_segment_into(seg_data, seg_number, content_key, scratch)?;
+                writer
+                    .write_all(scratch)
+                    .map_err(|e| format!("write segment {seg_number}: {e}"))?;
+                **written += scratch.len();
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Download a track's complete CMAF stream and return decrypted FLAC bytes.
 ///
 /// Used by the playback path for in-memory cache writes. Segments are
@@ -247,7 +411,7 @@ pub async fn download_full_with_quality_progress(
         "CMAF-FULL",
         on_progress,
         &setup.content_key,
-        &mut output,
+        &mut Sink::Memory(&mut output),
     )
     .await?;
 
@@ -506,7 +670,7 @@ async fn fetch_decrypt_in_order(
     log_tag: &str,
     on_progress: Option<CmafProgressCallback>,
     content_key: &[u8; 16],
-    output: &mut Vec<u8>,
+    sink: &mut Sink<'_>,
 ) -> std::result::Result<(), String> {
     use futures_util::StreamExt;
 
@@ -570,7 +734,7 @@ async fn fetch_decrypt_in_order(
                 log_tag, expected, seg_idx
             ));
         }
-        decrypt_segment_into(&seg_data, seg_idx as usize, content_key, output)?;
+        sink.append_segment(&seg_data, seg_idx as usize, content_key)?;
         expected = expected.saturating_add(1);
         // seg_data drops here — this is the whole point.
     }
@@ -749,6 +913,53 @@ mod segment_assembly_tests {
         decrypt_segments_into(&fixture(), &key, &mut out).expect("decrypt");
         // 64+48 + 96+7 + 32+32+16+3 = 298 bytes of frames and trailing audio.
         assert_eq!(out.len(), 298);
+    }
+
+    /// The property this whole refactor rests on: a track written STRAIGHT TO
+    /// DISK as its segments decrypt must be byte-for-byte what assembling it in
+    /// memory produced. If these ever diverge, big tracks silently decode as
+    /// something other than what small ones do.
+    #[test]
+    fn the_disk_sink_and_the_memory_sink_agree() {
+        use super::Sink;
+        use std::io::Write;
+
+        let key = [7u8; 16];
+        let segments = fixture();
+
+        let mut in_memory = Vec::new();
+        {
+            let mut sink = Sink::Memory(&mut in_memory);
+            for (i, seg) in segments.iter().enumerate() {
+                sink.append_segment(seg, i + 1, &key).expect("memory sink");
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!("qbz-sink-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("track.part");
+        let mut written = 0usize;
+        {
+            let file = std::fs::File::create(&path).unwrap();
+            let mut writer = std::io::BufWriter::new(file);
+            {
+                let mut sink = Sink::File {
+                    writer: &mut writer,
+                    written: &mut written,
+                    scratch: Vec::new(),
+                };
+                for (i, seg) in segments.iter().enumerate() {
+                    sink.append_segment(seg, i + 1, &key).expect("file sink");
+                }
+            }
+            writer.flush().unwrap();
+        }
+        let on_disk = std::fs::read(&path).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(!in_memory.is_empty(), "fixture produced no audio");
+        assert_eq!(in_memory, on_disk, "disk and memory assembly diverged");
+        assert_eq!(written, on_disk.len(), "byte count must match what was written");
     }
 
     /// Order is load-bearing: the same segments assembled out of order must NOT

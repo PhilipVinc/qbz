@@ -734,13 +734,13 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
         quality: Quality,
         offline: Option<&qbz_offline_cache::OfflineCacheState>,
         sink: Option<&qbz_offline_cache::CacheEventSink>,
-    ) -> Option<qbz_player::TrackBytes> {
+    ) -> Option<qbz_player::GaplessAudio> {
         if !self.player.is_track_cached(track_id) {
             if let Some(off) = offline {
                 if let Some(bytes) =
                     crate::offline_resolve::resolve_offline_bytes(track_id, off, sink).await
                 {
-                    return Some(bytes.into());
+                    return Some(qbz_player::GaplessAudio::Memory(bytes.into()));
                 }
             }
         }

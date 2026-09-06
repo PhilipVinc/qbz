@@ -242,9 +242,19 @@ impl PlaybackCache {
     /// The rename is the atomicity guarantee — whatever sits under the real name
     /// is always a whole file — so the caller must have flushed and synced the
     /// `.part` before calling this.
-    pub fn commit_write(&self, track_id: u64, actual_size: u64) -> Option<PathBuf> {
+    pub fn commit_write(&self, track_id: u64) -> Option<PathBuf> {
         let part = self.track_path(track_id).with_extension("part");
         let path = self.track_path(track_id);
+        // The file itself is the authority on how big it is — the caller would
+        // only be repeating what it wrote, and a mismatch there would silently
+        // corrupt the size accounting.
+        let actual_size = match fs::metadata(&part) {
+            Ok(m) => m.len(),
+            Err(e) => {
+                log::warn!("No staged file to publish for track {}: {}", track_id, e);
+                return None;
+            }
+        };
         if let Err(e) = fs::rename(&part, &path) {
             log::warn!("Failed to publish streamed track {}: {}", track_id, e);
             let _ = fs::remove_file(&part);

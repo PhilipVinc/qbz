@@ -48,7 +48,8 @@ pub mod retry;
 pub use bundle::BundleTokens;
 pub use client::QobuzClient;
 pub use cmaf::{
-    decrypt_segments_into, download_full as cmaf_download_full,
+    decrypt_segments_into, download_full as cmaf_download_full, download_full_sized,
+    DownloadedTrack, TrackDestination,
     download_full_with_progress as cmaf_download_full_with_progress,
     download_raw as cmaf_download_raw,
     download_raw_with_progress as cmaf_download_raw_with_progress,
