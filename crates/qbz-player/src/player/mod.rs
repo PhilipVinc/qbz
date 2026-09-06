@@ -4342,11 +4342,16 @@ impl Player {
                                     .is_some_and(|engine| engine.take_source_transition());
                                 let position_signalled = dur > 0 && pos >= dur;
 
-                                if gapless_pending.is_some() && (position_signalled || engine_signalled)
-                                {
-                                    let pending = gapless_pending
-                                        .take()
-                                        .expect("gapless_pending checked immediately above");
+                                // `if let` rather than a checked `expect`: this
+                                // runs on the audio thread, where a panic is
+                                // silence with no recovery, and the guard buys
+                                // nothing the pattern match does not.
+                                let transition = if position_signalled || engine_signalled {
+                                    gapless_pending.take()
+                                } else {
+                                    None
+                                };
+                                if let Some(pending) = transition {
                                     if position_signalled {
                                         log::info!(
                                             "Gapless transition: track {} -> {} (pos {}s >= dur {}s)",
