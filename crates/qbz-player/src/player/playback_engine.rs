@@ -689,6 +689,10 @@ fn alsa_writer_thread(
     let mut buffer_f32 = Vec::with_capacity(chunk_samples);
     let mut current_source: Option<BoxedSampleIter> = None;
     let mut total_frames: u64 = 0;
+    // Set when THIS thread cleared `is_playing` at a natural end of playback, so
+    // the next source it picks up knows to turn playback back on. See the
+    // acquire branch below for why `append()` cannot always do it.
+    let mut resume_on_next_source = false;
 
     log::info!("[ALSA Direct Engine] Writer thread started (gapless-capable)");
 
@@ -704,6 +708,38 @@ fn alsa_writer_thread(
             // Wait for a source (with 100ms timeout to recheck stop flag)
             match source_queue.wait_for_source(Duration::from_millis(100)) {
                 Some(src) => {
+                    // A LATE gapless hand-off lands here, and it has to turn
+                    // playback back on itself.
+                    //
+                    // `append()` normally does that, via its "is this the first
+                    // source?" test — `source_queue.is_empty() && !is_playing`.
+                    // But between a natural end and this thread clearing
+                    // `is_playing` sits `stream.drain()`, which blocks for a
+                    // whole ALSA buffer: one full second at the
+                    // `audio.alsa_buffer_ms = 1000` a Pi needs to stop clicking.
+                    // A hand-off queued inside that second still read
+                    // `is_playing == true`, so `append()` took its "queued for a
+                    // gapless transition" branch and left the flag false. This
+                    // thread then acquired the track and parked forever on the
+                    // pause gate below, holding it. The player, seeing
+                    // `engine.empty()` (not playing, queue drained), declared
+                    // the track finished and reported the NEXT track at its own
+                    // full duration — the Qobuz app sitting at 4:18 / 4:18 on a
+                    // song that never started.
+                    //
+                    // Stored before anything else so `empty()` stops answering
+                    // "finished" as early as possible: this thread is the only
+                    // writer of both halves it reads, and the queue is popped by
+                    // the call just above.
+                    if resume_on_next_source {
+                        resume_on_next_source = false;
+                        if !is_playing.load(Ordering::SeqCst) {
+                            log::info!(
+                                "[ALSA Direct Engine] Late hand-off after a drain — resuming playback"
+                            );
+                            is_playing.store(true, Ordering::SeqCst);
+                        }
+                    }
                     current_source = Some(src);
                     total_frames = 0;
                     position_frames.store(0, Ordering::SeqCst);
@@ -789,6 +825,13 @@ fn alsa_writer_thread(
                     }
                     current_source = None;
                     is_playing.store(false, Ordering::SeqCst);
+                    // Anything queued from here on is a source that arrived too
+                    // late to be seamless but must still play. Only this thread
+                    // sets the flag, and only after clearing `is_playing`
+                    // itself, so it can never resume a user-requested pause —
+                    // a pause leaves `current_source` set and parks on the gate
+                    // below, never reaching the acquire branch.
+                    resume_on_next_source = true;
                     // Don't break — stay alive waiting for next append()
                 }
             }
