@@ -236,18 +236,20 @@ pub async fn download_full_with_quality_progress(
     let total_size: usize = setup.flac_header.len()
         + setup.segment_table.iter().map(|s| s.byte_len as usize).sum::<usize>();
 
-    let segments = fetch_all_segments(
+    // Pre-sized so the decrypted track never reallocates, and filled segment by
+    // segment so the encrypted copy is never resident as a whole.
+    let mut output = Vec::with_capacity(total_size);
+    output.extend_from_slice(&setup.flac_header);
+    fetch_decrypt_in_order(
         &http,
         &setup.url_template,
         setup.n_segments,
         "CMAF-FULL",
         on_progress,
+        &setup.content_key,
+        &mut output,
     )
     .await?;
-
-    let mut output = Vec::with_capacity(total_size);
-    output.extend_from_slice(&setup.flac_header);
-    decrypt_segments_into(&segments, &setup.content_key, &mut output)?;
 
     log::info!(
         "[CMAF-FULL] Track {} complete: {:.2} MB FLAC, expected {:.2} MB",
@@ -477,6 +479,104 @@ async fn fetch_all_segments(
     Ok(segments.into_iter().map(|(_, data)| data).collect())
 }
 
+/// Fetch every segment and decrypt each ONE AT A TIME into `output`, holding
+/// only a small window of encrypted bytes at once.
+///
+/// This exists because [`fetch_all_segments`] returns `Vec<Vec<u8>>` — the
+/// whole track, encrypted — and the full-download path then decrypted it into
+/// a second whole-track buffer. Both were live at the same instant, so
+/// prefetching a track cost TWICE its size in memory, and half of that was an
+/// encrypted copy about to be thrown away. On a 1 GB player, prefetching a
+/// 69 MB track was measured spiking RSS by 111 MB at exactly the moment the
+/// download completed; on a 512 MB board the same doubling is what made
+/// prefetching a Hi-Res track impossible at all.
+///
+/// Segments arrive concurrently but are consumed IN ORDER, decrypted, and
+/// dropped, so the peak is `output` plus at most `PIPELINE_DEPTH` segments.
+/// A CMAF segment is a fixed ~10 s of audio — under 1 MB at CD quality, a few
+/// MB at Hi-Res — so the window is single-digit megabytes against a whole
+/// second track.
+///
+/// [`fetch_all_segments`] stays: `download_raw` genuinely needs every segment
+/// at once, because it stores them encrypted for offline playback.
+async fn fetch_decrypt_in_order(
+    http: &reqwest::Client,
+    url_template: &str,
+    n_segments: u8,
+    log_tag: &str,
+    on_progress: Option<CmafProgressCallback>,
+    content_key: &[u8; 16],
+    output: &mut Vec<u8>,
+) -> std::result::Result<(), String> {
+    use futures_util::StreamExt;
+
+    // Deeper than the fetch concurrency ON PURPOSE. `buffered` yields in order,
+    // so a slow segment at the head would otherwise stall the whole pipeline:
+    // with a window equal to the concurrency, nothing new could start until the
+    // head landed. Twice the depth keeps requests always available to the
+    // semaphore while still bounding what is held to a handful of segments.
+    let pipeline_depth = CMAF_PREFETCH_CONCURRENCY * 2;
+
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(CMAF_PREFETCH_CONCURRENCY));
+    let completed_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+    let mut stream = futures_util::stream::iter(1..=n_segments)
+        .map(|seg_idx| {
+            let sem = semaphore.clone();
+            let http = http.clone();
+            let seg_url = url_template.replace("$SEGMENT$", &seg_idx.to_string());
+            let log_tag = log_tag.to_string();
+            let progress = on_progress.clone();
+            let counter = completed_count.clone();
+            async move {
+                let permit = sem
+                    .acquire_owned()
+                    .await
+                    .map_err(|e| format!("semaphore: {}", e))?;
+                let seg_data = fetch_bytes_with_retry(
+                    &http,
+                    &seg_url,
+                    &format!("{} seg {}", log_tag, seg_idx),
+                )
+                .await
+                .map_err(|e| format!("[{}] seg {} fetch: {}", log_tag, seg_idx, e))?;
+                let bytes_this_segment = seg_data.len() as u64;
+                if let Some(cb) = progress {
+                    let done = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    cb(CmafProgressUpdate {
+                        segments_completed: done,
+                        n_segments: n_segments as u32,
+                        bytes_this_segment,
+                    });
+                }
+                // Cooldown before releasing the slot — keeps requests spaced
+                // out to stay under CDN rate limits (most use 1s windows).
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                drop(permit);
+                Ok::<(u8, Vec<u8>), String>((seg_idx, seg_data))
+            }
+        })
+        .buffered(pipeline_depth);
+
+    let mut expected: u8 = 1;
+    while let Some(result) = stream.next().await {
+        let (seg_idx, seg_data) = result?;
+        // `buffered` is ordered; assert it rather than trust it, because
+        // decrypting out of order would produce silent audio corruption
+        // rather than an error.
+        if seg_idx != expected {
+            return Err(format!(
+                "[{}] segments arrived out of order: expected {}, got {}",
+                log_tag, expected, seg_idx
+            ));
+        }
+        decrypt_segment_into(&seg_data, seg_idx as usize, content_key, output)?;
+        expected = expected.saturating_add(1);
+        // seg_data drops here — this is the whole point.
+    }
+    Ok(())
+}
+
 /// Decrypt a sequence of encrypted CMAF segments in order and append the
 /// decrypted frames to `output`.
 ///
@@ -501,26 +601,41 @@ pub fn decrypt_segments_into(
 ) -> std::result::Result<(), String> {
     for (seg_idx, seg_data) in segments.iter().enumerate() {
         // seg_idx is 0-based here but the original segment number is idx+1
-        let log_idx = seg_idx + 1;
-        let crypto = qbz_cmaf::parse_segment_crypto(seg_data)
-            .map_err(|e| format!("CMAF seg {} parse: {}", log_idx, e))?;
+        decrypt_segment_into(seg_data, seg_idx + 1, content_key, output)?;
+    }
+    Ok(())
+}
 
-        let mut data_pos = crypto.data_offset;
-        for entry in &crypto.entries {
-            let frame_end = data_pos + entry.size as usize;
-            if frame_end > seg_data.len() {
-                return Err(format!("CMAF seg {} frame overflow", log_idx));
-            }
-            let output_start = output.len();
-            output.extend_from_slice(&seg_data[data_pos..frame_end]);
-            if entry.flags != 0 {
-                qbz_cmaf::decrypt_frame(content_key, &entry.iv, &mut output[output_start..]);
-            }
-            data_pos = frame_end;
+/// Decrypt ONE encrypted CMAF segment and append its frames to `output`.
+///
+/// The body of [`decrypt_segments_into`], split out so a caller that consumes
+/// segments as they arrive can decrypt each one and drop it, instead of holding
+/// the whole track twice (see [`fetch_decrypt_in_order`]). `seg_number` is
+/// 1-based and only used in error messages.
+pub fn decrypt_segment_into(
+    seg_data: &[u8],
+    seg_number: usize,
+    content_key: &[u8; 16],
+    output: &mut Vec<u8>,
+) -> std::result::Result<(), String> {
+    let crypto = qbz_cmaf::parse_segment_crypto(seg_data)
+        .map_err(|e| format!("CMAF seg {} parse: {}", seg_number, e))?;
+
+    let mut data_pos = crypto.data_offset;
+    for entry in &crypto.entries {
+        let frame_end = data_pos + entry.size as usize;
+        if frame_end > seg_data.len() {
+            return Err(format!("CMAF seg {} frame overflow", seg_number));
         }
-        if data_pos < crypto.mdat_end && crypto.mdat_end <= seg_data.len() {
-            output.extend_from_slice(&seg_data[data_pos..crypto.mdat_end]);
+        let output_start = output.len();
+        output.extend_from_slice(&seg_data[data_pos..frame_end]);
+        if entry.flags != 0 {
+            qbz_cmaf::decrypt_frame(content_key, &entry.iv, &mut output[output_start..]);
         }
+        data_pos = frame_end;
+    }
+    if data_pos < crypto.mdat_end && crypto.mdat_end <= seg_data.len() {
+        output.extend_from_slice(&seg_data[data_pos..crypto.mdat_end]);
     }
     Ok(())
 }
@@ -530,4 +645,127 @@ pub fn decrypt_segments_into(
 #[allow(dead_code)]
 fn _type_assertions() {
     let _: fn() -> Result<()> = || Ok(());
+}
+
+#[cfg(test)]
+mod segment_assembly_tests {
+    use super::{decrypt_segment_into, decrypt_segments_into};
+
+    /// Bytes of the QBZ segment UUID box (`qbz_cmaf::parser::QBZ_SEGMENT_UUID`,
+    /// which is private there). If the parser ever stops recognising this, the
+    /// fixture builder below returns segments that fail to parse and these
+    /// tests fail loudly rather than silently passing on empty input.
+    const SEGMENT_UUID: [u8; 16] = [
+        0x3b, 0x42, 0x12, 0x92, 0x56, 0xf3, 0x5f, 0x75, 0x92, 0x36, 0x63, 0xb6, 0x9a, 0x1f, 0x52,
+        0xb2,
+    ];
+
+    /// Build one syntactically valid encrypted CMAF segment: a `uuid` box
+    /// carrying the frame table, followed by an `mdat` box carrying the audio.
+    /// `frames` is (payload, encrypted); a tail of `trailing` unencrypted bytes
+    /// after the last frame exercises the mdat-remainder path.
+    fn segment(frames: &[(Vec<u8>, bool)], trailing: usize) -> Vec<u8> {
+        const IV_SIZE: usize = 8;
+        let mut uuid_payload = Vec::new();
+        uuid_payload.extend_from_slice(&[0u8; 4]); // version/padding
+        let data_offset_pos = uuid_payload.len();
+        uuid_payload.extend_from_slice(&[0u8; 4]); // data_offset_raw, patched below
+        uuid_payload.push(IV_SIZE as u8);
+        let n = frames.len();
+        uuid_payload.extend_from_slice(&[(n >> 16) as u8, (n >> 8) as u8, n as u8]);
+        for (i, (payload, encrypted)) in frames.iter().enumerate() {
+            uuid_payload.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            uuid_payload.extend_from_slice(&[0u8; 2]); // skip
+            uuid_payload.extend_from_slice(&(if *encrypted { 1u16 } else { 0u16 }).to_be_bytes());
+            uuid_payload.extend_from_slice(&[i as u8 + 1; IV_SIZE]);
+        }
+
+        let uuid_box_len = 8 + 16 + uuid_payload.len();
+        // data_offset is measured from the START of the uuid box, and the audio
+        // begins at the mdat payload, which follows the whole uuid box.
+        let data_offset_raw = (uuid_box_len + 8) as u32;
+        uuid_payload[data_offset_pos..data_offset_pos + 4]
+            .copy_from_slice(&data_offset_raw.to_be_bytes());
+
+        let mut mdat_payload: Vec<u8> = Vec::new();
+        for (payload, _) in frames {
+            mdat_payload.extend_from_slice(payload);
+        }
+        mdat_payload.extend(std::iter::repeat_n(0xABu8, trailing));
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&(uuid_box_len as u32).to_be_bytes());
+        out.extend_from_slice(b"uuid");
+        out.extend_from_slice(&SEGMENT_UUID);
+        out.extend_from_slice(&uuid_payload);
+        out.extend_from_slice(&((mdat_payload.len() + 8) as u32).to_be_bytes());
+        out.extend_from_slice(b"mdat");
+        out.extend_from_slice(&mdat_payload);
+        out
+    }
+
+    fn fixture() -> Vec<Vec<u8>> {
+        vec![
+            segment(&[(vec![1u8; 64], true), (vec![2u8; 48], false)], 0),
+            segment(&[(vec![3u8; 96], true)], 7),
+            segment(
+                &[
+                    (vec![4u8; 32], false),
+                    (vec![5u8; 32], true),
+                    (vec![6u8; 16], true),
+                ],
+                3,
+            ),
+        ]
+    }
+
+    /// The property the streaming prefetch rests on: decrypting segments ONE AT
+    /// A TIME, dropping each as you go, must produce byte-for-byte what
+    /// decrypting the whole batch produced. Anything else would be silent audio
+    /// corruption, not an error.
+    #[test]
+    fn one_at_a_time_matches_the_whole_batch() {
+        let key = [7u8; 16];
+        let segments = fixture();
+
+        let mut batch = Vec::new();
+        decrypt_segments_into(&segments, &key, &mut batch).expect("batch");
+
+        let mut streamed = Vec::new();
+        for (i, seg) in segments.iter().enumerate() {
+            decrypt_segment_into(seg, i + 1, &key, &mut streamed).expect("one at a time");
+        }
+
+        assert!(!batch.is_empty(), "fixture produced no audio — parser drift?");
+        assert_eq!(batch, streamed);
+    }
+
+    /// Guards the fixture itself: if the builder stopped producing parseable
+    /// segments, the test above would compare two empty buffers and pass.
+    #[test]
+    fn the_fixture_actually_carries_every_frame() {
+        let key = [7u8; 16];
+        let mut out = Vec::new();
+        decrypt_segments_into(&fixture(), &key, &mut out).expect("decrypt");
+        // 64+48 + 96+7 + 32+32+16+3 = 298 bytes of frames and trailing audio.
+        assert_eq!(out.len(), 298);
+    }
+
+    /// Order is load-bearing: the same segments assembled out of order must NOT
+    /// match. This is why `fetch_decrypt_in_order` asserts the index rather
+    /// than trusting `buffered` to stay ordered.
+    #[test]
+    fn order_changes_the_output() {
+        let key = [7u8; 16];
+        let segments = fixture();
+        let mut forward = Vec::new();
+        let mut reversed = Vec::new();
+        for (i, seg) in segments.iter().enumerate() {
+            decrypt_segment_into(seg, i + 1, &key, &mut forward).expect("fwd");
+        }
+        for (i, seg) in segments.iter().rev().enumerate() {
+            decrypt_segment_into(seg, i + 1, &key, &mut reversed).expect("rev");
+        }
+        assert_ne!(forward, reversed);
+    }
 }
