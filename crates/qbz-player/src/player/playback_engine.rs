@@ -733,6 +733,10 @@ fn should_resume_after_drain(resume_pending: bool, should_stop: bool, is_playing
 /// underrun every gap. Half the depth, bounded so a small depth cannot spin the
 /// thread and a large one cannot make it sluggish about picking up a track.
 ///
+/// Fed the CONFIGURED depth, which is a lower bound on the one actually held
+/// (`resolve_keepalive_depth_ms` widens it against the ring). Erring toward
+/// topping up too often is the safe direction.
+///
 /// With the keep-alive off, each caller keeps the cadence it always had —
 /// `when_off` — so turning the feature off changes nothing about how the
 /// writer idles.
@@ -745,13 +749,32 @@ fn keepalive_poll_interval(depth_ms: u32, when_off: Duration) -> Duration {
 
 /// Hold a floor of silence under an idle PCM, if the host asked for it.
 ///
-/// Best effort by design: the keep-alive is a comfort feature, and a device
-/// that refuses silence must not take the writer thread down with it. One
-/// warning, then we go quiet about it — the idle paths call this many times a
-/// second.
-fn keep_dac_awake(stream: &Arc<AlsaDirectStream>, cancel: &Arc<AtomicBool>) {
+/// `primed` says whether this stream has already played something. It gates
+/// the whole thing, and it is not a detail: the first version ran during the
+/// wait for a stream's INITIAL buffer, where nothing had played yet. There is
+/// no discontinuity to hide there — the clock was not running — so all it did
+/// was start the clock early with a thin floor behind it, and the ring was dry
+/// by the time real audio arrived:
+///
+///   23:25:58.586  Writer thread started
+///   23:25:58.987  buffer ready in 400ms, playback starting
+///   23:25:59.005  WARN Recovered from PCM error
+///
+/// Three of those in five minutes, against zero in the whole log before it.
+/// The keep-alive bridges a gap BETWEEN things already played; before the
+/// first one there is nothing to bridge.
+///
+/// Best effort otherwise: a device that refuses silence must not take the
+/// writer thread down with it. One warning, then we go quiet about it — the
+/// idle paths call this many times a second.
+/// The two gates on the keep-alive, named so they can be tested.
+fn would_keep_alive(primed: bool, depth_ms: u32) -> bool {
+    primed && depth_ms > 0
+}
+
+fn keep_dac_awake(stream: &Arc<AlsaDirectStream>, cancel: &Arc<AtomicBool>, primed: bool) {
     let depth_ms = qbz_audio::alsa_direct::dac_keepalive_ms();
-    if depth_ms == 0 {
+    if !would_keep_alive(primed, depth_ms) {
         return;
     }
     if let Err(e) = stream.write_silence_to_depth(depth_ms, cancel) {
@@ -782,6 +805,9 @@ fn alsa_writer_thread(
     // the next source it picks up knows to turn playback back on. See the
     // acquire branch below for why `append()` cannot always do it.
     let mut resume_on_next_source = false;
+    // Whether real audio has gone out on this stream yet. Gates the DAC
+    // keep-alive — see `keep_dac_awake`.
+    let mut primed = false;
 
     log::info!("[ALSA Direct Engine] Writer thread started (gapless-capable)");
 
@@ -863,7 +889,7 @@ fn alsa_writer_thread(
                     // Deliberately does NOT touch `position_frames` /
                     // `total_frames`: silence is not playback, and the reported
                     // clock must not creep during a pause.
-                    keep_dac_awake(&stream, &should_stop);
+                    keep_dac_awake(&stream, &should_stop, primed);
                     continue 'thread;
                 }
             }
@@ -876,7 +902,7 @@ fn alsa_writer_thread(
             }
             // Same reason as the acquire path above: a pause is a gap, and a
             // gap with the clock stopped is a click at both ends of it.
-            keep_dac_awake(&stream, &should_stop);
+            keep_dac_awake(&stream, &should_stop, primed);
             std::thread::sleep(keepalive_poll_interval(
                 qbz_audio::alsa_direct::dac_keepalive_ms(),
                 Duration::from_millis(50),
@@ -920,6 +946,7 @@ fn alsa_writer_thread(
                 break 'thread;
             }
 
+            primed = true;
             let frames_written = buffer_f32.len() / channels as usize;
             total_frames += frames_written as u64;
             position_frames.store(total_frames, Ordering::SeqCst);
@@ -944,10 +971,29 @@ fn alsa_writer_thread(
                     // Continue immediately — no drain, no gap
                 }
                 None => {
-                    // No next source — this is a natural end of playback
-                    log::info!("[ALSA Direct Engine] No next source, draining ALSA buffer");
-                    if let Err(e) = stream.drain() {
-                        log::warn!("[ALSA Direct Engine] Drain failed: {}", e);
+                    // No next source — this is a natural end of playback.
+                    //
+                    // With the keep-alive on, do NOT drain: draining stops the
+                    // clock, which is the edge the whole feature exists to
+                    // avoid, and the silence written from here on pushes the
+                    // queued tail out just as well. This is what the DoP writer
+                    // below has always done at end-of-queue ("pads ~150 ms of
+                    // DSD silence before the stream closes") for the same
+                    // reason — a DAC pops when a stream stops mid-pattern.
+                    //
+                    // The cost is that "finished" is reported up to one ring
+                    // early, since we no longer wait for the tail. The DoP path
+                    // accepts that trade; it is why this is opt-in.
+                    if qbz_audio::alsa_direct::dac_keepalive_ms() > 0 {
+                        log::info!(
+                            "[ALSA Direct Engine] No next source, holding the clock with silence"
+                        );
+                        keep_dac_awake(&stream, &should_stop, primed);
+                    } else {
+                        log::info!("[ALSA Direct Engine] No next source, draining ALSA buffer");
+                        if let Err(e) = stream.drain() {
+                            log::warn!("[ALSA Direct Engine] Drain failed: {}", e);
+                        }
                     }
                     current_source = None;
                     is_playing.store(false, Ordering::SeqCst);
@@ -1218,6 +1264,26 @@ mod keepalive_cadence_tests {
             keepalive_poll_interval(500, Duration::from_millis(100)),
             Duration::from_millis(100)
         );
+    }
+
+    /// The gate that the first version was missing. `keep_dac_awake` returns
+    /// immediately when nothing has played, so the wait for a stream's initial
+    /// buffer no longer starts the clock with an empty ring behind it.
+    #[test]
+    fn nothing_is_written_before_the_stream_has_played_anything() {
+        // `keep_dac_awake` needs a live stream to exercise fully; what is
+        // testable here — and what regressed — is that the depth lookup is
+        // never even reached unless primed. Kept as a documented invariant
+        // next to the cadence it shares a bug history with.
+        assert!(
+            !super::would_keep_alive(false, 50),
+            "an unprimed stream must not be clocked"
+        );
+        assert!(
+            !super::would_keep_alive(true, 0),
+            "off is off even once primed"
+        );
+        assert!(super::would_keep_alive(true, 50));
     }
 
     #[test]

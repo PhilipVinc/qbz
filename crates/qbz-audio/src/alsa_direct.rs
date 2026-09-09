@@ -66,6 +66,33 @@ pub fn dac_keepalive_ms() -> u32 {
     DAC_KEEPALIVE_MS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The floor actually used, resolved against the ring the device gave us.
+///
+/// # Why the configured number is not simply obeyed
+///
+/// The first cut of this took 50 ms literally and produced the underrun it
+/// existed to prevent. The host that most wants a keep-alive is the one whose
+/// writer thread competes with WiFi, an SD card and a shared USB bus — the same
+/// host that runs `audio.alsa_buffer_ms = 1000` for exactly that reason.
+/// Asking that thread to sustain a 50 ms floor is asking it to underrun, and a
+/// clock running on an empty ring is worse than a clock that stopped: the stop
+/// is one edge, the underruns are one per gap.
+///
+/// So a floor is only as good as the jitter it absorbs, and the ring length is
+/// this host's own statement about how much jitter it has. A quarter of it,
+/// with the configured value as a floor of its own — never thinner than asked,
+/// and never thinner than the host can hold.
+///
+/// The depth costs nothing where it is spent: at a gap, the next track's audio
+/// simply queues behind the silence. It is not start-up latency.
+pub fn resolve_keepalive_depth_ms(configured_ms: u32, ring_ms: u32) -> u32 {
+    if configured_ms == 0 {
+        return 0;
+    }
+    let quarter_ring = ring_ms / 4;
+    configured_ms.max(quarter_ring).min(ring_ms / 2)
+}
+
 /// Buffer length in frames for `sample_rate`, honouring the override.
 ///
 /// The default scales with rate — 500 ms at 192 kHz and above, 250 ms from
@@ -1032,8 +1059,12 @@ impl AlsaDirectStream {
             // it, and a real error surfaces there.
             let avail = pcm.avail_update().map(|f| f.max(0) as usize).unwrap_or(0);
             let held = buffer_frames.saturating_sub(avail);
-            // Never ask for more than the ring can hold.
-            let target = ((self.sample_rate as usize * target_ms as usize) / 1000)
+            // The ring's own length in ms is what the depth is resolved
+            // against, so read it from the frames the device actually gave us
+            // rather than from the setting that asked for it.
+            let ring_ms = ((buffer_frames as u64 * 1000) / u64::from(self.sample_rate)) as u32;
+            let depth_ms = resolve_keepalive_depth_ms(target_ms, ring_ms);
+            let target = ((self.sample_rate as usize * depth_ms as usize) / 1000)
                 .min(buffer_frames);
             (frame_bytes as usize, held, target)
         };
@@ -1478,6 +1509,27 @@ mod keepalive_tests {
         // Above it — a track just ended and its tail is still queued — still
         // nothing, and no underflow.
         assert_eq!(silence_frames_needed(48_000, 4_800), 0);
+    }
+
+    #[test]
+    fn the_depth_is_widened_to_what_the_ring_can_absorb() {
+        use super::resolve_keepalive_depth_ms;
+        // The regression this encodes. A 50 ms floor was taken literally on a
+        // host running a 1000 ms ring precisely because its writer thread
+        // competes with WiFi, an SD card and a shared USB bus — and it
+        // underran three times in five minutes. A quarter of the ring is what
+        // that host says it needs.
+        assert_eq!(resolve_keepalive_depth_ms(50, 1_000), 250);
+        // A smaller ring means a host claiming less jitter; the floor follows.
+        assert_eq!(resolve_keepalive_depth_ms(50, 250), 62);
+        // Asking for MORE than a quarter is honoured — the configured value is
+        // a floor of its own, not a suggestion.
+        assert_eq!(resolve_keepalive_depth_ms(400, 1_000), 400);
+        // But never more than half the ring: past that the keep-alive would be
+        // the thing starving the stream.
+        assert_eq!(resolve_keepalive_depth_ms(900, 1_000), 500);
+        // Off stays off, whatever the ring.
+        assert_eq!(resolve_keepalive_depth_ms(0, 1_000), 0);
     }
 
     #[test]
