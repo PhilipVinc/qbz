@@ -30,6 +30,33 @@ use super::sink::DaemonQconnectApp;
 use super::transport::{BUFFER_STATE_BUFFERING, BUFFER_STATE_OK};
 
 pub const QCONNECT_RENDERER_CHANNELS: i32 = 2;
+/// The player's clock has reached the end of the track it is playing.
+///
+/// Not a proxy for anything subtle: if we are playing and the position has
+/// caught up with the duration, the next track has not started yet.
+fn clock_is_at_the_end(is_playing: bool, position_secs: u64, duration_secs: u64) -> bool {
+    is_playing && duration_secs > 0 && position_secs >= duration_secs
+}
+
+/// Debounce [`clock_is_at_the_end`] into "a load is in progress".
+///
+/// `at_end_since` is the caller's memory of when the clock first arrived there,
+/// cleared as soon as it moves again. The grace exists so an ordinary gapless
+/// hand-off, which passes through this state for a fraction of a second, never
+/// flashes a spinner at the controller.
+fn awaiting_next_track(
+    at_end: bool,
+    at_end_since: &mut Option<std::time::Instant>,
+    grace: std::time::Duration,
+) -> bool {
+    if !at_end {
+        *at_end_since = None;
+        return false;
+    }
+    let since = *at_end_since.get_or_insert_with(std::time::Instant::now);
+    since.elapsed() >= grace
+}
+
 const AUDIO_QUALITY_UNKNOWN: i32 = 0;
 const AUDIO_QUALITY_MP3: i32 = 1;
 const AUDIO_QUALITY_CD: i32 = 2;
@@ -255,9 +282,16 @@ pub async fn run_report_scheduler(
         interval
     };
 
+    // How long the clock must sit at the end of a track before we call it a
+    // load. Long enough that an ordinary gapless hand-off — where this is true
+    // for a fraction of a second — never flashes a spinner at the controller.
+    const AWAITING_NEXT_GRACE: std::time::Duration = std::time::Duration::from_millis(1_000);
+
     let mut floor = IDLE_FLOOR;
     let mut interval = period_from(floor);
     let mut was_buffering = false;
+    // When the clock first reached the end of the current track.
+    let mut at_end_since: Option<std::time::Instant> = None;
     // (playing_state, buffer_state, track) of the last report we sent, so a
     // transition can be told from a routine position update.
     let mut last_signature: Option<(i32, i32, u64)> = None;
@@ -277,7 +311,19 @@ pub async fn run_report_scheduler(
         // clock is what makes the audible edge prompt — see `in_flight`.
         let player = runtime.core().player();
         let in_flight = buffering.in_flight(ev.track_id, player.state.current_position_ms());
-        let is_buffering = in_flight.is_some();
+        // Between tracks. The clock has reached the end of the track and the
+        // next one has not started, which is a load in progress that the latch
+        // never hears about: a gapless prefetch runs inside the player, with no
+        // `begin`/`finish` around it. Without this the controller sat at
+        // "4:18 / 4:18", PLAYING and buffer OK, for as long as the prefetch
+        // took — the spinner only appeared later, when the cloud happened to
+        // send a SetState for the next track and armed the latch.
+        let awaiting_next = awaiting_next_track(
+            clock_is_at_the_end(ev.is_playing, ev.position, ev.duration),
+            &mut at_end_since,
+            AWAITING_NEXT_GRACE,
+        );
+        let is_buffering = in_flight.is_some() || awaiting_next;
         // Re-arm the floor for whichever phase we are now in, and reset it either
         // way so the floor only elapses after a full period of edge silence.
         let wanted = if is_buffering { LOADING_FLOOR } else { IDLE_FLOOR };
@@ -427,5 +473,47 @@ mod tests {
         assert_eq!(snap.bit_depth, 24);
         assert_eq!(snap.nb_channels, 2);
         assert_eq!(snap.audio_quality, AUDIO_QUALITY_HIRES_L1);
+    }
+}
+
+#[cfg(test)]
+mod awaiting_next_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn the_clock_is_at_the_end_only_while_playing_a_track_of_known_length() {
+        assert!(clock_is_at_the_end(true, 258, 258));
+        assert!(clock_is_at_the_end(true, 259, 258), "past the end counts too");
+        assert!(!clock_is_at_the_end(true, 257, 258));
+        // Paused at the end is not a load, it is a paused track.
+        assert!(!clock_is_at_the_end(false, 258, 258));
+        // A stream with no duration yet would otherwise read as permanently
+        // finished at position 0.
+        assert!(!clock_is_at_the_end(true, 0, 0));
+    }
+
+    #[test]
+    fn a_gapless_handoff_passes_through_without_arming() {
+        let mut since = None;
+        // A whole grace period has not elapsed on the first observation, so the
+        // fraction of a second a hand-off spends here reports nothing.
+        assert!(!awaiting_next_track(true, &mut since, Duration::from_secs(3600)));
+        assert!(since.is_some(), "the wait is now being timed");
+        // The next track starts: forget it happened.
+        assert!(!awaiting_next_track(false, &mut since, Duration::from_secs(3600)));
+        assert!(since.is_none());
+    }
+
+    #[test]
+    fn a_wait_that_outlasts_the_grace_arms_and_stays_armed() {
+        let mut since = None;
+        assert!(awaiting_next_track(true, &mut since, Duration::ZERO));
+        let first = since;
+        assert!(awaiting_next_track(true, &mut since, Duration::ZERO));
+        assert_eq!(
+            since, first,
+            "the timer keeps its original start across ticks"
+        );
     }
 }
