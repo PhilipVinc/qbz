@@ -259,44 +259,54 @@ pub async fn download_full_sized(
             Ok(DownloadedTrack::Memory(output))
         }
         TrackDestination::File(path) => {
-            let file = std::fs::File::create(&path)
-                .map_err(|e| format!("create {} for streaming download: {e}", path.display()))?;
-            let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
-            writer
-                .write_all(&setup.flac_header)
-                .map_err(|e| format!("write FLAC header: {e}"))?;
+            // The writer lives on a BLOCKING thread with a bounded channel in
+            // front of it, for two reasons.
+            //
+            // It must not run here: this is an async task, and a write plus its
+            // writeback is hundreds of milliseconds of a tokio worker — the same
+            // workers the qconnect socket and the report loop run on.
+            //
+            // And the channel is the throttle. Two segments deep, so when the
+            // card falls behind the download AWAITS instead of racing ahead and
+            // piling up dirty pages. That is what keeps a big track from ever
+            // saturating the card: the network paces the writes, and if the card
+            // is slower than the network, the card paces the download.
+            let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
+            let writer_path = path.clone();
+            let header = setup.flac_header.clone();
+            let writer = tokio::task::spawn_blocking(move || {
+                write_track_to_disk(&writer_path, header, rx)
+            });
 
-            let mut written = setup.flac_header.len();
-            let result = fetch_decrypt_in_order(
+            let fetch = fetch_decrypt_in_order(
                 &http,
                 &setup.url_template,
                 setup.n_segments,
                 "CMAF-DISK",
                 on_progress,
                 &setup.content_key,
-                &mut Sink::File {
-                    writer: &mut writer,
-                    written: &mut written,
-                    scratch: Vec::new(),
-                },
+                &mut Sink::File { tx },
             )
             .await;
 
-            if let Err(e) = result {
-                drop(writer);
+            // Dropping the sink closed the channel, so the writer finishes and
+            // reports what it managed to write. Join it either way: on a fetch
+            // error it still has to clean up.
+            let written = match writer.await {
+                Ok(Ok(written)) => written,
+                Ok(Err(e)) => {
+                    let _ = std::fs::remove_file(&path);
+                    return Err(e);
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&path);
+                    return Err(format!("disk writer task failed: {e}"));
+                }
+            };
+            if let Err(e) = fetch {
                 let _ = std::fs::remove_file(&path);
                 return Err(e);
             }
-
-            // Flush and sync before the caller renames: the rename is what makes
-            // the published file atomic, so what it publishes must be complete.
-            // This fsync is cheap where the burst one was not — the kernel has
-            // been writing back throughout the download and has little left.
-            let file = writer
-                .into_inner()
-                .map_err(|e| format!("flush {}: {e}", path.display()))?;
-            file.sync_all()
-                .map_err(|e| format!("sync {}: {e}", path.display()))?;
 
             // The caller is about to RENAME this into the cache under the real
             // name, and whatever sits under that name is treated as a complete
@@ -322,65 +332,157 @@ pub async fn download_full_sized(
     }
 }
 
+/// Write a track to `path` from `rx`, pacing the card.
+///
+/// Runs on a blocking thread. Per chunk:
+///
+/// 1. write and flush it into the page cache,
+/// 2. `sync_file_range(WRITE)` on it — asks the kernel to START writing it out
+///    and returns IMMEDIATELY, so the card is fed steadily and nothing here ever
+///    waits on it,
+/// 3. for the PREVIOUS chunk, `sync_file_range(WAIT_BEFORE|WRITE|WAIT_AFTER)`
+///    then `posix_fadvise(DONTNEED)`. The wait is bounded to one chunk and by
+///    then step 2 has usually finished it, so it rarely blocks — and dropping
+///    the pages afterwards stops a write-once track from evicting the PLAYING
+///    track's cache, which on this host is being read off the same card.
+///
+/// The alternative — let dirty pages accumulate and fsync at the end — was
+/// measured putting three audible ALSA underruns into the final 1.4 s of a
+/// 37.6 s write, the card monopolised while the decoder needed it.
+///
+/// Non-Linux has neither syscall; there the flush alone is the whole of it.
+fn write_track_to_disk(
+    path: &std::path::Path,
+    header: Vec<u8>,
+    mut rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+) -> std::result::Result<usize, String> {
+    use std::io::Write;
+
+    let file = std::fs::File::create(path)
+        .map_err(|e| format!("create {} for streaming download: {e}", path.display()))?;
+    let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
+
+    writer
+        .write_all(&header)
+        .map_err(|e| format!("write FLAC header: {e}"))?;
+    let mut written = header.len();
+    // The range handed to the kernel last time, still on its way out.
+    let mut in_flight: Option<(usize, usize)> = None;
+
+    while let Some(chunk) = rx.blocking_recv() {
+        let start = written;
+        writer
+            .write_all(&chunk)
+            .map_err(|e| format!("write to {}: {e}", path.display()))?;
+        written += chunk.len();
+        writer
+            .flush()
+            .map_err(|e| format!("flush {}: {e}", path.display()))?;
+
+        start_writeback(&writer, start, written - start);
+        if let Some((off, len)) = in_flight.replace((start, written - start)) {
+            finish_writeback(&writer, off, len);
+        }
+    }
+
+    if let Some((off, len)) = in_flight {
+        finish_writeback(&writer, off, len);
+    }
+    let file = writer
+        .into_inner()
+        .map_err(|e| format!("flush {}: {e}", path.display()))?;
+    // Cheap by now: the ranges above are already out, so this only settles the
+    // tail. `sync_data`, not `sync_all` — the length is the only metadata that
+    // matters and the rename publishes it.
+    file.sync_data()
+        .map_err(|e| format!("sync {}: {e}", path.display()))?;
+    Ok(written)
+}
+
+/// Ask the kernel to begin writing `[offset, offset+len)` out. Returns at once.
+#[cfg(target_os = "linux")]
+fn start_writeback(writer: &std::io::BufWriter<std::fs::File>, offset: usize, len: usize) {
+    use std::os::unix::io::AsRawFd;
+    if len == 0 {
+        return;
+    }
+    // Best effort throughout: a kernel or filesystem that refuses these leaves
+    // the write correct, just less considerate.
+    unsafe {
+        libc::sync_file_range(
+            writer.get_ref().as_raw_fd(),
+            offset as libc::off64_t,
+            len as libc::off64_t,
+            libc::SYNC_FILE_RANGE_WRITE,
+        );
+    }
+}
+
+/// Wait for `[offset, offset+len)` to be out, then drop it from the page cache.
+#[cfg(target_os = "linux")]
+fn finish_writeback(writer: &std::io::BufWriter<std::fs::File>, offset: usize, len: usize) {
+    use std::os::unix::io::AsRawFd;
+    if len == 0 {
+        return;
+    }
+    let fd = writer.get_ref().as_raw_fd();
+    unsafe {
+        libc::sync_file_range(
+            fd,
+            offset as libc::off64_t,
+            len as libc::off64_t,
+            libc::SYNC_FILE_RANGE_WAIT_BEFORE
+                | libc::SYNC_FILE_RANGE_WRITE
+                | libc::SYNC_FILE_RANGE_WAIT_AFTER,
+        );
+        // Only meaningful once the pages are clean, which is why it follows the
+        // wait: the kernel will not drop dirty pages.
+        libc::posix_fadvise(
+            fd,
+            offset as libc::off_t,
+            len as libc::off_t,
+            libc::POSIX_FADV_DONTNEED,
+        );
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_writeback(_writer: &std::io::BufWriter<std::fs::File>, _offset: usize, _len: usize) {}
+
+#[cfg(not(target_os = "linux"))]
+fn finish_writeback(_writer: &std::io::BufWriter<std::fs::File>, _offset: usize, _len: usize) {}
+
 /// Where [`fetch_decrypt_in_order`] puts each decrypted segment.
 enum Sink<'a> {
     Memory(&'a mut Vec<u8>),
+    /// Hands segments to the blocking writer. Bounded, so a card slower than
+    /// the network throttles the download rather than piling up dirty pages.
     File {
-        writer: &'a mut std::io::BufWriter<std::fs::File>,
-        written: &'a mut usize,
-        /// One reusable buffer: a segment is decrypted into it, written, and the
-        /// capacity kept for the next one.
-        scratch: Vec<u8>,
+        tx: tokio::sync::mpsc::Sender<Vec<u8>>,
     },
 }
 
 impl Sink<'_> {
-    fn append_segment(
+    /// Async because the file variant AWAITS the writer's channel — that await
+    /// is the backpressure, and doing it any other way would either block a
+    /// tokio worker or let the download outrun the disk.
+    async fn append_segment(
         &mut self,
         seg_data: &[u8],
         seg_number: usize,
         content_key: &[u8; 16],
     ) -> std::result::Result<(), String> {
-        use std::io::Write;
         match self {
             // Decrypts straight into the output; no intermediate copy.
             Sink::Memory(out) => decrypt_segment_into(seg_data, seg_number, content_key, out),
-            Sink::File {
-                writer,
-                written,
-                scratch,
-            } => {
-                scratch.clear();
-                decrypt_segment_into(seg_data, seg_number, content_key, scratch)?;
-                writer
-                    .write_all(scratch)
-                    .map_err(|e| format!("write segment {seg_number}: {e}"))?;
-                **written += scratch.len();
-
-                // Push this segment to the card NOW, rather than letting dirty
-                // pages pile up for one fsync at the end.
-                //
-                // Measured: a 141 MB track streamed over 37.6 s, and all three
-                // ALSA underruns landed in the final 1.4 s — the terminal
-                // `sync_all` flushing the whole backlog at once and blocking the
-                // card for over a second, while the decoder was reading the
-                // PLAYING track off that same card. A 1 s ALSA buffer cannot
-                // cover that.
-                //
-                // A segment is ~3 MB, roughly a quarter-second of card time,
-                // arriving every couple of seconds — so the writeback is spread
-                // into gaps the reads and the audio buffer both absorb, and the
-                // final sync has nothing left to do. `sync_data` not `sync_all`:
-                // the file's length is all the metadata that matters here and
-                // the rename publishes it afterwards.
-                writer
-                    .flush()
-                    .map_err(|e| format!("flush segment {seg_number}: {e}"))?;
-                writer
-                    .get_ref()
-                    .sync_data()
-                    .map_err(|e| format!("sync segment {seg_number}: {e}"))?;
-                Ok(())
+            Sink::File { tx } => {
+                // One buffer per segment, handed to the writer and freed there.
+                // A shared scratch would have to be copied out to send anyway.
+                let mut chunk = Vec::new();
+                decrypt_segment_into(seg_data, seg_number, content_key, &mut chunk)?;
+                tx.send(chunk).await.map_err(|_| {
+                    format!("disk writer stopped before segment {seg_number}")
+                })
             }
         }
     }
@@ -771,7 +873,8 @@ async fn fetch_decrypt_in_order(
                 log_tag, expected, seg_idx
             ));
         }
-        sink.append_segment(&seg_data, seg_idx as usize, content_key)?;
+        sink.append_segment(&seg_data, seg_idx as usize, content_key)
+            .await?;
         expected = expected.saturating_add(1);
         // seg_data drops here — this is the whole point.
     }
@@ -956,10 +1059,12 @@ mod segment_assembly_tests {
     /// DISK as its segments decrypt must be byte-for-byte what assembling it in
     /// memory produced. If these ever diverge, big tracks silently decode as
     /// something other than what small ones do.
-    #[test]
-    fn the_disk_sink_and_the_memory_sink_agree() {
-        use super::Sink;
-        use std::io::Write;
+    ///
+    /// Goes through the real machinery — the bounded channel and
+    /// `write_track_to_disk`, writeback calls and all — not a stand-in.
+    #[tokio::test]
+    async fn the_disk_sink_and_the_memory_sink_agree() {
+        use super::{write_track_to_disk, Sink};
 
         let key = [7u8; 16];
         let segments = fixture();
@@ -968,29 +1073,29 @@ mod segment_assembly_tests {
         {
             let mut sink = Sink::Memory(&mut in_memory);
             for (i, seg) in segments.iter().enumerate() {
-                sink.append_segment(seg, i + 1, &key).expect("memory sink");
+                sink.append_segment(seg, i + 1, &key).await.expect("memory sink");
             }
         }
 
         let dir = std::env::temp_dir().join(format!("qbz-sink-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("track.part");
-        let mut written = 0usize;
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
+        let writer_path = path.clone();
+        // No FLAC header: the comparison is over segment payloads alone.
+        let writer =
+            tokio::task::spawn_blocking(move || write_track_to_disk(&writer_path, Vec::new(), rx));
         {
-            let file = std::fs::File::create(&path).unwrap();
-            let mut writer = std::io::BufWriter::new(file);
-            {
-                let mut sink = Sink::File {
-                    writer: &mut writer,
-                    written: &mut written,
-                    scratch: Vec::new(),
-                };
-                for (i, seg) in segments.iter().enumerate() {
-                    sink.append_segment(seg, i + 1, &key).expect("file sink");
-                }
+            let mut sink = Sink::File { tx };
+            for (i, seg) in segments.iter().enumerate() {
+                sink.append_segment(seg, i + 1, &key).await.expect("file sink");
             }
-            writer.flush().unwrap();
+            // Dropping the sink closes the channel, which is how the writer
+            // learns the track is finished.
         }
+        let written = writer.await.expect("writer joined").expect("writer ok");
+
         let on_disk = std::fs::read(&path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
 
