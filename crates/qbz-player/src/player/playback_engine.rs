@@ -855,7 +855,10 @@ fn alsa_writer_thread(
 
         // Write whatever we have to ALSA (even partial chunks on source end)
         if !buffer_f32.is_empty() {
-            if let Err(e) = stream.write_f32(&buffer_f32) {
+            // `should_stop` goes in so the write itself is interruptible: it
+            // returns between bounded steps instead of sitting in a blocking
+            // ALSA call that a stop cannot break out of.
+            if let Err(e) = stream.write_f32(&buffer_f32, &should_stop) {
                 log::error!("[ALSA Direct Engine] Write failed: {}", e);
                 break 'thread;
             }

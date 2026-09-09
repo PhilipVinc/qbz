@@ -8,7 +8,7 @@ use alsa::pcm::{Access, Format, Frames, HwParams, PCM};
 #[cfg(target_os = "linux")]
 use alsa::{Direction, ValueOr};
 #[cfg(target_os = "linux")]
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "linux")]
 use std::sync::{Arc, Mutex};
 
@@ -775,170 +775,139 @@ impl AlsaDirectStream {
     /// This is the primary write path for the f32 pipeline.
     ///
     /// Integer conversion is [`f32_to_s16`] / [`f32_to_s24`] / [`f32_to_s32`].
-    pub fn write_f32(&self, samples_f32: &[f32]) -> Result<(), String> {
-        let pcm = self.pcm.lock().unwrap();
-        // Reused across chunks; `clear` keeps the capacity so only the first
-        // chunk of a track allocates. See [`ConvScratch`].
+    pub fn write_f32(&self, samples_f32: &[f32], cancel: &AtomicBool) -> Result<(), String> {
+        // Convert once, into the reusable byte buffer, then hand it to ONE
+        // bounded write loop. Every format used to carry its own copy of the
+        // write-and-recover dance; they are bytes by the time ALSA sees them,
+        // and the PCM's own `bytes_to_frames` knows the frame size, so there is
+        // no reason for four of them.
         let mut scratch = self.scratch.lock().unwrap();
-        let frames = samples_f32.len() / self.channels as usize;
+        let bytes = &mut scratch.bytes;
+        bytes.clear();
+        bytes.reserve(samples_f32.len() * 4);
 
         match self.format {
             Format::FloatLE => {
-                // Direct write - no conversion needed
-                let io = pcm
-                    .io_f32()
-                    .map_err(|e| format!("Failed to get PCM I/O: {}", e))?;
-
-                match io.writei(samples_f32) {
-                    Ok(written) => {
-                        if written != frames {
-                            log::warn!(
-                                "[ALSA Direct] Partial write: {} / {} frames",
-                                written,
-                                frames
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
-                            Err(msg)
-                        } else {
-                            Ok(())
-                        }
-                    }
+                for &s in samples_f32 {
+                    bytes.extend_from_slice(&s.to_le_bytes());
                 }
             }
             Format::S32LE => {
-                // f32 [-1.0, 1.0] -> i32 full range
-                let samples_i32 = &mut scratch.i32s;
-                samples_i32.clear();
-                samples_i32.extend(samples_f32.iter().map(|&s| f32_to_s32(s)));
-
-                let io = pcm
-                    .io_i32()
-                    .map_err(|e| format!("Failed to get PCM I/O: {}", e))?;
-
-                match io.writei(samples_i32.as_slice()) {
-                    Ok(written) => {
-                        if written != frames {
-                            log::warn!(
-                                "[ALSA Direct] Partial write: {} / {} frames",
-                                written,
-                                frames
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
-                            Err(msg)
-                        } else {
-                            Ok(())
-                        }
-                    }
+                for &s in samples_f32 {
+                    bytes.extend_from_slice(&f32_to_s32(s).to_le_bytes());
                 }
             }
+            // 24-bit value in a 32-bit container.
             Format::S24LE => {
-                // f32 -> 24-bit in 32-bit container
-                // Clamp to 24-bit range: [-8388608, 8388607]
-                let samples_i32 = &mut scratch.i32s;
-                samples_i32.clear();
-                samples_i32.extend(samples_f32.iter().map(|&s| f32_to_s24(s)));
-
-                let io = pcm
-                    .io_i32()
-                    .map_err(|e| format!("Failed to get PCM I/O: {}", e))?;
-
-                match io.writei(samples_i32.as_slice()) {
-                    Ok(written) => {
-                        if written != frames {
-                            log::warn!(
-                                "[ALSA Direct] Partial write: {} / {} frames",
-                                written,
-                                frames
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
-                            Err(msg)
-                        } else {
-                            Ok(())
-                        }
-                    }
+                for &s in samples_f32 {
+                    bytes.extend_from_slice(&f32_to_s24(s).to_le_bytes());
                 }
             }
+            // 24-bit packed in 3 bytes: the low three of the little-endian word.
             Format::S243LE => {
-                // S24_3LE: 24-bit packed in 3 bytes, little-endian
-                // f32 -> 24-bit integer, packed into 3 bytes
-                let bytes = &mut scratch.bytes;
-                bytes.clear();
-                bytes.reserve(samples_f32.len() * 3);
-
-                for &sample in samples_f32 {
-                    let s24 = f32_to_s24(sample);
-                    // Pack as 3 bytes in little-endian order
-                    bytes.push((s24 & 0xFF) as u8); // LSB
-                    bytes.push(((s24 >> 8) & 0xFF) as u8); // Middle
-                    bytes.push(((s24 >> 16) & 0xFF) as u8); // MSB (sign-extended)
-                }
-
-                let io = pcm.io_bytes();
-
-                match io.writei(bytes.as_slice()) {
-                    Ok(written) => {
-                        if written != frames {
-                            log::warn!(
-                                "[ALSA Direct] Partial write: {} / {} frames (S24_3LE)",
-                                written,
-                                frames
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "(S24_3LE)") {
-                            Err(msg)
-                        } else {
-                            Ok(())
-                        }
-                    }
+                for &s in samples_f32 {
+                    bytes.extend_from_slice(&f32_to_s24(s).to_le_bytes()[..3]);
                 }
             }
             Format::S16LE => {
-                // f32 -> i16
-                let samples_i16 = &mut scratch.i16s;
-                samples_i16.clear();
-                samples_i16.extend(samples_f32.iter().map(|&s| f32_to_s16(s)));
-
-                let io = pcm
-                    .io_i16()
-                    .map_err(|e| format!("Failed to get PCM I/O: {}", e))?;
-
-                match io.writei(samples_i16.as_slice()) {
-                    Ok(written) => {
-                        if written != frames {
-                            log::warn!(
-                                "[ALSA Direct] Partial write: {} / {} frames",
-                                written,
-                                frames
-                            );
-                        }
-                        Ok(())
-                    }
-                    Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
-                            Err(msg)
-                        } else {
-                            Ok(())
-                        }
-                    }
+                for &s in samples_f32 {
+                    bytes.extend_from_slice(&f32_to_s16(s).to_le_bytes());
                 }
             }
-            _ => Err(format!("Unsupported format: {:?}", self.format)),
+            other => {
+                return Err(format!("[ALSA Direct] unsupported format {other:?}"));
+            }
         }
+
+        self.write_bytes_interruptible(bytes, cancel)
+    }
+
+    /// Write `data` to ALSA in bounded steps, releasing the PCM lock between
+    /// each one and honouring `cancel`.
+    ///
+    /// This shape exists because the old one could hang the player for good. A
+    /// blocking `writei` returns only when the device has taken every frame, and
+    /// it held the PCM mutex the whole time — so a card that stopped draining
+    /// pinned the writer inside the call, and `stop()`, which needs that same
+    /// mutex to halt the device, could never get in. The join waited forever,
+    /// the audio thread was lost for the life of the process, and playback went
+    /// silent with the position counter still ticking. Seen on hardware.
+    ///
+    /// Now nothing waits unboundedly: each step writes at most the space ALSA
+    /// says it has (so `writei` cannot block), and when there is no space it
+    /// waits at most `WAIT_MS` before letting go of the lock and re-checking
+    /// `cancel`. The worst a stop can wait for the mutex is one `WAIT_MS`.
+    fn write_bytes_interruptible(
+        &self,
+        data: &[u8],
+        cancel: &AtomicBool,
+    ) -> Result<(), String> {
+        /// Long enough not to spin, short enough that a stop is never stuck
+        /// behind it. The ALSA buffer is hundreds of ms, so this is well inside
+        /// one refill.
+        const WAIT_MS: u32 = 200;
+
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let frame_bytes = {
+            let pcm = self.pcm.lock().unwrap();
+            let fb = pcm.frames_to_bytes(1);
+            if fb <= 0 {
+                return Err("[ALSA Direct] device reports a zero-byte frame".to_string());
+            }
+            fb as usize
+        };
+
+        let mut offset = 0usize;
+        while offset < data.len() {
+            // Checked before every step, and the step is bounded, so a stop
+            // takes effect promptly however wedged the device is.
+            if cancel.load(Ordering::SeqCst) {
+                log::debug!("[ALSA Direct] write cancelled with {} bytes left", data.len() - offset);
+                return Ok(());
+            }
+
+            let pcm = self.pcm.lock().unwrap();
+
+            let avail = match pcm.avail_update() {
+                Ok(frames) if frames > 0 => frames as usize,
+                Ok(_) => 0,
+                Err(e) => {
+                    // Underrun and friends: recover and re-measure next time
+                    // round rather than writing into a broken stream.
+                    recover_write_error(&pcm, e.errno() as i32, "")?;
+                    continue;
+                }
+            };
+
+            if avail == 0 {
+                match pcm.wait(Some(WAIT_MS)) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        recover_write_error(&pcm, e.errno() as i32, "(wait)")?;
+                    }
+                }
+                continue;
+            }
+
+            let remaining_frames = (data.len() - offset) / frame_bytes;
+            let frames = avail.min(remaining_frames);
+            if frames == 0 {
+                // A partial frame's worth of tail; nothing ALSA can take.
+                break;
+            }
+            let take = frames * frame_bytes;
+
+            match pcm.io_bytes().writei(&data[offset..offset + take]) {
+                Ok(written) => offset += written * frame_bytes,
+                Err(e) => {
+                    recover_write_error(&pcm, e.errno() as i32, "")?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Drain and stop playback
@@ -1163,7 +1132,11 @@ impl AlsaDirectStream {
         Err("ALSA Direct is only available on Linux".to_string())
     }
 
-    pub fn write_f32(&self, _samples: &[f32]) -> Result<(), String> {
+    pub fn write_f32(
+        &self,
+        _samples: &[f32],
+        _cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), String> {
         Err("ALSA Direct is only available on Linux".to_string())
     }
 
