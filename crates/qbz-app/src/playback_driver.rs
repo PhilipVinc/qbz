@@ -445,12 +445,12 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                     // burst and drop the copy: a 195 MB `Arc` clone plus 11-15 s
                     // of a pinned card, which underran ALSA audibly.
                     match core.fetch_for_gapless_resolved(*id, quality, None, None).await {
-                        Some(qbz_player::GaplessAudio::File(path)) => {
+                        Some(qbz_player::TrackAudio::File(path)) => {
                             if let Err(e) = player.play_next_file(path, *id) {
                                 log::warn!("[qbzd] driver: gapless from disk failed: {e}");
                             }
                         }
-                        Some(qbz_player::GaplessAudio::Memory(bytes)) => {
+                        Some(qbz_player::TrackAudio::Memory(bytes)) => {
                             if let Err(e) = player.play_next(bytes, *id) {
                                 log::warn!("[qbzd] driver: gapless play_next failed: {e}");
                             }
