@@ -121,6 +121,88 @@ fn ensure_exact_rate(hwp: &HwParams<'_>, requested: u32, kind: &str) -> Result<(
     Ok(())
 }
 
+/// The byte layout we hand ALSA, named independently of the `alsa` crate.
+///
+/// Deliberately not `alsa::Format`: that type only exists on Linux, and keying
+/// the encoder on it put the one piece of this file where a mistake is SILENT —
+/// the byte order of every sample — beyond the reach of a test on any other
+/// machine. This enum costs one `match` and makes it testable everywhere.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SampleLayout {
+    /// 32-bit float, native range.
+    F32Le,
+    /// 32-bit signed.
+    S32Le,
+    /// 24-bit signed in a 32-bit container.
+    S24Le,
+    /// 24-bit signed packed into 3 bytes.
+    S24Le3,
+    /// 16-bit signed.
+    S16Le,
+}
+
+impl SampleLayout {
+    /// Bytes one sample occupies on the wire.
+    pub fn bytes_per_sample(self) -> usize {
+        match self {
+            SampleLayout::F32Le | SampleLayout::S32Le | SampleLayout::S24Le => 4,
+            SampleLayout::S24Le3 => 3,
+            SampleLayout::S16Le => 2,
+        }
+    }
+}
+
+/// Encode `samples` into `out` in `layout`, appending.
+///
+/// One place, five layouts. Each used to be its own arm with its own write and
+/// its own recovery, which is how duplicated paths in this codebase have
+/// repeatedly drifted apart.
+pub fn encode_into(layout: SampleLayout, samples: &[f32], out: &mut Vec<u8>) {
+    out.reserve(samples.len() * layout.bytes_per_sample());
+    match layout {
+        SampleLayout::F32Le => {
+            for &s in samples {
+                out.extend_from_slice(&s.to_le_bytes());
+            }
+        }
+        SampleLayout::S32Le => {
+            for &s in samples {
+                out.extend_from_slice(&f32_to_s32(s).to_le_bytes());
+            }
+        }
+        SampleLayout::S24Le => {
+            for &s in samples {
+                out.extend_from_slice(&f32_to_s24(s).to_le_bytes());
+            }
+        }
+        // The low three bytes of the little-endian word: value in 0..2, sign
+        // carried in byte 2.
+        SampleLayout::S24Le3 => {
+            for &s in samples {
+                out.extend_from_slice(&f32_to_s24(s).to_le_bytes()[..3]);
+            }
+        }
+        SampleLayout::S16Le => {
+            for &s in samples {
+                out.extend_from_slice(&f32_to_s16(s).to_le_bytes());
+            }
+        }
+    }
+}
+
+/// How many frames to hand ALSA in one step: never more than it has space for,
+/// never more than we have left, and whole frames only.
+///
+/// Bounding each step by `avail` is what makes the write interruptible — a
+/// `writei` that asks for no more than the reported space cannot block — so an
+/// error here would either reintroduce the hang or spin.
+pub fn frames_this_step(avail_frames: usize, remaining_bytes: usize, frame_bytes: usize) -> usize {
+    if frame_bytes == 0 {
+        return 0;
+    }
+    avail_frames.min(remaining_bytes / frame_bytes)
+}
+
 /// Convert an f32 sample in [-1.0, 1.0] to signed PCM. Full scale is 2^(N-1).
 ///
 /// # Full scale is 2^(N-1), never 2^(N-1) - 1
@@ -781,43 +863,21 @@ impl AlsaDirectStream {
         // write-and-recover dance; they are bytes by the time ALSA sees them,
         // and the PCM's own `bytes_to_frames` knows the frame size, so there is
         // no reason for four of them.
-        let mut scratch = self.scratch.lock().unwrap();
-        let bytes = &mut scratch.bytes;
-        bytes.clear();
-        bytes.reserve(samples_f32.len() * 4);
-
-        match self.format {
-            Format::FloatLE => {
-                for &s in samples_f32 {
-                    bytes.extend_from_slice(&s.to_le_bytes());
-                }
-            }
-            Format::S32LE => {
-                for &s in samples_f32 {
-                    bytes.extend_from_slice(&f32_to_s32(s).to_le_bytes());
-                }
-            }
-            // 24-bit value in a 32-bit container.
-            Format::S24LE => {
-                for &s in samples_f32 {
-                    bytes.extend_from_slice(&f32_to_s24(s).to_le_bytes());
-                }
-            }
-            // 24-bit packed in 3 bytes: the low three of the little-endian word.
-            Format::S243LE => {
-                for &s in samples_f32 {
-                    bytes.extend_from_slice(&f32_to_s24(s).to_le_bytes()[..3]);
-                }
-            }
-            Format::S16LE => {
-                for &s in samples_f32 {
-                    bytes.extend_from_slice(&f32_to_s16(s).to_le_bytes());
-                }
-            }
+        let layout = match self.format {
+            Format::FloatLE => SampleLayout::F32Le,
+            Format::S32LE => SampleLayout::S32Le,
+            Format::S24LE => SampleLayout::S24Le,
+            Format::S243LE => SampleLayout::S24Le3,
+            Format::S16LE => SampleLayout::S16Le,
             other => {
                 return Err(format!("[ALSA Direct] unsupported format {other:?}"));
             }
-        }
+        };
+
+        let mut scratch = self.scratch.lock().unwrap();
+        let bytes = &mut scratch.bytes;
+        bytes.clear();
+        encode_into(layout, samples_f32, bytes);
 
         self.write_bytes_interruptible(bytes, cancel)
     }
@@ -892,8 +952,7 @@ impl AlsaDirectStream {
                 continue;
             }
 
-            let remaining_frames = (data.len() - offset) / frame_bytes;
-            let frames = avail.min(remaining_frames);
+            let frames = frames_this_step(avail, data.len() - offset, frame_bytes);
             if frames == 0 {
                 // A partial frame's worth of tail; nothing ALSA can take.
                 break;
@@ -1272,6 +1331,99 @@ mod mixer_name_tests {
         for v in i16::MIN..=i16::MAX {
             assert_eq!(f32_to_s16(f32::from(v) / 32_768.0), v, "sample {v}");
         }
+    }
+
+    /// The byte layout of every format we write, at full scale and at a
+    /// midpoint. This is the one place in the file where a mistake is SILENT —
+    /// a swapped byte order plays as noise, not as an error — and all five
+    /// layouts were rewritten into one function, so it gets pinned.
+    #[test]
+    fn every_layout_encodes_the_bytes_the_device_expects() {
+        use super::{encode_into, SampleLayout};
+
+        // 0.5 exactly: representable, and its scaled values are exact.
+        let half = 0.5f32;
+
+        let mut out = Vec::new();
+        encode_into(SampleLayout::S16Le, &[half], &mut out);
+        assert_eq!(out, (16_384i16).to_le_bytes(), "S16: 0.5 * 2^15");
+
+        out.clear();
+        encode_into(SampleLayout::S24Le3, &[half], &mut out);
+        assert_eq!(out, [0x00, 0x00, 0x40], "S24_3LE: 0x400000 in three LE bytes");
+
+        out.clear();
+        encode_into(SampleLayout::S24Le, &[half], &mut out);
+        assert_eq!(out, (4_194_304i32).to_le_bytes(), "S24 in a 32-bit container");
+
+        out.clear();
+        encode_into(SampleLayout::S32Le, &[half], &mut out);
+        assert_eq!(out, (1_073_741_824i32).to_le_bytes(), "S32: 0.5 * 2^31");
+
+        out.clear();
+        encode_into(SampleLayout::F32Le, &[half], &mut out);
+        assert_eq!(out, half.to_le_bytes(), "float passes through");
+    }
+
+    /// A negative sample must carry its sign into the packed 3-byte form —
+    /// the layout where it is easiest to get wrong, because the sign lives in
+    /// the byte we truncate to.
+    #[test]
+    fn the_packed_24_bit_layout_carries_the_sign() {
+        use super::{encode_into, SampleLayout};
+
+        let mut out = Vec::new();
+        encode_into(SampleLayout::S24Le3, &[-0.5f32], &mut out);
+        // -0x400000 as i32 is 0xFFC00000; its low three LE bytes are 00 00 C0.
+        assert_eq!(out, [0x00, 0x00, 0xC0]);
+
+        out.clear();
+        encode_into(SampleLayout::S24Le3, &[-1.0f32], &mut out);
+        // Full-scale negative is -0x800000 -> 0x00 0x00 0x80.
+        assert_eq!(out, [0x00, 0x00, 0x80]);
+    }
+
+    /// Sizes and multi-sample runs: three samples must produce exactly three
+    /// samples' worth of bytes, with nothing lost or padded.
+    #[test]
+    fn encoding_is_dense_and_correctly_sized() {
+        use super::{encode_into, SampleLayout};
+
+        for layout in [
+            SampleLayout::F32Le,
+            SampleLayout::S32Le,
+            SampleLayout::S24Le,
+            SampleLayout::S24Le3,
+            SampleLayout::S16Le,
+        ] {
+            let mut out = Vec::new();
+            encode_into(layout, &[0.0, 0.25, -0.25], &mut out);
+            assert_eq!(
+                out.len(),
+                3 * layout.bytes_per_sample(),
+                "{layout:?} produced the wrong length"
+            );
+        }
+    }
+
+    /// The bound that makes the write interruptible: never more than ALSA says
+    /// it has room for, never more than is left, whole frames only. Getting
+    /// this wrong reintroduces the hang (too much) or spins (zero forever).
+    #[test]
+    fn a_write_step_is_bounded_by_space_and_by_whole_frames() {
+        use super::frames_this_step;
+
+        // Space is the limit.
+        assert_eq!(frames_this_step(10, 4000, 8), 10);
+        // What is left is the limit.
+        assert_eq!(frames_this_step(1000, 80, 8), 10);
+        // A partial frame is never offered.
+        assert_eq!(frames_this_step(1000, 12, 8), 1);
+        assert_eq!(frames_this_step(1000, 7, 8), 0);
+        // Degenerate frame size cannot divide by zero.
+        assert_eq!(frames_this_step(1000, 800, 0), 0);
+        // Nothing available means nothing this step — the caller waits.
+        assert_eq!(frames_this_step(0, 800, 8), 0);
     }
 
     /// Full scale must saturate, never wrap. -1.0 is the most negative sample;
