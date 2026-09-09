@@ -1154,7 +1154,20 @@ impl AlsaDirectStream {
 
             if !fill_sampled {
                 fill_sampled = true;
-                if let Some(pct) = ring_fill_pct(avail, buffer_frames) {
+                // Only meaningful on a RUNNING stream. A freshly opened or
+                // prepared pcm reports an empty ring because nothing has been
+                // written to it yet, which is not starvation — it is the
+                // normal state one instant before the first chunk. Warning
+                // there made the instrument cry wolf at every track start,
+                // which on a mixed-rate playlist is every track:
+                //
+                //   23:46:32.641  playback starting
+                //   23:46:32.650  WARN ring down to 0% (96000 of 96000 free)
+                //
+                // An empty ring under a RUNNING pcm is the real thing: the
+                // clock is consuming and we are not keeping up.
+                let running = matches!(pcm.state(), alsa::pcm::State::Running);
+                if let Some(pct) = ring_fill_pct(avail, buffer_frames).filter(|_| running) {
                     let now_ms = process_millis();
                     let last = RING_FILL_LOGGED_MS.load(Ordering::Relaxed);
                     if should_log_ring_fill(pct, last, now_ms, RING_FILL_LOG_EVERY_MS) {
