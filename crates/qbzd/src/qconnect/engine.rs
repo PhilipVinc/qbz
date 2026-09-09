@@ -264,6 +264,25 @@ impl QconnectRendererEngine for DaemonRendererEngine {
         self.core().stop().map_err(|err| err.to_string())
     }
     fn seek(&self, position_secs: u64) -> Result<(), String> {
+        // DAEMON-ONLY: tell the controller we are buffering, exactly as a load
+        // does. A seek is not instant — Qobuz FLACs carry no SEEKTABLE, so
+        // Symphonia bisects, and a cold ranged open off the CDN costs seconds.
+        // Measured on hardware: `Resume: landed on 60s in 10498ms`, ten and a
+        // half seconds during which the app was told "playing" at a position
+        // nothing was coming out of. It reads as a frozen player rather than a
+        // busy one.
+        //
+        // This does not make the seek faster. It makes the app show its
+        // spinner, and the report scheduler clears the latch as soon as audio
+        // is actually being produced. The protocol has no buffering-PROGRESS
+        // field — `buffer_state` is BUFFERING or OK and nothing else — so this
+        // is the whole of what can be said on the wire.
+        let state = self.get_playback_state();
+        if state.track_id != 0 {
+            self.buffering
+                .begin(state.track_id, position_secs, state.duration);
+            self.report_notify.notify_one();
+        }
         self.core().seek(position_secs).map_err(|err| err.to_string())
     }
     fn set_volume(&self, fraction: f32) -> Result<(), String> {
