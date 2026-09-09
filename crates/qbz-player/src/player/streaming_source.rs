@@ -1433,6 +1433,29 @@ pub struct InMemorySource {
 impl InMemorySource {
     pub fn new(data: TrackBytes) -> Result<Self, String> {
         let source = Box::new(InMemoryMediaSource::new(data)) as Box<dyn MediaSource>;
+        Self::from_media_source(source, "in-memory source")
+    }
+
+    /// The same decoder over a FILE, for a track handed over as a path rather
+    /// than a buffer (the disk gapless path, taken whenever two of the track
+    /// would not fit the L1 budget).
+    ///
+    /// Exists so seeking such a track is a SEEK. rodio's generic `try_seek`
+    /// succeeds on these files but, with no SEEKTABLE — and Qobuz FLACs carry
+    /// none — it estimates and then DECODES FORWARD to the target: measured at
+    /// 7.4 s to reach 676 s of a 96 kHz track on a Pi, against 130-215 ms for
+    /// the same seek on the in-memory streaming path. Symphonia over a seekable
+    /// `MediaSource` bisects instead, which on local storage is a handful of
+    /// small reads.
+    pub fn from_file(path: &std::path::Path) -> Result<Self, String> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| format!("open {} for seeking: {e}", path.display()))?;
+        // symphonia implements `MediaSource` for `File`, and reports it
+        // seekable — which is the whole point.
+        Self::from_media_source(Box::new(file) as Box<dyn MediaSource>, "cached file")
+    }
+
+    fn from_media_source(source: Box<dyn MediaSource>, what: &str) -> Result<Self, String> {
         let mss = MediaSourceStream::new(source, Default::default());
 
         let hint = Hint::new();
@@ -1445,7 +1468,7 @@ impl InMemorySource {
 
         let probed = get_probe()
             .format(&hint, mss, &format_opts, &metadata_opts)
-            .map_err(|err| format!("Symphonia probe failed for in-memory source: {}", err))?;
+            .map_err(|err| format!("Symphonia probe failed for {what}: {err}"))?;
 
         let track = probed
             .format
@@ -1575,6 +1598,106 @@ mod tests {
     use super::*;
     use std::thread;
     use std::time::Duration;
+
+    /// A mono 16-bit PCM WAV whose samples ramp linearly from 0 to `peak`
+    /// across the whole file, so a decoded sample's VALUE says where in the
+    /// file it came from — which is what makes a seek testable.
+    fn ramp_wav(sample_rate: u32, total_frames: u32, peak: i16) -> Vec<u8> {
+        let data_len = total_frames * 2;
+        let mut w = Vec::with_capacity(44 + data_len as usize);
+        w.extend_from_slice(b"RIFF");
+        w.extend_from_slice(&(36 + data_len).to_le_bytes());
+        w.extend_from_slice(b"WAVEfmt ");
+        w.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+        w.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        w.extend_from_slice(&1u16.to_le_bytes()); // mono
+        w.extend_from_slice(&sample_rate.to_le_bytes());
+        w.extend_from_slice(&(sample_rate * 2).to_le_bytes()); // byte rate
+        w.extend_from_slice(&2u16.to_le_bytes()); // block align
+        w.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
+        w.extend_from_slice(b"data");
+        w.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..total_frames {
+            let v = (i as f64 / total_frames as f64 * peak as f64) as i16;
+            w.extend_from_slice(&v.to_le_bytes());
+        }
+        w
+    }
+
+    fn temp_wav(name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("qbz-{name}-{n}.wav"));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    const RAMP_RATE: u32 = 8_000;
+    const RAMP_SECS: u32 = 4;
+    const RAMP_PEAK: i16 = 30_000;
+
+    #[test]
+    fn a_file_backed_source_decodes_from_the_start() {
+        let path = temp_wav(
+            "start",
+            &ramp_wav(RAMP_RATE, RAMP_RATE * RAMP_SECS, RAMP_PEAK),
+        );
+        let mut src = InMemorySource::from_file(&path).unwrap();
+        assert_eq!(src.sample_rate, RAMP_RATE);
+        assert_eq!(src.channels, 1);
+        // The ramp starts at zero, and the whole file is there.
+        let first = src.next().unwrap();
+        assert!(first.abs() < 0.01, "first sample was {first}");
+        let total = 1 + src.count();
+        assert_eq!(total as u32, RAMP_RATE * RAMP_SECS);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_file_backed_seek_lands_at_the_target_and_not_by_decoding_forward() {
+        let path = temp_wav(
+            "seek",
+            &ramp_wav(RAMP_RATE, RAMP_RATE * RAMP_SECS, RAMP_PEAK),
+        );
+        let mut src = InMemorySource::from_file(&path).unwrap();
+        src.seek_to(Duration::from_secs(2)).unwrap();
+
+        // A seek lands on a packet boundary, so allow a quarter second of
+        // slack — far tighter than the failure this guards against, which is
+        // decoding forward from zero and therefore landing at 0.0.
+        let total_frames = RAMP_RATE * RAMP_SECS;
+        let slack_frames = RAMP_RATE / 4;
+        let expected = (RAMP_PEAK as f32 / 2.0) / 32768.0;
+        let tolerance =
+            (slack_frames as f32 / total_frames as f32) * (RAMP_PEAK as f32 / 32768.0);
+        let landed = src.next().unwrap();
+        assert!(
+            (landed - expected).abs() < tolerance,
+            "seek to 2s of a 4s ramp gave {landed}, expected ~{expected} (+-{tolerance})"
+        );
+        // And only the remaining half of the file is left to play.
+        let remaining = 1 + src.count();
+        let want = (total_frames / 2) as usize;
+        assert!(
+            remaining.abs_diff(want) < slack_frames as usize,
+            "{remaining} samples left after the seek, expected ~{want}"
+        );
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_missing_or_unprobeable_file_is_an_error_not_a_panic() {
+        let missing = std::env::temp_dir().join("qbz-does-not-exist-at-all.wav");
+        let err = InMemorySource::from_file(&missing).err().unwrap();
+        assert!(err.contains("qbz-does-not-exist-at-all"), "{err}");
+
+        // Not audio at all: the caller falls back to rodio on this, so it has
+        // to come back as an Err naming the file case.
+        let path = temp_wav("garbage", b"this is not a media file");
+        let err = InMemorySource::from_file(&path).err().unwrap();
+        assert!(err.contains("cached file"), "{err}");
+        std::fs::remove_file(&path).ok();
+    }
 
     #[test]
     fn first_error_wins_over_later_generic_abort() {

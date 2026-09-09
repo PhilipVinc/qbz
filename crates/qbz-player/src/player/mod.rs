@@ -3972,17 +3972,41 @@ impl Player {
                                 // because it only knew about the in-memory and
                                 // streaming cases — the file case postdates it.
                                 //
-                                // Native seek first; `skip_duration` decodes every
-                                // sample from zero, which on a 100 MB Hi-Res track
-                                // stalls the audio thread for seconds.
-                                match decode_file_with_fallback(path) {
-                                    Ok(mut src) => match src.try_seek(skip_duration) {
-                                        Ok(()) => src,
+                                // Symphonia over the file first. rodio's generic
+                                // `try_seek` also "succeeds" here, but with no
+                                // SEEKTABLE (and Qobuz FLACs carry none) it decodes
+                                // forward to the target: 7.4 s measured to reach
+                                // 676 s of a 96 kHz track on a Pi, against ~200 ms
+                                // for the same seek on the streaming path.
+                                // Symphonia bisects the file instead.
+                                let native = match InMemorySource::from_file(path) {
+                                    Ok(mut s) => match s.seek_to(skip_duration) {
+                                        Ok(()) => Some(
+                                            Box::new(s) as Box<dyn Source<Item = f32> + Send>
+                                        ),
                                         Err(e) => {
                                             log::warn!(
-                                                "Native seek on cached file failed ({e}); falling back to skip_duration"
+                                                "Native seek on cached file failed ({e}); falling back to a decoding seek"
                                             );
-                                            match decode_file_with_fallback(path) {
+                                            None
+                                        }
+                                    },
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Symphonia could not open the cached file ({e}); falling back to a decoding seek"
+                                        );
+                                        None
+                                    }
+                                };
+                                match native {
+                                    Some(src) => src,
+                                    // rodio's decoders cover a few formats
+                                    // Symphonia cannot probe (MP4/AAC), so keep the
+                                    // slow path rather than refusing the seek.
+                                    None => match decode_file_with_fallback(path) {
+                                        Ok(mut src) => match src.try_seek(skip_duration) {
+                                            Ok(()) => src,
+                                            Err(_) => match decode_file_with_fallback(path) {
                                                 Ok(fb) => Box::new(fb.skip_duration(skip_duration)),
                                                 Err(e) => {
                                                     seek_abort(
@@ -3991,16 +4015,16 @@ impl Player {
                                                     );
                                                     return;
                                                 }
-                                            }
+                                            },
+                                        },
+                                        Err(e) => {
+                                            seek_abort(
+                                                &thread_state,
+                                                &format!("open of cached file for seek failed: {e}"),
+                                            );
+                                            return;
                                         }
                                     },
-                                    Err(e) => {
-                                        seek_abort(
-                                            &thread_state,
-                                            &format!("open of cached file for seek failed: {e}"),
-                                        );
-                                        return;
-                                    }
                                 }
                             } else {
                                 let audio_data = current_audio_data
