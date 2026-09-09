@@ -356,6 +356,30 @@ impl Sink<'_> {
                     .write_all(scratch)
                     .map_err(|e| format!("write segment {seg_number}: {e}"))?;
                 **written += scratch.len();
+
+                // Push this segment to the card NOW, rather than letting dirty
+                // pages pile up for one fsync at the end.
+                //
+                // Measured: a 141 MB track streamed over 37.6 s, and all three
+                // ALSA underruns landed in the final 1.4 s — the terminal
+                // `sync_all` flushing the whole backlog at once and blocking the
+                // card for over a second, while the decoder was reading the
+                // PLAYING track off that same card. A 1 s ALSA buffer cannot
+                // cover that.
+                //
+                // A segment is ~3 MB, roughly a quarter-second of card time,
+                // arriving every couple of seconds — so the writeback is spread
+                // into gaps the reads and the audio buffer both absorb, and the
+                // final sync has nothing left to do. `sync_data` not `sync_all`:
+                // the file's length is all the metadata that matters here and
+                // the rename publishes it afterwards.
+                writer
+                    .flush()
+                    .map_err(|e| format!("flush segment {seg_number}: {e}"))?;
+                writer
+                    .get_ref()
+                    .sync_data()
+                    .map_err(|e| format!("sync segment {seg_number}: {e}"))?;
                 Ok(())
             }
         }

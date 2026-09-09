@@ -416,6 +416,59 @@ impl BufferState {
     fn head_run(&self) -> Option<&BufferSegment> {
         self.segments.first().filter(|seg| seg.offset == 0)
     }
+
+    /// Drop buffered bytes well BEHIND the read head, so a long track cannot
+    /// grow the buffer without bound.
+    ///
+    /// The buffer used to hold the entire file. At 44.1 kHz that is 30-60 MB and
+    /// nobody notices; at 24/192 a long movement is 450-500 MB, and on a 1 GB
+    /// player that pushes the daemon into swap on the SD card — measured at
+    /// 118 MB paged out, with bursts of ALSA underruns as the audio thread
+    /// faulted pages back in. Audible as hiccups.
+    ///
+    /// What survives:
+    /// * the first `keep_head` bytes, always — FLAC tags (ReplayGain) live at
+    ///   the start of the file and `get_buffered_data` reads them from there.
+    /// * everything from `read_pos - keep_behind` onward, so a small backward
+    ///   seek is still served from memory. A jump further back than that
+    ///   re-requests over HTTP, which the range-capable seek path already does
+    ///   when the target is outside the buffer.
+    ///
+    /// Trimming leaves a hole, so `take_complete_data` stops returning the whole
+    /// file and promotion is skipped. That is the same path a low-memory host has
+    /// always taken and is handled: gapless keys on the DOWNLOAD being complete
+    /// (`is_complete`), not on still holding every byte.
+    ///
+    /// Returns the bytes released.
+    fn trim_behind(&mut self, read_pos: u64, keep_behind: u64, keep_head: u64) -> u64 {
+        let cutoff = read_pos.saturating_sub(keep_behind);
+        if cutoff == 0 {
+            return 0;
+        }
+        let before = self.downloaded();
+
+        for seg in &mut self.segments {
+            // The head run keeps its first `keep_head` bytes for tags.
+            let protected_until = if seg.offset == 0 { keep_head } else { 0 };
+            let drop_until = cutoff.min(seg.end()).max(protected_until);
+            if drop_until <= seg.offset {
+                continue;
+            }
+            let drop_len = (drop_until - seg.offset) as usize;
+            if drop_len >= seg.data.len() {
+                seg.data.clear();
+                seg.data.shrink_to_fit();
+                seg.offset = seg.end();
+                continue;
+            }
+            seg.data.drain(..drop_len);
+            seg.data.shrink_to_fit();
+            seg.offset += drop_len as u64;
+        }
+        self.segments.retain(|seg| !seg.data.is_empty());
+
+        before.saturating_sub(self.downloaded())
+    }
 }
 
 /// Buffer plus the two wake-ups around it: `ready` for the synchronous
