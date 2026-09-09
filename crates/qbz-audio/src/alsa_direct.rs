@@ -203,6 +203,57 @@ pub fn frames_this_step(avail_frames: usize, remaining_bytes: usize, frame_bytes
     avail_frames.min(remaining_bytes / frame_bytes)
 }
 
+/// How full the ALSA ring is, in percent, given the free space it reports.
+///
+/// The number the xrun log cannot show. An xrun is only reported once the ring
+/// has actually emptied and recovery kicked in; a dip that recovers in time
+/// leaves no trace at all, which is why a run with audible hiccups and a log
+/// with zero xruns are not a contradiction. Watching the fill catches the dip.
+///
+/// `None` when the device did not report a buffer size — nothing to compare
+/// against, and a made-up denominator would invent a fill level.
+pub fn ring_fill_pct(avail_frames: usize, buffer_frames: usize) -> Option<u8> {
+    if buffer_frames == 0 {
+        return None;
+    }
+    let held = buffer_frames.saturating_sub(avail_frames);
+    Some(((held * 100) / buffer_frames).min(100) as u8)
+}
+
+/// Below this the ring is one scheduling delay away from an xrun.
+// Consumed by the ALSA write loop, which only exists on Linux; elsewhere these
+// are here for the tests.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const RING_FILL_WARN_PCT: u8 = 25;
+
+/// At most one ring-fill line per this many milliseconds.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const RING_FILL_LOG_EVERY_MS: u64 = 2_000;
+
+/// When the last ring-fill line went out, process-relative. `0` for never.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+static RING_FILL_LOGGED_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Milliseconds since the first call. A monotonic stamp small enough for an
+/// atomic and immune to the wall clock being stepped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn process_millis() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    // 1 ms floor so a stamp taken immediately is never mistaken for "never".
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis().max(1) as u64
+}
+
+/// Whether a fill of `pct` should be logged now, given `last_logged_ms` (a
+/// process-relative millisecond stamp, 0 for "never") and `now_ms`.
+///
+/// Rate limited because the interesting event lasts many chunks and the writer
+/// runs ~20 times a second: without this a single dip writes hundreds of lines
+/// and the log becomes the disk contention it is trying to measure.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn should_log_ring_fill(pct: u8, last_logged_ms: u64, now_ms: u64, every_ms: u64) -> bool {
+    pct < RING_FILL_WARN_PCT && (last_logged_ms == 0 || now_ms.saturating_sub(last_logged_ms) >= every_ms)
+}
+
 /// Convert an f32 sample in [-1.0, 1.0] to signed PCM. Full scale is 2^(N-1).
 ///
 /// # Full scale is 2^(N-1), never 2^(N-1) - 1
@@ -911,14 +962,24 @@ impl AlsaDirectStream {
             return Ok(());
         }
 
-        let frame_bytes = {
+        let (frame_bytes, buffer_frames) = {
             let pcm = self.pcm.lock().unwrap();
             let fb = pcm.frames_to_bytes(1);
             if fb <= 0 {
                 return Err("[ALSA Direct] device reports a zero-byte frame".to_string());
             }
-            fb as usize
+            // Current params, not a refine: a cached read, and the ring cannot
+            // change size under us while the stream runs.
+            let bf = pcm
+                .hw_params_current()
+                .and_then(|p| p.get_buffer_size())
+                .map(|f| f as usize)
+                .unwrap_or(0);
+            (fb as usize, bf)
         };
+        // Only the first measurement of this chunk is interesting: later
+        // iterations report the ring we have just been filling.
+        let mut fill_sampled = false;
 
         let mut offset = 0usize;
         while offset < data.len() {
@@ -941,6 +1002,21 @@ impl AlsaDirectStream {
                     continue;
                 }
             };
+
+            if !fill_sampled {
+                fill_sampled = true;
+                if let Some(pct) = ring_fill_pct(avail, buffer_frames) {
+                    let now_ms = process_millis();
+                    let last = RING_FILL_LOGGED_MS.load(Ordering::Relaxed);
+                    if should_log_ring_fill(pct, last, now_ms, RING_FILL_LOG_EVERY_MS) {
+                        RING_FILL_LOGGED_MS.store(now_ms, Ordering::Relaxed);
+                        log::warn!(
+                            "[ALSA Direct] ring down to {pct}% ({} of {buffer_frames} frames free) — the decode side is falling behind",
+                            avail
+                        );
+                    }
+                }
+            }
 
             if avail == 0 {
                 match pcm.wait(Some(WAIT_MS)) {
@@ -1257,6 +1333,57 @@ mod tests {
         for id in ["default", "sysdefault", "pulse", "pipewire", "jack", ""] {
             assert!(!AlsaDirectStream::supports_direct_open(id), "{id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod ring_fill_tests {
+    use super::{
+        process_millis, ring_fill_pct, should_log_ring_fill, RING_FILL_LOG_EVERY_MS,
+        RING_FILL_WARN_PCT,
+    };
+
+    #[test]
+    fn fill_is_the_share_of_the_ring_we_are_holding() {
+        // 24000 of a 24000-frame ring free: nothing queued, about to underrun.
+        assert_eq!(ring_fill_pct(24_000, 24_000), Some(0));
+        assert_eq!(ring_fill_pct(18_000, 24_000), Some(25));
+        assert_eq!(ring_fill_pct(12_000, 24_000), Some(50));
+        // Steady state: the writer keeps the ring nearly full.
+        assert_eq!(ring_fill_pct(0, 24_000), Some(100));
+        // `avail` can exceed the buffer size mid-recovery; clamp rather than
+        // wrap into a nonsense fill.
+        assert_eq!(ring_fill_pct(30_000, 24_000), Some(0));
+    }
+
+    #[test]
+    fn a_device_that_reports_no_buffer_size_gets_no_invented_fill() {
+        assert_eq!(ring_fill_pct(1_000, 0), None);
+    }
+
+    #[test]
+    fn only_a_low_ring_logs_and_only_once_per_window() {
+        // Healthy: never logs, however long since the last line.
+        assert!(!should_log_ring_fill(80, 0, 10_000, RING_FILL_LOG_EVERY_MS));
+        assert!(!should_log_ring_fill(
+            RING_FILL_WARN_PCT,
+            0,
+            10_000,
+            RING_FILL_LOG_EVERY_MS
+        ));
+        // First dip, nothing logged yet.
+        assert!(should_log_ring_fill(10, 0, 5_000, RING_FILL_LOG_EVERY_MS));
+        // The same dip, one writer chunk later: suppressed.
+        assert!(!should_log_ring_fill(10, 5_000, 5_050, RING_FILL_LOG_EVERY_MS));
+        // Still dipping a window later: logged again.
+        assert!(should_log_ring_fill(10, 5_000, 7_000, RING_FILL_LOG_EVERY_MS));
+    }
+
+    #[test]
+    fn the_process_clock_never_reads_as_never() {
+        // 0 is the "no line has gone out yet" sentinel, so the clock must not
+        // produce it on the first call of a fresh process.
+        assert!(process_millis() >= 1);
     }
 }
 
