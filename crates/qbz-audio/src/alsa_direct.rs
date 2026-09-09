@@ -959,7 +959,11 @@ impl AlsaDirectStream {
             }
             let take = frames * frame_bytes;
 
-            match pcm.io_bytes().writei(&data[offset..offset + take]) {
+            // Bound to a local, not used as a temporary: `IO` has a `Drop`
+            // impl and borrows the PCM, so as a temporary it outlives the mutex
+            // guard it came from and the borrow checker refuses it.
+            let io = pcm.io_bytes();
+            match io.writei(&data[offset..offset + take]) {
                 Ok(written) => offset += written * frame_bytes,
                 Err(e) => {
                     recover_write_error(&pcm, e.errno() as i32, "")?;
