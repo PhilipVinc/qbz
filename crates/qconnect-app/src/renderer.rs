@@ -555,9 +555,43 @@ pub async fn apply_renderer_command(
                 let redundant_after_load = stream_started_at
                     .map(|started| started.abs_diff(target_secs) <= 2)
                     .unwrap_or(false);
+                // The frame's position belongs to the track the frame NAMES. If
+                // the engine is not on that track yet, `current_pos_secs` is
+                // some other track's clock and every comparison below is
+                // meaningless — so is the seek.
+                //
+                // This is the ordinary shape of a queue push: the app replaces
+                // the queue, `materialize_remote_queue` starts track 0, and the
+                // cloud's SetState for that same track arrives while the load
+                // is still in flight. Observed exactly once per album change:
+                //
+                //   24.042  materialize_remote_queue: starting position 0 (350617010)
+                //   24.765  Player: Starting dynamic streaming ... start=0s
+                //   24.766  SetState seek: current=62s target=0s   <-- the previous track
+                //   24.968  Stop requested / Stopping PCM
+                //   25.106  Acquired new source from queue
+                //
+                // 140 ms of dead air and a PCM stop+prepare at the top of every
+                // freshly started track — the faint click at the start of each
+                // one. The `stream_started_at` guard above cannot catch it:
+                // this call did not perform the load, so it has nothing to
+                // compare, and the racing snapshots the two guards read need
+                // not even agree with each other.
+                //
+                // A frame carrying no track (the state-only shape) does refer
+                // to what we are playing, and still seeks.
+                let position_is_for_another_track = current_track
+                    .as_ref()
+                    .is_some_and(|cmd_track| cmd_track.track_id != playback_state.track_id);
                 if redundant_after_load {
                     log::info!(
                         "[QConnect] SetState seek skipped: stream already started at {target_secs}s"
+                    );
+                } else if position_is_for_another_track {
+                    log::info!(
+                        "[QConnect] SetState seek skipped: target {target_secs}s belongs to track {}, engine is on {} at {current_pos_secs}s",
+                        current_track.as_ref().map(|t| t.track_id).unwrap_or(0),
+                        playback_state.track_id
                     );
                 } else if !is_echo_reset && current_pos_secs.abs_diff(target_secs) > 2 {
                     log::info!(
@@ -1330,6 +1364,64 @@ mod tests {
             engine.calls().seeks.is_empty(),
             "echo seek must be rejected (#387 is_echo_reset)"
         );
+    }
+
+    /// A queue push starts track 0 while the engine still reports the previous
+    /// track's clock; the cloud's SetState for the NEW track then arrives with
+    /// position 0. Seeking on that comparison tore the engine down 140 ms into
+    /// every freshly started track (an audible click). The frame's position
+    /// belongs to a track we are not on yet, so it must not seek.
+    #[tokio::test]
+    async fn apply_renderer_command_ignores_a_position_meant_for_another_track() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 62589635, // the track that is still playing out
+            position: 62,
+            ..Default::default()
+        };
+        // Already loaded and playing, so the load path short-circuits and
+        // leaves `stream_started_at` unset — exactly as observed.
+        engine.queue_tracks = vec![mock_queue_track(350617010)];
+        engine.queue_index = Some(0);
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: None,
+            current_position_ms: Some(0),
+            current_track: Some(qi(350617010, 0)),
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        assert!(
+            engine.calls().seeks.is_empty(),
+            "a position for track 350617010 must not seek an engine on 62589635"
+        );
+    }
+
+    /// The state-only shape (no track named) DOES refer to what we are playing,
+    /// so the guard above must not swallow a real seek from a peer controller.
+    #[tokio::test]
+    async fn apply_renderer_command_still_honors_a_trackless_seek() {
+        let mut engine = MockEngine::new();
+        engine.playback = PlaybackState {
+            track_id: 7,
+            position: 10,
+            ..Default::default()
+        };
+        engine.queue_tracks = vec![mock_queue_track(7)];
+        engine.queue_index = Some(0);
+        let sync = sync();
+        let cmd = RendererCommand::SetState {
+            playing_state: None,
+            current_position_ms: Some(90_000),
+            current_track: None,
+            next_track: None,
+        };
+        apply_renderer_command(&engine, &sync, &cmd, &QConnectRendererState::default())
+            .await
+            .unwrap();
+        assert_eq!(engine.calls().seeks, vec![90]);
     }
 
     /// #1 / #387 — a genuine peer seek (target far from local) IS honored, even
