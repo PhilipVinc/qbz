@@ -84,6 +84,9 @@ const KEY_TABLE: &[(&str, ApplyClass)] = &[
     // Read when a stream opens — Reinit so a change takes effect on the next
     // track rather than waiting for a daemon restart.
     ("audio.alsa_buffer_ms", ApplyClass::Reinit),
+    // Read by the writer thread on every idle turn, so a change takes effect
+    // at the next gap without touching the stream.
+    ("audio.dac_keepalive_ms", ApplyClass::None),
     ("audio.limit_quality_to_device", ApplyClass::Reload),
     ("audio.allow_quality_fallback", ApplyClass::Reload),
     ("audio.quality_fallback_behavior", ApplyClass::Reload),
@@ -316,6 +319,28 @@ fn parse_alsa_buffer_ms(v: &str) -> Result<u16, String> {
     Ok(n)
 }
 
+/// `off` (or `0`) disables the DAC keep-alive; anything else is the depth of
+/// silence to hold during a gap, 10-500 ms.
+///
+/// Capped well below the ALSA buffer on purpose: whatever silence is queued is
+/// latency the next track waits behind, and this feature is about the DAC's
+/// clock, not about filling the ring.
+fn parse_dac_keepalive_ms(v: &str) -> Result<u16, String> {
+    let v = v.trim();
+    if v.eq_ignore_ascii_case("off") || v.eq_ignore_ascii_case("false") {
+        return Ok(0);
+    }
+    let n: u16 = v
+        .parse()
+        .map_err(|_| format!("invalid keep-alive depth '{v}' — expected 'off' or 10-500 (ms)"))?;
+    if n != 0 && !(10..=500).contains(&n) {
+        return Err(format!(
+            "keep-alive depth {n} ms out of range — expected 'off' or 10-500"
+        ));
+    }
+    Ok(n)
+}
+
 /// `off` (or `0`) leaves the player's volume alone when a session picks this
 /// device; anything else is a percentage, 1-100, applied at join time.
 fn parse_initial_volume(v: &str) -> Result<u8, String> {
@@ -450,6 +475,13 @@ fn read_all(roots: &ProfileRoots) -> Result<Vec<(&'static str, String)>, String>
                     "auto".to_string()
                 } else {
                     audio.alsa_buffer_ms.to_string()
+                }
+            }
+            "audio.dac_keepalive_ms" => {
+                if audio.dac_keepalive_ms == 0 {
+                    "off".to_string()
+                } else {
+                    audio.dac_keepalive_ms.to_string()
                 }
             }
             "audio.limit_quality_to_device" => render_bool(audio.limit_quality_to_device),
@@ -611,6 +643,13 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
             open_audio(roots)
                 .map_err(SetError::Io)?
                 .set_alsa_buffer_ms(v)
+                .map_err(SetError::Io)?
+        }
+        "audio.dac_keepalive_ms" => {
+            let v = parse_dac_keepalive_ms(raw).map_err(SetError::Usage)?;
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_dac_keepalive_ms(v)
                 .map_err(SetError::Io)?
         }
         "audio.cache_to_disk" => {
@@ -1492,6 +1531,32 @@ mod tests {
         assert_eq!(values["playback.autoplay"], "track_only");
         assert_eq!(values["qconnect.device_name"], "Kitchen");
         assert_eq!(values["qconnect.startup_mode"], "on");
+        cleanup(&roots);
+    }
+
+    #[test]
+    fn dac_keepalive_round_trips_and_refuses_a_depth_that_would_delay_the_next_track() {
+        let roots = scratch_roots("keepalive");
+        // Off is the default and shows as a word, not a zero.
+        let values: std::collections::HashMap<_, _> =
+            read_all(&roots).unwrap().into_iter().collect();
+        assert_eq!(values["audio.dac_keepalive_ms"], "off");
+
+        write_one(&roots, "audio.dac_keepalive_ms", "50").expect("set depth");
+        let values: std::collections::HashMap<_, _> =
+            read_all(&roots).unwrap().into_iter().collect();
+        assert_eq!(values["audio.dac_keepalive_ms"], "50");
+
+        write_one(&roots, "audio.dac_keepalive_ms", "off").expect("turn it off");
+        let values: std::collections::HashMap<_, _> =
+            read_all(&roots).unwrap().into_iter().collect();
+        assert_eq!(values["audio.dac_keepalive_ms"], "off");
+
+        // A ring's worth of silence is latency in front of the next track, so
+        // the depth is capped far below the ALSA buffer.
+        assert!(write_one(&roots, "audio.dac_keepalive_ms", "2000").is_err());
+        assert!(write_one(&roots, "audio.dac_keepalive_ms", "5").is_err());
+        assert!(write_one(&roots, "audio.dac_keepalive_ms", "yes").is_err());
         cleanup(&roots);
     }
 

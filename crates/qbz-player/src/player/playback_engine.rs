@@ -724,6 +724,44 @@ fn should_resume_after_drain(resume_pending: bool, should_stop: bool, is_playing
     resume_pending && !should_stop && !is_playing
 }
 
+/// How long an idle turn of the writer thread may wait before topping the
+/// keep-alive silence back up.
+///
+/// It MUST be shorter than the depth being maintained. Poll every 100 ms while
+/// holding 50 ms of silence and the ring empties between top-ups, so a feature
+/// whose entire purpose is to avoid a stopped clock would instead cause an
+/// underrun every gap. Half the depth, bounded so a small depth cannot spin the
+/// thread and a large one cannot make it sluggish about picking up a track.
+///
+/// With the keep-alive off, each caller keeps the cadence it always had —
+/// `when_off` — so turning the feature off changes nothing about how the
+/// writer idles.
+fn keepalive_poll_interval(depth_ms: u32, when_off: Duration) -> Duration {
+    if depth_ms == 0 {
+        return when_off;
+    }
+    Duration::from_millis(u64::from(depth_ms / 2).clamp(5, 100))
+}
+
+/// Hold a floor of silence under an idle PCM, if the host asked for it.
+///
+/// Best effort by design: the keep-alive is a comfort feature, and a device
+/// that refuses silence must not take the writer thread down with it. One
+/// warning, then we go quiet about it — the idle paths call this many times a
+/// second.
+fn keep_dac_awake(stream: &Arc<AlsaDirectStream>, cancel: &Arc<AtomicBool>) {
+    let depth_ms = qbz_audio::alsa_direct::dac_keepalive_ms();
+    if depth_ms == 0 {
+        return;
+    }
+    if let Err(e) = stream.write_silence_to_depth(depth_ms, cancel) {
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::Relaxed) {
+            log::warn!("[ALSA Direct Engine] DAC keep-alive silence failed ({e}); giving up on it");
+        }
+    }
+}
+
 fn alsa_writer_thread(
     stream: Arc<AlsaDirectStream>,
     is_playing: Arc<AtomicBool>,
@@ -757,7 +795,11 @@ fn alsa_writer_thread(
         // If no current source, try to get one
         if current_source.is_none() {
             // Wait for a source (with 100ms timeout to recheck stop flag)
-            match source_queue.wait_for_source(Duration::from_millis(100)) {
+            let idle_wait = keepalive_poll_interval(
+                qbz_audio::alsa_direct::dac_keepalive_ms(),
+                Duration::from_millis(100),
+            );
+            match source_queue.wait_for_source(idle_wait) {
                 Some(src) => {
                     // A LATE gapless hand-off lands here, and it has to turn
                     // playback back on itself.
@@ -812,7 +854,16 @@ fn alsa_writer_thread(
                     log::info!("[ALSA Direct Engine] Acquired new source from queue");
                 }
                 None => {
-                    // No source available, loop back to check stop
+                    // Nothing to play. Rather than leaving the PCM stopped for
+                    // the whole gap — where the DAC hears the clock stop, and
+                    // many answer with a click and a drop into standby — hold a
+                    // thin floor of silence under it. Off unless the host asks
+                    // (`audio.dac_keepalive_ms`); see `set_dac_keepalive_ms`.
+                    //
+                    // Deliberately does NOT touch `position_frames` /
+                    // `total_frames`: silence is not playback, and the reported
+                    // clock must not creep during a pause.
+                    keep_dac_awake(&stream, &should_stop);
                     continue 'thread;
                 }
             }
@@ -823,7 +874,13 @@ fn alsa_writer_thread(
             if should_stop.load(Ordering::SeqCst) {
                 break 'thread;
             }
-            std::thread::sleep(Duration::from_millis(50));
+            // Same reason as the acquire path above: a pause is a gap, and a
+            // gap with the clock stopped is a click at both ends of it.
+            keep_dac_awake(&stream, &should_stop);
+            std::thread::sleep(keepalive_poll_interval(
+                qbz_audio::alsa_direct::dac_keepalive_ms(),
+                Duration::from_millis(50),
+            ));
         }
 
         // Fill buffer from current source
@@ -1125,6 +1182,54 @@ fn dop_writer_thread(
             // else: the queued next source is picked up on the next iteration
             // with the PCM still running — the gapless DSD transition.
         }
+    }
+}
+
+#[cfg(test)]
+mod keepalive_cadence_tests {
+    use super::keepalive_poll_interval;
+    use std::time::Duration;
+
+    #[test]
+    fn the_keepalive_is_topped_up_faster_than_it_drains() {
+        // The bug this guards: polling every 100 ms while holding 50 ms of
+        // silence empties the ring between top-ups, turning a feature meant to
+        // prevent a stopped clock into an underrun every gap.
+        for depth_ms in [10, 20, 50, 100, 200, 500] {
+            let interval = keepalive_poll_interval(depth_ms, Duration::from_millis(100));
+            assert!(
+                interval < Duration::from_millis(u64::from(depth_ms)),
+                "{depth_ms} ms of silence topped up only every {interval:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_small_depth_does_not_spin_and_a_large_one_stays_responsive() {
+        // A 10 ms depth would ask for 5 ms; the floor keeps it there rather
+        // than lower.
+        assert_eq!(
+            keepalive_poll_interval(10, Duration::from_millis(100)),
+            Duration::from_millis(5)
+        );
+        // A 500 ms depth is capped, so the thread still notices a queued
+        // track promptly.
+        assert_eq!(
+            keepalive_poll_interval(500, Duration::from_millis(100)),
+            Duration::from_millis(100)
+        );
+    }
+
+    #[test]
+    fn off_leaves_each_caller_the_cadence_it_always_had() {
+        assert_eq!(
+            keepalive_poll_interval(0, Duration::from_millis(100)),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            keepalive_poll_interval(0, Duration::from_millis(50)),
+            Duration::from_millis(50)
+        );
     }
 }
 

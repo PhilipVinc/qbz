@@ -4827,6 +4827,17 @@ impl Player {
         }
         qbz_audio::alsa_direct::set_alsa_buffer_ms(u32::from(audio_settings.alsa_buffer_ms));
 
+        // Whether to hold the DAC's clock up with silence during gaps. Read
+        // here for the same reason as the buffer above: it is a property of
+        // this host, and the writer thread asks for it on every idle turn.
+        if audio_settings.dac_keepalive_ms > 0 {
+            log::info!(
+                "[Player] DAC keep-alive: {} ms of silence during gaps (audio.dac_keepalive_ms)",
+                audio_settings.dac_keepalive_ms
+            );
+        }
+        qbz_audio::alsa_direct::set_dac_keepalive_ms(u32::from(audio_settings.dac_keepalive_ms));
+
         // How a volume percentage becomes an amplitude multiplier. Read once
         // here: the curve is a property of the host's configuration, and every
         // engine variant applies it at the same point.

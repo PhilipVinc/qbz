@@ -70,6 +70,25 @@ pub struct AudioSettings {
     /// latency no renderer listener can perceive.
     #[serde(default)]
     pub alsa_buffer_ms: u16,
+    /// Milliseconds of silence to keep queued while there is nothing to play;
+    /// `0` (the default) turns the keep-alive off.
+    ///
+    /// Between two tracks that are not a gapless hand-off — an album ending, a
+    /// prefetch that has not finished, a pause — the PCM is drained and left
+    /// stopped, and a DAC that hears its clock stop often answers with a click
+    /// and a drop into standby, then another click when the next track starts
+    /// it again. A floor of silence keeps the clock running through the gap.
+    ///
+    /// Shairport Sync ships the same thing as `disable_standby_mode` (silence
+    /// fed whenever the output buffer falls below a threshold) and MPD as
+    /// `always_on`. Both default it off, and so does this: it holds the device
+    /// open, which keeps other clients off a shared card and a DAC out of the
+    /// standby some users want.
+    ///
+    /// Keep it SMALL — 50 ms is plenty. It is a floor, not a target, but
+    /// whatever silence is queued is latency the next track waits behind.
+    #[serde(default)]
+    pub dac_keepalive_ms: u16,
     /// Write cached tracks to the L2 disk cache.
     ///
     /// False keeps caching in memory only: gapless still works (the next track
@@ -179,6 +198,7 @@ impl Default for AudioSettings {
             memory_cache_mb: 0,    // 0 = auto-size from host RAM
             volume_curve: default_volume_curve(),
             alsa_buffer_ms: 0, // 0 = derive from the sample rate
+            dac_keepalive_ms: 0, // 0 = off, like shairport-sync and MPD default it
             cache_to_disk: default_cache_to_disk(),
             limit_quality_to_device: false, // Opt-in. Off since 1.1.9 (#45); wired to the read-only probe in #638 fix 3
             device_max_sample_rate: None, // Set when device is selected
@@ -323,6 +343,10 @@ impl AudioSettingsStore {
             "ALTER TABLE audio_settings ADD COLUMN cache_to_disk INTEGER DEFAULT 1",
             [],
         );
+        let _ = conn.execute(
+            "ALTER TABLE audio_settings ADD COLUMN dac_keepalive_ms INTEGER DEFAULT 0",
+            [],
+        );
 
         // Seed the single settings row on first run with the OOTB default backend
         // ("System"). INSERT OR IGNORE is a one-time seed: it only fires when the
@@ -388,7 +412,7 @@ impl AudioSettingsStore {
     pub fn get_settings(&self) -> Result<AudioSettings, String> {
         self.conn
             .query_row(
-                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device, volume_curve, alsa_buffer_ms, cache_to_disk FROM audio_settings WHERE id = 1",
+                "SELECT output_device, exclusive_mode, dac_passthrough, preferred_sample_rate, backend_type, alsa_plugin, alsa_hardware_volume, stream_first_track, stream_buffer_seconds, streaming_only, limit_quality_to_device, device_max_sample_rate, normalization_enabled, normalization_target_lufs, gapless_enabled, device_sample_rate_limits, pw_force_bitperfect, sync_audio_on_startup, quality_fallback_behavior, skip_sink_switch, allow_quality_fallback, reserve_dac_while_running, dsd_mode, memory_cache_mb, alsa_mixer_device, volume_curve, alsa_buffer_ms, cache_to_disk, dac_keepalive_ms FROM audio_settings WHERE id = 1",
                 [],
                 |row| {
                     // Parse backend_type from JSON string
@@ -446,6 +470,7 @@ impl AudioSettingsStore {
                             .unwrap_or_else(default_volume_curve),
                         alsa_buffer_ms: row.get::<_, Option<i64>>(26)?.unwrap_or(0) as u16,
                         cache_to_disk: row.get::<_, Option<i64>>(27)?.unwrap_or(1) != 0,
+                        dac_keepalive_ms: row.get::<_, Option<i64>>(28)?.unwrap_or(0) as u16,
                     })
                 },
             )
@@ -599,6 +624,16 @@ impl AudioSettingsStore {
                 params![ms],
             )
             .map_err(|e| format!("Failed to set ALSA buffer ms: {}", e))?;
+        Ok(())
+    }
+
+    pub fn set_dac_keepalive_ms(&self, ms: u16) -> Result<(), String> {
+        self.conn
+            .execute(
+                "UPDATE audio_settings SET dac_keepalive_ms = ?1 WHERE id = 1",
+                params![ms],
+            )
+            .map_err(|e| format!("Failed to set DAC keep-alive ms: {}", e))?;
         Ok(())
     }
 
@@ -892,7 +927,8 @@ impl AudioSettingsStore {
                     alsa_mixer_device = ?23,
                     volume_curve = ?24,
                     alsa_buffer_ms = ?25,
-                    cache_to_disk = ?26
+                    cache_to_disk = ?26,
+                    dac_keepalive_ms = ?27
                 WHERE id = 1",
                 params![
                     defaults.output_device,
@@ -921,6 +957,7 @@ impl AudioSettingsStore {
                     defaults.volume_curve.clone(),
                     defaults.alsa_buffer_ms as i64,
                     defaults.cache_to_disk as i64,
+                    defaults.dac_keepalive_ms as i64,
                 ],
             )
             .map_err(|e| format!("Failed to reset audio settings: {}", e))?;

@@ -32,6 +32,40 @@ pub fn alsa_buffer_ms() -> u32 {
     BUFFER_MS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Milliseconds of silence to keep queued while there is nothing to play.
+/// `0` disables the keep-alive entirely.
+static DAC_KEEPALIVE_MS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Keep the DAC clocked with silence during gaps; `0` turns it off.
+///
+/// # Why a renderer wants this
+///
+/// Between two tracks that are not a gapless hand-off — the end of an album,
+/// a track the prefetch has not finished, a user pressing pause — this path
+/// drains the PCM and stops writing. The device then sees the clock stop, and
+/// many DACs answer that with a click and a drop into standby, followed by a
+/// second click when the next track starts it again. It is the same
+/// discontinuity that made librespot click on S/PDIF: ALSA hands samples to
+/// the interface with no smoothing, so a stop IS an edge.
+///
+/// Every serious renderer ships a switch for this. Shairport Sync calls it
+/// `disable_standby_mode` and feeds silence, topping up whenever the output
+/// buffer falls below a threshold; MPD calls it `always_on` and simply never
+/// closes the output. This is the same idea with the threshold made explicit,
+/// because the threshold is the part that matters (see
+/// [`AlsaDirectStream::write_silence_to_depth`]).
+///
+/// Off by default, like both of those: it holds the device open, which is not
+/// what every user wants, and on a shared card it keeps other clients out.
+pub fn set_dac_keepalive_ms(ms: u32) {
+    DAC_KEEPALIVE_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Configured keep-alive depth in milliseconds; `0` when off.
+pub fn dac_keepalive_ms() -> u32 {
+    DAC_KEEPALIVE_MS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Buffer length in frames for `sample_rate`, honouring the override.
 ///
 /// The default scales with rate — 500 ms at 192 kHz and above, 250 ms from
@@ -252,6 +286,18 @@ fn process_millis() -> u64 {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn should_log_ring_fill(pct: u8, last_logged_ms: u64, now_ms: u64, every_ms: u64) -> bool {
     pct < RING_FILL_WARN_PCT && (last_logged_ms == 0 || now_ms.saturating_sub(last_logged_ms) >= every_ms)
+}
+
+/// How many frames of silence to add to reach `target_frames` of queued audio.
+///
+/// The whole point is the ceiling. Filling the ring with silence would keep the
+/// clock running, but a real track arriving next would then queue BEHIND all of
+/// it and start late by however deep the ring is — a quarter to a half second
+/// on the hosts that need the keep-alive most. So the keep-alive holds a thin
+/// floor of silence and nothing more: enough that the clock never stops,
+/// little enough that the wait it imposes on the next track is inaudible.
+pub fn silence_frames_needed(held_frames: usize, target_frames: usize) -> usize {
+    target_frames.saturating_sub(held_frames)
 }
 
 /// Convert an f32 sample in [-1.0, 1.0] to signed PCM. Full scale is 2^(N-1).
@@ -933,6 +979,78 @@ impl AlsaDirectStream {
         self.write_bytes_interruptible(bytes, cancel)
     }
 
+    /// Top the ring up to `target_ms` of SILENCE, so the clock keeps running
+    /// while there is nothing to play. Returns the frames written.
+    ///
+    /// Called only from the idle paths of the writer thread — between tracks
+    /// and while paused — where the alternative is a stopped PCM and the click
+    /// that comes with it (see [`set_dac_keepalive_ms`]).
+    ///
+    /// # The depth is a ceiling, not a target to fill
+    ///
+    /// It writes nothing at all once the ring already holds `target_ms`, so a
+    /// real source arriving finds at most that much silence ahead of it. Keep
+    /// it small: this is latency added to the start of the next track.
+    ///
+    /// # PCM only
+    ///
+    /// Silence here is digital zero, which is silence in every PCM layout this
+    /// path supports. It is NOT silence in DoP, whose idle pattern carries
+    /// marker bytes — the DoP writer is a separate thread and must not call
+    /// this.
+    #[cfg(target_os = "linux")]
+    pub fn write_silence_to_depth(
+        &self,
+        target_ms: u32,
+        cancel: &AtomicBool,
+    ) -> Result<usize, String> {
+        if target_ms == 0 {
+            return Ok(0);
+        }
+        if matches!(self.format, Format::DSDU32BE | Format::DSDU32LE) {
+            // Belt and braces: DoP silence is not zeros.
+            return Ok(0);
+        }
+
+        let (frame_bytes, held, target_frames) = {
+            let pcm = self.pcm.lock().unwrap();
+            let frame_bytes = pcm.frames_to_bytes(1);
+            if frame_bytes <= 0 {
+                return Ok(0);
+            }
+            let buffer_frames = pcm
+                .hw_params_current()
+                .and_then(|p| p.get_buffer_size())
+                .map(|f| f as usize)
+                .unwrap_or(0);
+            if buffer_frames == 0 {
+                return Ok(0);
+            }
+            // `avail_update` can fail here in the ordinary course of things: a
+            // natural end leaves the pcm freshly prepared. Treat that as an
+            // empty ring rather than an error — the write below is what starts
+            // it, and a real error surfaces there.
+            let avail = pcm.avail_update().map(|f| f.max(0) as usize).unwrap_or(0);
+            let held = buffer_frames.saturating_sub(avail);
+            // Never ask for more than the ring can hold.
+            let target = ((self.sample_rate as usize * target_ms as usize) / 1000)
+                .min(buffer_frames);
+            (frame_bytes as usize, held, target)
+        };
+
+        let frames = silence_frames_needed(held, target_frames);
+        if frames == 0 {
+            return Ok(0);
+        }
+
+        let mut scratch = self.scratch.lock().unwrap();
+        let bytes = &mut scratch.bytes;
+        bytes.clear();
+        bytes.resize(frames * frame_bytes, 0);
+        self.write_bytes_interruptible(bytes, cancel)?;
+        Ok(frames)
+    }
+
     /// Write `data` to ALSA in bounded steps, releasing the PCM lock between
     /// each one and honouring `cancel`.
     ///
@@ -1279,6 +1397,14 @@ impl AlsaDirectStream {
         Err("ALSA Direct is only available on Linux".to_string())
     }
 
+    pub fn write_silence_to_depth(
+        &self,
+        _target_ms: u32,
+        _cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<usize, String> {
+        Ok(0)
+    }
+
     pub fn drain(&self) -> Result<(), String> {
         Ok(())
     }
@@ -1333,6 +1459,36 @@ mod tests {
         for id in ["default", "sysdefault", "pulse", "pipewire", "jack", ""] {
             assert!(!AlsaDirectStream::supports_direct_open(id), "{id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod keepalive_tests {
+    use super::{dac_keepalive_ms, set_dac_keepalive_ms, silence_frames_needed};
+
+    #[test]
+    fn silence_tops_up_to_the_depth_and_never_past_it() {
+        // An empty ring: the whole depth.
+        assert_eq!(silence_frames_needed(0, 4_800), 4_800);
+        // Half of it already queued: only the remainder.
+        assert_eq!(silence_frames_needed(2_400, 4_800), 2_400);
+        // At the depth: nothing. This is the case that keeps the next real
+        // track from queueing behind a ring full of silence.
+        assert_eq!(silence_frames_needed(4_800, 4_800), 0);
+        // Above it — a track just ended and its tail is still queued — still
+        // nothing, and no underflow.
+        assert_eq!(silence_frames_needed(48_000, 4_800), 0);
+    }
+
+    #[test]
+    fn the_keepalive_is_off_unless_asked_for() {
+        // Default: off, like shairport-sync's disable_standby_mode and MPD's
+        // always_on. Holding a DAC open is a choice, not a default.
+        assert_eq!(dac_keepalive_ms(), 0);
+        set_dac_keepalive_ms(50);
+        assert_eq!(dac_keepalive_ms(), 50);
+        set_dac_keepalive_ms(0);
+        assert_eq!(dac_keepalive_ms(), 0);
     }
 }
 
