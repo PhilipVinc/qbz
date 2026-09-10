@@ -315,6 +315,24 @@ fn should_log_ring_fill(pct: u8, last_logged_ms: u64, now_ms: u64, every_ms: u64
     pct < RING_FILL_WARN_PCT && (last_logged_ms == 0 || now_ms.saturating_sub(last_logged_ms) >= every_ms)
 }
 
+/// Milliseconds of digital silence written before the PCM is halted or drained.
+///
+/// A stop is a step: whatever sample was last on the wire is what the DAC is
+/// left holding when the clock stops, and unless the track happened to end at
+/// zero that step is a click — one after every song, at every sample rate,
+/// which is exactly how it was reported. Landing on silence first makes the
+/// stop happen from a settled state.
+///
+/// Not a new idea here: the DoP writer has always padded ~150 ms before
+/// closing, in its own words because "DACs pop when a DSD stream stops
+/// mid-pattern". The PCM path simply never got the same treatment.
+pub const STOP_PAD_MS: u32 = 60;
+
+/// Frames in a silence pad of `pad_ms` at `sample_rate`.
+pub fn pad_frames(sample_rate: u32, pad_ms: u32) -> usize {
+    ((u64::from(sample_rate) * u64::from(pad_ms)) / 1000) as usize
+}
+
 /// How many frames of silence to add to reach `target_frames` of queued audio.
 ///
 /// The whole point is the ceiling. Filling the ring with silence would keep the
@@ -1213,6 +1231,16 @@ impl AlsaDirectStream {
 
     /// Drain and stop playback
     pub fn drain(&self) -> Result<(), String> {
+        // The end of a song is where this matters most. The drain below waits
+        // for the queued tail to clock out, which it detects by the stream
+        // UNDERRUNNING — and an underrun is the clock stopping on whatever
+        // sample the track ended on. Unless the track faded to zero, that step
+        // is the pop heard after every song, at every sample rate.
+        //
+        // Pad first, so the tail the DAC hears last is silence and the
+        // underrun happens on zeros. Skipped automatically when the stream is
+        // not running (see `pad_with_silence`).
+        self.pad_with_silence(STOP_PAD_MS);
         log::info!("[ALSA Direct] Draining PCM");
         let pcm = self.pcm.lock().unwrap();
         // BOUNDED drain — a bare `snd_pcm_drain` blocks until every queued
@@ -1260,7 +1288,69 @@ impl AlsaDirectStream {
     }
 
     /// Stop PCM immediately (prepare for next playback)
+    /// Write `pad_ms` of digital silence, so a stop lands on zero.
+    ///
+    /// Bounded by a deadline rather than by a cancel flag: this runs on the
+    /// stop path, where every caller has already given up on the stream, and a
+    /// device that has stopped draining must not be able to hold the stop open.
+    /// A pad that does not make it out is not worth waiting for.
+    #[cfg(target_os = "linux")]
+    fn pad_with_silence(&self, pad_ms: u32) {
+        if pad_ms == 0 {
+            return;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(u64::from(pad_ms) * 2);
+        let (frame_bytes, frames) = {
+            let pcm = self.pcm.lock().unwrap();
+            // Nothing to settle unless the clock is actually running.
+            if !matches!(pcm.state(), alsa::pcm::State::Running) {
+                return;
+            }
+            let fb = pcm.frames_to_bytes(1);
+            if fb <= 0 {
+                return;
+            }
+            (fb as usize, pad_frames(self.sample_rate, pad_ms))
+        };
+
+        let mut scratch = match self.scratch.lock() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let bytes = &mut scratch.bytes;
+        bytes.clear();
+        bytes.resize(frames * frame_bytes, 0);
+
+        let mut offset = 0usize;
+        while offset < bytes.len() && std::time::Instant::now() < deadline {
+            let pcm = self.pcm.lock().unwrap();
+            let avail = match pcm.avail_update() {
+                Ok(f) if f > 0 => f as usize,
+                _ => {
+                    drop(pcm);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    continue;
+                }
+            };
+            let step = frames_this_step(avail, bytes.len() - offset, frame_bytes);
+            if step == 0 {
+                break;
+            }
+            let take = step * frame_bytes;
+            let io = pcm.io_bytes();
+            match io.writei(&bytes[offset..offset + take]) {
+                Ok(written) => offset += written * frame_bytes,
+                // Already underrun or otherwise unhappy: the pad has no value
+                // on a stream that is not cleanly running.
+                Err(_) => break,
+            }
+        }
+    }
+
     pub fn stop(&self) -> Result<(), String> {
+        // Land on silence before halting the clock, so the DAC is not left
+        // holding whatever sample the track ended on. See `STOP_PAD_MS`.
+        self.pad_with_silence(STOP_PAD_MS);
         log::info!("[ALSA Direct] Stopping PCM");
         let pcm = self.pcm.lock().unwrap();
         // Standard immediate-stop ritual: DROP (halt now, discard queued
@@ -1503,6 +1593,32 @@ mod tests {
         for id in ["default", "sysdefault", "pulse", "pipewire", "jack", ""] {
             assert!(!AlsaDirectStream::supports_direct_open(id), "{id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod stop_pad_tests {
+    use super::{pad_frames, STOP_PAD_MS};
+
+    #[test]
+    fn a_pad_is_the_right_length_at_every_rate() {
+        assert_eq!(pad_frames(44_100, 60), 2_646);
+        assert_eq!(pad_frames(96_000, 60), 5_760);
+        assert_eq!(pad_frames(192_000, 60), 11_520);
+        assert_eq!(pad_frames(96_000, 0), 0);
+    }
+
+    #[test]
+    fn the_pad_fits_inside_the_shortest_ring_a_host_can_ask_for() {
+        // `alsa_buffer_ms` clamps to 50 ms at the low end. The pad is written
+        // in steps as space frees, so it completes either way — but it should
+        // not routinely need more than one ring's worth, or a stop starts
+        // costing more than the click it is avoiding.
+        assert!(
+            STOP_PAD_MS <= 60,
+            "a {STOP_PAD_MS}ms pad is long against the shortest configurable ring"
+        );
+        assert!(STOP_PAD_MS > 0, "a zero pad settles nothing");
     }
 }
 

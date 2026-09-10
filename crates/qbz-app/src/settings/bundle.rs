@@ -740,6 +740,7 @@ fn plan_audio(
                     | "memory_cache_mb"
                     | "volume_curve"
                     | "alsa_buffer_ms"
+                    | "dac_keepalive_ms"
                     | "cache_to_disk"
                     | "dsd_mode"
             )
@@ -944,6 +945,13 @@ fn plan_audio_machine(
     // describes how much slack the host needs, not which device it has.
     if let Some(v) = map.get("alsa_buffer_ms") {
         applied_line(plan, "audio.alsa_buffer_ms", v, "");
+    }
+
+    // dac_keepalive_ms — silence held under the DAC during gaps. Portable for
+    // the same reason as alsa_buffer_ms: it says how twitchy this host's DAC is
+    // about a stopped clock, not which device is attached.
+    if let Some(v) = map.get("dac_keepalive_ms") {
+        applied_line(plan, "audio.dac_keepalive_ms", v, "");
     }
 
     // cache_to_disk — whether the L2 cache is written at all. A host preference
