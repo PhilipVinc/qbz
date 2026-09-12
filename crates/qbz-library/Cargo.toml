@@ -1,9 +1,11 @@
 [package]
 name = "qbz-library"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Local music library management for QBZ - scanning, indexing, metadata extraction"
 authors = ["blitzkriegfc"]
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 # Logging

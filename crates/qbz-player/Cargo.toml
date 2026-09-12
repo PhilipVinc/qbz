@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Playback engine and queue management for QBZ"
+repository.workspace = true
 
 [dependencies]
 qbz-models = { path = "../qbz-models" }

@@ -1,9 +1,10 @@
 [package]
 name = "qbzd"
 version.workspace = true
-edition = "2021"
+edition.workspace = true
 description = "QBZ headless Qobuz playback daemon (daemon + CLI + setup TUI in one binary)"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "qbzd"

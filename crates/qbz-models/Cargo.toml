@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Shared types, events, and traits for QBZ music player"
+repository.workspace = true
 
 [dependencies]
 # Serialization

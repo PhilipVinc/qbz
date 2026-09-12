@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Device-bound secret wrapping for QBZ (offline cache keys, tokens)"
+repository.workspace = true
 
 [dependencies]
 # AES-256-GCM for the at-rest wrap/unwrap

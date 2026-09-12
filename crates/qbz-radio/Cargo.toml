@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Agnostic smart-radio pool builder for QBZ (ported from the Tauri radio_engine)"
+repository.workspace = true
 
 [dependencies]
 qbz-models = { path = "../qbz-models" }

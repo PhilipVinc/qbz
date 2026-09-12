@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Core orchestrator for QBZ music player"
+repository.workspace = true
 
 [dependencies]
 qbz-models = { path = "../qbz-models" }

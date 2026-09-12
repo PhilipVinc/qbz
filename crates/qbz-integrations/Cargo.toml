@@ -1,9 +1,10 @@
 [package]
 name = "qbz-integrations"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Third-party service integrations for QBZ (Last.fm, ListenBrainz, MusicBrainz)"
-license = "MIT"
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 # Async runtime

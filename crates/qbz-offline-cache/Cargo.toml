@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Offline cache for QBZ: download-for-offline store, CMAF bundle vault, SQLite index, cached playback resolution (frontend-agnostic)"
+repository.workspace = true
 
 [dependencies]
 # Sibling crates: the network + crypto + init-parse + library index already live here.

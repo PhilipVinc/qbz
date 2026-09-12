@@ -1,0 +1,6 @@
+# Floating stable, with the components CI expects. Pinning an exact version
+# would be churn for no benefit here: nothing in the tree needs a specific
+# rustc, and CI uses dtolnay/rust-toolchain@stable to match.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

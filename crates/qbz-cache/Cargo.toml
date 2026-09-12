@@ -1,9 +1,11 @@
 [package]
 name = "qbz-cache"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Audio caching system for QBZ - L1 memory + L2 disk caches"
 authors = ["blitzkriegfc"]
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 # Logging
