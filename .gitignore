@@ -36,11 +36,9 @@ Thumbs.db
 # Documentation (kept external)
 qbz-nix-docs/
 
-# AI agent instructions and planning docs (untracked)
+# Planning docs (untracked)
 .github/copilot-instructions.md
 docs/superpowers/
-CLAUDE.md
-AGENTS.md
 
 /crates/target/
 # /crates/Cargo.lock  # tracked for reproducible CI builds

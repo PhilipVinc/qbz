@@ -68,6 +68,11 @@ jobs:
           # cache warm for the next PR.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # The tree is rustfmt-clean as of the workspace-wide format; keep it that
+      # way. Cheap and fails fast, before the compile.
+      - name: cargo fmt --check
+        run: cargo fmt --manifest-path crates/Cargo.toml --all --check
+
       - name: cargo test
         env:
           CARGO_TERM_COLOR: always
