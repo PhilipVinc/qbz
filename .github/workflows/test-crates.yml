@@ -4,7 +4,7 @@
 # workspace is testable (~5 min cold, ~1–2 min warm).
 #
 # Repo policy note: `main` is the trunk and the only branch releases are cut
-# from (fork-qbzd-release.yml refuses a tag that is not on main). This is the
+# from (release.yml refuses a tag that is not on main). This is the
 # workflow that keeps main green. Path-filtered so packaging/docs PRs skip it.
 
 name: test-crates

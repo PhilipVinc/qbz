@@ -1,6 +1,6 @@
 # Helper: build the qbzd binary for aarch64 from any ref, for on-device
 # testing. Manual dispatch only — it publishes nothing.
-name: build-qbzd-arm64
+name: build-arm64
 on:
   workflow_dispatch:
     inputs:
@@ -28,4 +28,4 @@ jobs:
       - name: build
         run: cargo build --release -p qbzd
       - uses: actions/upload-artifact@v4
-        with: { name: qbzd-linux-aarch64, path: target/release/qbzd }
+        with: { name: muqbzd-aarch64-testbuild, path: target/release/qbzd }

@@ -36,7 +36,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Output of `qbzd version` (e.g. 2.1.0.moode1).
+      description: Output of `qbzd version` (e.g. 2.1.0).
     validations:
       required: true
 

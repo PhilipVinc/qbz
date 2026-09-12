@@ -61,9 +61,10 @@ created rebase conflicts against upstream. Neither applies now.
 - **`qbzd` must never resolve Slint.** CI gates on it in both workflows. Nothing in
   the tree pulls it today; the gate exists so a crates.io dependency cannot
   reintroduce it.
-- **Do not reshape the release tarball.** `qbzd-<version>-linux-<arch>.tar.gz`
-  containing `qbzd-<version>-linux-<arch>/qbzd` is pinned by moOde's
-  `qobuz-installer.sh`; changing the layout breaks installs in the field.
+- **The release asset shape is an API.** `muqbzd-<version>-linux-<arch>.tar.gz`
+  unpacks to one versioned directory holding `qbzd`, `qbzd.service`,
+  `completions/` and `README.md`, with a `.sha256` beside it. Installers pin
+  this; reshaping it breaks them.
 
 ## Versioning
 
@@ -78,9 +79,8 @@ Cargo version, so a plain `cargo build` is unchanged.
 
 `main` is the trunk. CI (`test-crates`) runs on PRs into main and pushes to main,
 path-filtered to `crates/**`. Releases are **tags on main**: pushing a `vX.Y.Z` tag
-triggers `fork-qbzd-release.yml`, whose first job refuses any tag whose commit is not
-an ancestor of `origin/main`. (`qbzd-v*` also fires it, for the deployed moOde
-installer that still pins that shape.) `build-qbzd-arm64.yml` is manual-dispatch and publishes
+triggers `release.yml`, whose first job refuses any tag whose commit is not an
+ancestor of `origin/main`. `build-arm64.yml` is manual-dispatch and publishes
 nothing — use it for a Pi test binary without tagging.
 
 ## Stale markers you will run into

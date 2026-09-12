@@ -1,26 +1,23 @@
 # muqbzd standalone release.
 #
 # This is the only workflow that publishes anything:
-#   - triggers on `v*` tags (`v2.1.0`). `qbzd-v*` still fires it too, for the
-#     deployed moOde installer that pins `qbzd-v$VERSION`; drop that trigger
-#     once the installer moves to `v$VERSION`;
+#   - triggers on `v*` tags (`v2.1.0`);
 #   - releases ONLY from `main`: the `guard` job refuses a tag whose commit is
 #     not an ancestor of main, so a tag pushed on a topic branch fails loudly
 #     instead of publishing a release nobody can reproduce from the trunk;
-#   - builds the qbzd binary and ships a stable asset shape that consumers
-#     like moOde's qobuz-installer.sh depend on:
-#     qbzd-<version>-linux-<arch>.tar.gz containing qbzd-<version>-linux-<arch>/qbzd);
+#   - builds the qbzd binary and ships a stable asset shape consumers pin
+#     against: muqbzd-<version>-linux-<arch>.tar.gz containing
+#     muqbzd-<version>-linux-<arch>/qbzd, with a .sha256 beside it;
 #   - publishes a PRERELEASE GitHub Release on the tag.
 #
 # Tag `v2.1.0` -> version `2.1.0`. Plain semver: no distro suffixes.
 
-name: "muqbzd standalone release"
+name: release
 
 on:
   push:
     tags:
       - "v*"
-      - "qbzd-v*"   # compatibility: the deployed moOde installer pins this shape
   workflow_dispatch:
     inputs:
       tag:
@@ -29,7 +26,7 @@ on:
         type: string
 
 concurrency:
-  group: fork-qbzd-release-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -81,12 +78,9 @@ jobs:
         run: |
           VERSION=""
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
-            VERSION="${VERSION#qbzd-v}"   # legacy prefix
-            VERSION="${VERSION#v}"
+            VERSION="${GITHUB_REF#refs/tags/v}"
           elif [[ -n "${{ inputs.tag }}" ]]; then
             VERSION="${{ inputs.tag }}"
-            VERSION="${VERSION#qbzd-v}"
             VERSION="${VERSION#v}"
           else
             VERSION="$(grep -m1 '^version = ' Cargo.toml | sed 's/version = \"\(.*\)\"/\1/')"
@@ -127,30 +121,34 @@ jobs:
           highest=$(printf '%s\n' "$floor" "GLIBC_2.35" | sort -V | tail -1)
           [ "$highest" = "GLIBC_2.35" ] || { echo "::error::floor $floor exceeds 2.35"; exit 1; }
 
-      # The tarball layout consumers pin against — do not reshape it.
-      - name: qbzd tarball
+      # Release asset shape. Consumers pin this, so changing it is a breaking
+      # change for them: muqbzd-<version>-linux-<arch>.tar.gz unpacking to a
+      # single versioned directory holding the binary, its unit file, shell
+      # completions and a README.
+      - name: tarball
         env:
           VERSION: ${{ steps.release.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           cp target/release/qbzd ./qbzd
-          QBZD_DIR="qbzd-${VERSION}-linux-${ARCH}"
-          mkdir -p "qbzd-tarball-staging/${QBZD_DIR}/completions"
-          cp qbzd "qbzd-tarball-staging/${QBZD_DIR}/qbzd"
-          chmod +x "qbzd-tarball-staging/${QBZD_DIR}/qbzd"
-          cp crates/qbzd/service/qbzd.service "qbzd-tarball-staging/${QBZD_DIR}/qbzd.service"
-          ./qbzd completions bash > "qbzd-tarball-staging/${QBZD_DIR}/completions/qbzd.bash"
-          ./qbzd completions zsh  > "qbzd-tarball-staging/${QBZD_DIR}/completions/qbzd.zsh"
-          ./qbzd completions fish > "qbzd-tarball-staging/${QBZD_DIR}/completions/qbzd.fish"
-          cp packaging/linux/qbzd-standalone-README.md "qbzd-tarball-staging/${QBZD_DIR}/README.md"
+          DIR="muqbzd-${VERSION}-linux-${ARCH}"
+          mkdir -p "staging/${DIR}/completions"
+          cp qbzd "staging/${DIR}/qbzd"
+          chmod +x "staging/${DIR}/qbzd"
+          cp crates/qbzd/service/qbzd.service "staging/${DIR}/qbzd.service"
+          ./qbzd completions bash > "staging/${DIR}/completions/qbzd.bash"
+          ./qbzd completions zsh  > "staging/${DIR}/completions/qbzd.zsh"
+          ./qbzd completions fish > "staging/${DIR}/completions/qbzd.fish"
+          cp packaging/linux/muqbzd-standalone-README.md "staging/${DIR}/README.md"
           mkdir -p dist
-          tar -czvf "dist/qbzd-${VERSION}-linux-${ARCH}.tar.gz" -C qbzd-tarball-staging "${QBZD_DIR}"
+          tar -czf "dist/${DIR}.tar.gz" -C staging "${DIR}"
+          ( cd dist && sha256sum "${DIR}.tar.gz" > "${DIR}.tar.gz.sha256" )
           ls -la dist
 
       - uses: actions/upload-artifact@v7
         with:
-          name: qbzd-fork-${{ matrix.arch }}
+          name: muqbzd-${{ matrix.arch }}
           path: dist/*
 
   # Single publisher so the two matrix legs never race on Release creation.
@@ -163,7 +161,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: qbzd-fork-*
+          pattern: muqbzd-*
           merge-multiple: true
           path: dist
 
