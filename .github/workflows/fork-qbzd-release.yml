@@ -70,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           hits=$(cargo tree --manifest-path crates/Cargo.toml -p qbzd -e normal \
-                 | grep -E '\b(slint|qbz-ui|qbz-slint-common|qbz-dac-wizard) v' || true)
+                 | grep -E '\bslint[a-z-]* v' || true)
           [ -z "$hits" ] || { echo "::error::qbzd graph resolves Slint:"; echo "$hits"; exit 1; }
 
       # QBZD_BUILD_ID stamps the release version into the binary, so

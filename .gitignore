@@ -21,30 +21,12 @@ Thumbs.db
 
 # Logs
 *.log
-snapcraft-*.txt
-
-# Flatpak build artifacts
-flatpak-build/
-flatpak-repo/
-.flatpak-builder/
-packaging/flatpak/build/
-packaging/flatpak/repo/
-packaging/flatpak/.flatpak-builder/
 
 # Release artifacts
-*.AppImage
 *.deb
 *.rpm
-*.flatpak
-*.snap
-/packaging/snap/parts/
-/packaging/snap/prime/
-/packaging/snap/stage/
 *.tar.gz
 *.tar.xz
-
-# Image upscaler outputs
-static/*upscayl*
 
 # Local build temp
 /.tmp/

@@ -32,10 +32,3 @@ serde_json = { workspace = true }
 
 [features]
 default = []
-# Tier 2 features (to be added later)
-# offline = ["qbz-offlineplayback"]
-# local-library = ["qbz-locallibrary"]
-# cast = ["qbz-cast"]
-# scrobbling = ["qbz-scrobbling"]
-# plex = ["qbz-plex"]
-# full = ["offline", "local-library", "cast", "scrobbling", "plex"]

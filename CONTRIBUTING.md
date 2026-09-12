@@ -4,12 +4,11 @@ This project is actively evolving. Contributions are welcome, but we have a few 
 
 ## Where the code lives
 
-The live app is the Rust workspace under `crates/` — a single native process
-with a Slint UI. UI code is in `crates/qbz-ui` (`.slint` + generated bindings)
-and `crates/qbz` (the binary). The old Svelte `src/` and Tauri `src-tauri/`
-trees were **deleted in 2.0.2**; they survive only at the git tag
-`legacy-tauri-svelte` for reference. PRs against those paths cannot be merged —
-port the change to `crates/` instead.
+This fork is **daemon-only**: the Rust workspace under `crates/` carries `qbzd`
+and exactly the crates it depends on. The Slint desktop UI (`crates/qbz`,
+`crates/qbz-ui`, the theme/i18n/cast/lyrics/mixtape/plex/playlist-import crates)
+lives upstream at [vicrodh/qbz](https://github.com/vicrodh/qbz) and was removed
+here — port UI changes there, not to this tree.
 
 ## Quick rules
 
@@ -72,9 +71,8 @@ PRs targeting `main` will be closed and asked to retarget to `pre-release`.
    - `git checkout pre-release`
    - `git merge --no-ff <type>/external/<topic>`
 5. **Run checks**
-   - Build/validate a touched core crate: `cargo check -p <crate>` (run from
-     `crates/`). The full UI (`qbz`/`qbz-ui`) is a ~20–30 GB compile — see the
-     README "Building from Source" section before attempting it.
+   - Build/validate a touched crate: `cargo check -p <crate>` (run from
+     `crates/`), or the whole workspace with `./scripts/cargo-test.sh`.
 6. **Push pre-release**
    - `git push origin pre-release`
 7. **Close the PR with a comment** explaining it was merged to `pre-release`.
@@ -104,31 +102,9 @@ Prefer:
 ## What to include in PRs
 
 - A short description of the problem and solution.
-- Screenshots for UI changes when possible.
 - Notes about any breaking changes or migrations.
 
 ## What not to include
 
 - Large refactors mixed with feature work.
-- Changes that reintroduce removed UI/UX patterns (for example, exporting offline cache files).
-
----
-
-## Internationalization (i18n)
-
-QBZ ships 8 locales (`en es de fr pt ru ja nl`) as gettext `.po` files, bundled
-via the `qbz-i18n` crate. Rules:
-
-- **No hardcoded UI strings in `.slint`** — every string goes through
-  `@tr("...")`.
-- Adding or changing a string means updating **all** locale `.po` files, not
-  just English.
-- `@tr` property defaults are not reactive — re-seed from Rust on language
-  change (see `crates/qbz-i18n` and `select_bundled_translation()`, called
-  after `AppWindow::new()`).
-
-### Checklist for PRs with UI Text
-
-- [ ] No hardcoded strings in `.slint` — all text via `@tr`
-- [ ] Every new/changed string updated across all 8 `.po` locales
-- [ ] Reused an existing string where one already fit
+- Desktop-UI changes — this fork has no UI; send those upstream.

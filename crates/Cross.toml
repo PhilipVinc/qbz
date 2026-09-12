@@ -1,6 +1,6 @@
 # cross (https://github.com/cross-rs/cross) config for cross-compiling the
-# aarch64 `qbz` binary from an x86-64 Linux host. Used by
-# scripts/build-aarch64-linux.sh (CROSS mode).
+# aarch64 `qbzd` binary from an x86-64 Linux host. Used by
+# scripts/build-aarch64-qbzd.sh (CROSS mode).
 #
 # `image` pins a newer Ubuntu (cross 0.2.5's default aarch64 image is Ubuntu
 # 16.04 "xenial" — EOL, archived repos, OpenSSL 1.0.2 — which breaks modern
@@ -8,9 +8,11 @@
 # alternative is a newer cross itself:
 #   cargo install cross --git https://github.com/cross-rs/cross --locked
 #
-# The image ships the aarch64 toolchain but NOT the native dev libs qbz links
+# The image ships the aarch64 toolchain but NOT the native dev libs qbzd links
 # against, so we add the arm64 multiarch packages in pre-build. PKG_CONFIG_* is
-# set so build scripts resolve the :arm64 .pc files.
+# set so build scripts resolve the :arm64 .pc files. The list is the DAEMON set
+# (audio + D-Bus + TLS); the font/X11/Wayland/GL packages the deleted Slint
+# desktop binary needed are gone with it.
 #
 # NOTE: each pre-build entry is a single-line TOML string (backslash line
 # continuations are only valid in TOML """multi-line""" strings).
@@ -20,7 +22,7 @@ image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main"
 pre-build = [
     "dpkg --add-architecture arm64",
     "apt-get update",
-    "apt-get install -y --no-install-recommends pkg-config cmake clang libclang-dev nasm libasound2-dev:arm64 libjack-jackd2-dev:arm64 libfontconfig1-dev:arm64 libfreetype6-dev:arm64 libxkbcommon-dev:arm64 libwayland-dev:arm64 libxcb1-dev:arm64 libgl1-mesa-dev:arm64 libegl1-mesa-dev:arm64 libdbus-1-dev:arm64 libssl-dev:arm64",
+    "apt-get install -y --no-install-recommends pkg-config cmake clang libclang-dev nasm libasound2-dev:arm64 libjack-jackd2-dev:arm64 libdbus-1-dev:arm64 libssl-dev:arm64",
 ]
 
 [target.aarch64-unknown-linux-gnu.env]

@@ -1,12 +1,7 @@
-# Workspace unit/doc tests for the shipping crates/ tree (Slint-era).
+# Workspace unit/doc tests for the crates/ tree.
 #
-# Companion to the release/build workflows, not a substitute:
-#   - release-linux / build-slint / release-snap compile -p qbz (full UI, ~30 GB peak)
-#   - this job runs `cargo test` on every non-UI crate only (~5 min cold, ~1–2 min warm)
-#
-# Excludes qbz, qbz-ui, qbz-dac-wizard, qbz-slint-common so the UI compile unit
-# never enters the graph. Cache key is intentionally separate from
-# `slint-linux` (stable + test profile vs nightly + release).
+# This fork is daemon-only: the Slint UI crates are gone, so the whole
+# workspace is testable (~5 min cold, ~1–2 min warm).
 #
 # Repo policy note: release builds stay tag/dispatch-only. This is the one
 # workflow that runs on pre-release integration so regressions land before a
@@ -41,10 +36,10 @@ permissions:
 
 jobs:
   test:
-    name: cargo test (workspace, no UI)
+    name: cargo test (workspace)
     runs-on: ubuntu-24.04
     # Cold first run ~5 min (compile + test); warm ~1–2 min. Headroom for
-    # registry lag / cache restore, not for a Slint UI compile.
+    # registry lag / cache restore.
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -52,9 +47,8 @@ jobs:
 
       - name: Install system dependencies
         run: |
-          # Minimal subset of release-linux.yml deps: non-UI crates still link
-          # ALSA / JACK / D-Bus (qbz-audio) and OpenSSL (reqwest). mold matches
-          # the release linker for faster test-binary link.
+          # qbzd links ALSA / JACK / D-Bus (qbz-audio) and OpenSSL (reqwest).
+          # mold matches the release linker for faster test-binary link.
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential pkg-config mold \
@@ -62,21 +56,19 @@ jobs:
             libdbus-1-dev libssl-dev
 
       # Floating stable is fine here: rust-cache keys on rustc -V, so a stable
-      # bump just rebuilds the test cache once. Nightly is reserved for the
-      # release/UI builds that need -Z threads.
+      # bump just rebuilds the test cache once.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          # Manifest is crates/Cargo.toml → artifacts in crates/target (same
-          # workspaces mapping as release-linux / build-slint).
+          # Manifest is crates/Cargo.toml → artifacts in crates/target.
           workspaces: crates -> target
           shared-key: test-crates-linux
           cache-on-failure: true
           # PRs restore only. pre-release pushes write so the integration
-          # branch keeps the cache warm (mirrors release-linux save-if policy).
+          # branch keeps the cache warm.
           save-if: ${{ github.ref == 'refs/heads/pre-release' }}
 
       - name: cargo test
@@ -95,11 +87,13 @@ jobs:
           END=$(date +%s)
           echo "cargo test wall time: $((END - START))s"
 
-      - name: qbzd slint-free dep-graph gate (01-architecture.md §1.2)
+      # The UI crates are deleted in this fork; the gate stays so a Slint
+      # dependency can never re-enter qbzd's graph through a crates.io dep.
+      - name: qbzd slint-free dep-graph gate
         run: |
           set -euo pipefail
           hits=$(cargo tree --manifest-path crates/Cargo.toml -p qbzd -e normal \
-                 | grep -E '\b(slint|qbz-ui|qbz-slint-common|qbz-dac-wizard) v' || true)
+                 | grep -E '\bslint[a-z-]* v' || true)
           if [ -n "$hits" ]; then
             echo "::error::qbzd graph resolves Slint crates:"; echo "$hits"; exit 1
           fi

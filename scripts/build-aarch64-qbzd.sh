@@ -3,16 +3,15 @@
 # build-aarch64-qbzd.sh — build the Linux aarch64 (ARM64) `qbzd` daemon binary,
 # e.g. for a Raspberry Pi 4 + HiFiBerry/USB DAC streamer.
 #
-# ── Why this is NOT build-aarch64-linux.sh ───────────────────────────────────
-# That script builds the Slint desktop `qbz`, whose generated `qbz_ui` crate is
-# ONE ~1.6M-line module needing ~30 GB for a single rustc. `qbzd` is the
-# slint-free column of the workspace: no UI crate, no fonts, no GPU libs. It
-# builds in minutes and fits on modest hardware, so:
-#   • a 4 GB Pi CAN build it natively (unlike the desktop binary);
-#   • the container caps here are small — no 48 GB swap headroom needed;
-#   • the `static/` fonts mount the desktop script needs is irrelevant.
+# ── Why this is cheap ────────────────────────────────────────────────────────
+# `qbzd` is slint-free: no UI crate, no fonts, no GPU libs. (Upstream's desktop
+# `qbz` binary generates ONE ~1.6M-line `qbz_ui` module needing ~30 GB for a
+# single rustc; this fork does not carry it.) qbzd builds in minutes and fits on
+# modest hardware, so:
+#   • a 4 GB Pi CAN build it natively;
+#   • the container caps here are small — no 48 GB swap headroom needed.
 #
-# Two modes, auto-selected by host arch (same shape as the desktop script):
+# Two modes, auto-selected by host arch:
 #
 #   1. NATIVE  (on aarch64 Linux: the Pi itself, an ARM VM/runner)
 #   2. CROSS   (on x86-64 Linux with Docker, via `cross`; crates/Cross.toml
