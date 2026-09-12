@@ -1,14 +1,16 @@
-# muqbzd — headless Qobuz Connect daemon
+# μqbzd — headless Qobuz Connect daemon
 
-**muqbzd started life as a fork of [QBZ](https://github.com/vicrodh/qbz), and has since
+**μqbzd started life as a fork of [QBZ](https://github.com/vicrodh/qbz), and has since
 diverged into a headless-only project.** See [Where this came from](#where-this-came-from)
 — QBZ is where nearly all of this code was written, and it is very much alive; if you want
 a desktop Qobuz player, go there, not here.
 
-> **The name.** *mu* reads three ways, all of them true: **μ**, because what's left is a
-> ~25 MB binary where the desktop build wanted ~30 GB of RAM to link; **無**, *nothing* —
-> this is the one with no interface; and plain *mu*sic. The binary is still `qbzd`, so
-> every existing unit file, hook and `qbzd ...` command keeps working.
+> **The name.** **μ** reads three ways, all of them true: *micro*, because what's left is
+> a ~25 MB binary where the desktop build wanted ~30 GB of RAM to link; **無** *mu*,
+> *nothing* — this is the one with no interface; and plain *mu*sic. Written `muqbzd`
+> wherever ASCII is required (the repo, the tag names, anything you have to type). The
+> binary is still `qbzd`, so every existing unit file, hook and `qbzd ...` command keeps
+> working.
 
 `qbzd` is a standalone ~25 MB binary that turns any Linux box — a Raspberry Pi, a NAS, the
 living-room mini-PC — into a bit-perfect **Qobuz Connect endpoint** that appears in the
@@ -35,7 +37,7 @@ Upstream's manual still applies:
 
 ## Where this came from
 
-muqbzd is a fork of **[QBZ](https://github.com/vicrodh/qbz)**, written by
+μqbzd is a fork of **[QBZ](https://github.com/vicrodh/qbz)**, written by
 **[@vicrodh](https://github.com/vicrodh)** — a native hi-fi Qobuz client for Linux and
 macOS, and the origin of nearly every line of code in this repository, `qbzd` itself
 included. The git history here *is* QBZ's history; this is a branch of that work, not a
@@ -55,7 +57,7 @@ The divergence became structural with the removal of the desktop player: this tr
 and its release tooling entirely. That makes the two trees hard to reconcile in the UI
 direction, which is the honest reason to call it a separate project rather than a branch
 waiting to be merged. **QBZ remains actively developed and is the project to use** if you
-want the application; muqbzd only makes sense if you want a headless box.
+want the application; μqbzd only makes sense if you want a headless box.
 
 ## Legal / Branding
 
