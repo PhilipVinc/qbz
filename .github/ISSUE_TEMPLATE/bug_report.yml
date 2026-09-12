@@ -6,176 +6,69 @@ body:
   - type: markdown
     attributes:
       value: |
-        ## ⚠️ Bug reports need logs
-        Without logs I am debugging blind, and the report will almost certainly
-        stall waiting on `needs: info` instead of getting fixed.
+        ## Logs make or break a daemon bug report
 
-        **Please attach your logs in the Logs section below** — it is the single
-        most useful thing you can do to get this fixed fast
-        (**Settings → Developer Mode → View Logs → Upload** the Terminal *and*
-        Console tabs, then paste both URLs). If the app crashes before the UI
-        opens, use the terminal fallback described in that section.
+        muqbzd has no UI to screenshot, so logs are the whole picture. Run the
+        daemon in the foreground and capture it:
+
+        ```bash
+        qbzd run            # foreground, logs to stdout
+        journalctl --user -u qbzd -n 500 --no-pager    # or, if it runs as a service
+        ```
+
+        Also useful: `qbzd version`, `qbzd status`, and `curl -s localhost:8182/api/status`.
+
+        Redact nothing but tokens — the daemon already redacts secrets it knows about.
 
   - type: checkboxes
     id: preflight
     attributes:
       label: Before submitting
-      description: A bug report without these is much harder to act on.
       options:
-        - label: I have attached my logs below (Terminal + Console), or explained why I cannot get them.
+        - label: I have attached logs, or explained why I cannot get them.
           required: true
         - label: I searched the existing issues and this is not a duplicate.
           required: true
         - label: I included concrete steps to reproduce.
           required: true
 
-  - type: dropdown
-    id: platform
-    attributes:
-      label: Platform
-      options:
-        - Linux
-        - macOS
-    validations:
-      required: true
-
-  - type: textarea
-    id: description
-    attributes:
-      label: Description
-      description: A clear and concise description of the problem.
-    validations:
-      required: true
-
-  - type: textarea
-    id: steps
-    attributes:
-      label: Steps to reproduce
-      value: |
-        1.
-        2.
-        3.
-    validations:
-      required: true
-
-  - type: textarea
-    id: expected
-    attributes:
-      label: Expected behavior
-      description: What you expected to happen.
-    validations:
-      required: true
-
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual behavior
-      description: What actually happened.
-    validations:
-      required: true
-
   - type: input
     id: version
     attributes:
-      label: QBZ version
-      placeholder: e.g. v1.2.0
-    validations:
-      required: true
-
-  - type: dropdown
-    id: install
-    attributes:
-      label: Installation method
-      options:
-        - AppImage
-        - .deb
-        - .rpm
-        - AUR
-        - Gentoo overlay
-        - Tarball
-        - Flatpak
-        - DMG (macOS)
-        - Built from source
+      label: Version
+      description: Output of `qbzd version` (e.g. 2.1.0.moode1).
     validations:
       required: true
 
   - type: input
-    id: distro
+    id: host
     attributes:
-      label: Distribution / macOS version
-      description: Linux distro or macOS version.
-      placeholder: e.g. Arch Linux, Ubuntu 24.04, Fedora 43, macOS 15.3 Sequoia
+      label: Host
+      description: Board/machine, OS and arch — e.g. "Raspberry Pi 4, moOde 10.3.3, aarch64".
+    validations:
+      required: true
 
   - type: input
-    id: de
+    id: audio
     attributes:
-      label: Desktop environment / WM
-      description: Linux only.
-      placeholder: e.g. KDE Plasma 6, GNOME 46
+      label: Audio device and backend
+      description: DAC, and the backend/device qbzd is using (e.g. "Topping E30, backend=alsa, device=hw:1,0").
+    validations:
+      required: true
 
-  - type: dropdown
-    id: display
+  - type: textarea
+    id: what_happened
     attributes:
-      label: Display server
-      description: Linux only.
-      options:
-        - Wayland
-        - X11
-        - N/A (macOS)
-
-  - type: input
-    id: gpu
-    attributes:
-      label: GPU
-      placeholder: e.g. NVIDIA RTX 3070, AMD RX 6600 XT, Apple M3
-
-  - type: dropdown
-    id: audio_backend
-    attributes:
-      label: Audio backend
-      options:
-        - PipeWire
-        - ALSA Direct
-        - PulseAudio
-        - System Default (macOS)
-        - Auto
-
-  - type: input
-    id: dac
-    attributes:
-      label: Audio device / DAC
-      placeholder: e.g. Schiit Bifrost 2, FiiO K17
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
 
   - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: |
-        **Sharing your logs when you open an issue helps me fix it much faster — please include them whenever you can.**
-
-        1. Open **Settings > Developer Mode > View Logs**
-        2. Click **Upload** on both the **Terminal** and **Console** tabs
-        3. Paste both URLs here
-
-        Where to find the logs (click the image to enlarge):
-
-        [![Settings > Developer Mode > View Logs](https://raw.githubusercontent.com/vicrodh/qbz/main/docs/release-1.1.15/screenshots/log_access_for_bug_reporting.png)](https://raw.githubusercontent.com/vicrodh/qbz/main/docs/release-1.1.15/screenshots/log_access_for_bug_reporting.png)
-
-        **If QBZ crashes on startup**, run from terminal:
-        `flatpak run com.blitzfc.qbz 2>&1 | tee /tmp/qbz-crash.log`
-        Then upload: `curl -F'file=@/tmp/qbz-crash.log' https://0x0.st`
-      value: |
-        - Terminal log URL:
-        - Console log URL:
-
-  - type: textarea
-    id: screenshots
-    attributes:
-      label: Screenshots
-      description: If applicable, add screenshots to help illustrate the issue.
-
-  - type: textarea
-    id: context
-    attributes:
-      label: Additional context
-      description: Anything else that may help reproduce or understand the issue.
+      description: Paste the relevant log output, or attach a file.
+      render: text
+    validations:
+      required: false

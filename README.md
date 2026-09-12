@@ -117,12 +117,12 @@ crates/
   qconnect-core/         Queue and renderer domain models
   qconnect-app/          Application logic and concurrency
   qconnect-transport-ws/ WebSocket transport with qcloud framing
-docs/openapi.yaml        The daemon's HTTP API
 packaging/linux/         qbzd standalone tarball README
 scripts/                 Build, deploy and acceptance scripts
 ```
 
-The HTTP API is `docs/openapi.yaml`.
+The daemon's HTTP API is served by `crates/qbzd/src/api/`; `qbzd --help` and the
+upstream wiki are the reference for it.
 
 ## Known Issues
 

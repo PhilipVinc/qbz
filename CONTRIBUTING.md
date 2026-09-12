@@ -4,11 +4,9 @@ This project is actively evolving. Contributions are welcome, but we have a few 
 
 ## Where the code lives
 
-This fork is **daemon-only**: the Rust workspace under `crates/` carries `qbzd`
-and exactly the crates it depends on. The Slint desktop UI (`crates/qbz`,
-`crates/qbz-ui`, the theme/i18n/cast/lyrics/mixtape/plex/playlist-import crates)
-lives upstream at [vicrodh/qbz](https://github.com/vicrodh/qbz) and was removed
-here — port UI changes there, not to this tree.
+muqbzd is **daemon-only**: the Rust workspace under `crates/` carries `qbzd` and
+exactly the crates it depends on. There is no desktop UI here, and none is
+planned — a change that needs one is out of scope for this project.
 
 ## Quick rules
 
@@ -38,8 +36,7 @@ Examples:
 ## Branch workflow
 
 `main` is the trunk: it is what releases are cut from, and the only branch CI
-will release from. There is no `pre-release` integration branch here — upstream
-QBZ uses one, this fork does not.
+will release from. Work happens on topic branches and merges to `main`.
 
 ```
 feature/xyz ──┐
@@ -59,8 +56,8 @@ Releases are tags, not merges. Tag a commit **that is already on `main`**:
 ```bash
 git checkout main
 git pull
-git tag qbzd-v2.0.2.moodeN
-git push origin qbzd-v2.0.2.moodeN
+git tag qbzd-v2.1.0.moodeN
+git push origin qbzd-v2.1.0.moodeN
 ```
 
 `fork-qbzd-release.yml` builds the aarch64 + amd64 tarballs and publishes a
@@ -101,4 +98,4 @@ Prefer:
 ## What not to include
 
 - Large refactors mixed with feature work.
-- Desktop-UI changes — this fork has no UI; send those upstream.
+- Desktop-UI changes — muqbzd is headless by design.

@@ -28,10 +28,10 @@ members = [
 ]
 
 [workspace.package]
-version = "2.0.2"
+version = "2.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/vicrodh/qbz"
+repository = "https://github.com/PhilipVinc/qbz"
 
 [workspace.dependencies]
 # Async runtime

@@ -3,17 +3,10 @@ description: Suggest an idea or improvement
 title: "[Feature] "
 labels: ["enhancement"]
 body:
-  - type: dropdown
-    id: platform
+  - type: markdown
     attributes:
-      label: Platform
-      description: Which platform does this apply to?
-      options:
-        - All platforms
-        - Linux
-        - macOS
-    validations:
-      required: true
+      value: |
+        muqbzd is a headless daemon. Ideas that need a desktop UI are out of scope.
 
   - type: textarea
     id: problem

@@ -4,10 +4,10 @@ updates:
     directory: "/crates"
     schedule:
       interval: "weekly"
-    target-branch: "pre-release"
+    target-branch: "main"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    target-branch: "pre-release"
+    target-branch: "main"

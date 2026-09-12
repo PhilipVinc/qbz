@@ -1,6 +1,5 @@
-# Fork-only helper: build the qbzd binary for aarch64 from any ref, for
-# on-device testing. Mirrors upstream's release-linux-aarch64.yml build-qbzd
-# job. Not intended for upstream.
+# Helper: build the qbzd binary for aarch64 from any ref, for on-device
+# testing. Manual dispatch only — it publishes nothing.
 name: build-qbzd-arm64
 on:
   workflow_dispatch:
@@ -21,9 +20,8 @@ jobs:
       - name: system deps
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libjack-jackd2-dev libdbus-1-dev libssl-dev
       - name: tests (qbzd + models + daemon prefs)
-        # qbz-app's shell::tests fail on the unmodified pre-release base
-        # (pre-existing reqwest TLS-provider panic), so scope qbz-app to the
-        # settings tests this branch touches.
+        # qbz-app's shell::tests hit a long-standing reqwest TLS-provider
+        # panic that predates this tree, so scope qbz-app to its settings tests.
         run: |
           cargo test --manifest-path crates/Cargo.toml -p qbzd -p qbz-models
           cargo test --manifest-path crates/Cargo.toml -p qbz-app settings::
