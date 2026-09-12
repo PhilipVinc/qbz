@@ -140,6 +140,12 @@ mod tests {
         assert_ne!(roots.cache, data_dir.parent().unwrap().join("qbzd-cache"));
     }
 
+    /// Linux-only by nature: XDG_* is a freedesktop convention, and `dirs`
+    /// deliberately ignores it on macOS in favour of
+    /// `~/Library/Application Support`. Running this there asserts a rule the
+    /// platform does not have, which is why it failed on every dev Mac.
+    /// The daemon ships on Linux; that is where the contract must hold.
+    #[cfg(target_os = "linux")]
     #[test]
     fn defaults_resolve_under_xdg_roots_without_touching_real_home() {
         // SAFETY: single-threaded within this test; original values restored

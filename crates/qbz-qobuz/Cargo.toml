@@ -46,6 +46,12 @@ anyhow = { workspace = true }
 # endpoint): loads the saved OAuth token / credentials for login.
 qbz-credentials = { path = "../qbz-credentials" }
 
+# Tests construct a QobuzClient, which builds a reqwest client. The workspace
+# pins reqwest's `rustls-tls-webpki-roots-no-provider`, so a process-level
+# rustls CryptoProvider must be installed first or that panics with "No
+# provider set". The binary installs it in main; a test binary has no main.
+rustls = { version = "0.23", features = ["aws_lc_rs"] }
+
 # Linux-only, for the streamed-download writer: `sync_file_range` to start
 # writeback without waiting, and `posix_fadvise(DONTNEED)` to keep a write-once
 # track from evicting the PLAYING track's page cache. Neither `nix` nor `rustix`

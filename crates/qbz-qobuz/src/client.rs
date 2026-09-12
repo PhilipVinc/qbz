@@ -3336,6 +3336,17 @@ impl Default for QobuzClient {
 mod tests {
     use super::*;
 
+    /// Install the process-level rustls `CryptoProvider` the reqwest client
+    /// needs. Idempotent: `install_default` returns Err once one is set, and
+    /// these tests run in the same process as any other that installed it.
+    fn ensure_crypto_provider() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        });
+    }
+
     /// With the offline gate closed, any public API method must fail fast
     /// with the typed `ApiError::OfflineMode` — no network access, no
     /// connect timeout. The gate is process-global and tests run in
@@ -3350,6 +3361,7 @@ mod tests {
 
         crate::offline_gate::set_offline(true);
 
+        ensure_crypto_provider();
         let client = QobuzClient::new().expect("client construction is local-only");
         let started = std::time::Instant::now();
         let result = client.get_album_suggest("0060254735180").await;
@@ -3383,6 +3395,7 @@ mod tests {
 
         crate::offline_gate::set_offline(true);
 
+        ensure_crypto_provider();
         let client = QobuzClient::new().expect("client construction is local-only");
 
         let err = client
