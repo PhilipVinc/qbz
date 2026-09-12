@@ -1,10 +1,9 @@
-# Fork-only qbzd standalone release.
+# muqbzd standalone release.
 #
 # The upstream tag workflows (release-linux*.yml, `v*` tags) can't publish
-# from this fork: their package jobs hard-require upstream's AppImage signing
-# secrets on tag refs. This workflow exists so a fork branch (e.g. the Qobuz
-# Connect pairing work) can ship a testable qbzd binary without touching the
-# upstream release machinery:
+# from here: their package jobs hard-require upstream's AppImage signing
+# secrets on tag refs. This workflow ships a testable qbzd binary without
+# touching the upstream release machinery:
 #   - triggers on `qbzd-v*` tags only, which the upstream `v*` filters never
 #     match, so tagging here fires exactly one workflow;
 #   - builds ONLY the slint-free qbzd binary (same steps, gates, and tarball
@@ -15,7 +14,7 @@
 #
 # Tag `qbzd-v2.0.2-pairing.1` -> version `2.0.2-pairing.1`.
 
-name: "qbzd standalone release (fork)"
+name: "muqbzd standalone release"
 
 on:
   push:
@@ -141,5 +140,5 @@ jobs:
           prerelease: true
           make_latest: false
           body: |
-            Fork test build of the standalone qbzd daemon (Qobuz Connect
-            local pairing branch). Not an official QBZ release.
+            muqbzd test build of the standalone qbzd daemon. Not an
+            official QBZ release.

@@ -1,4 +1,4 @@
-# qbzd — QBZ headless Qobuz playback daemon (standalone download)
+# qbzd — the muqbzd headless playback daemon (standalone download)
 
 This tarball is the independent daemon download (no dependency on the desktop
 `qbz` app, no deb/rpm needed). Install it on the box wired to your DAC — a

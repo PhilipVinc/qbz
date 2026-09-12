@@ -1,4 +1,4 @@
-# Contributing to QBZ
+# Contributing to muqbzd
 
 This project is actively evolving. Contributions are welcome, but we have a few rules to keep releases stable and avoid regressions (especially around audio output).
 

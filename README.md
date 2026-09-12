@@ -1,8 +1,13 @@
-# qbzd — headless Qobuz Connect daemon
+# muqbzd — headless Qobuz Connect daemon
 
 This is a **daemon-only fork** of [QBZ](https://github.com/vicrodh/qbz). It carries `qbzd`
 and exactly the crates `qbzd` depends on; the Slint desktop UI, its packaging and its
 release tooling have been removed. For the desktop player, use upstream.
+
+> **The name.** *mu* reads three ways, all of them true: **μ**, because what's left is a
+> ~25 MB binary where the desktop build wanted ~30 GB of RAM to link; **無**, *nothing* —
+> this is the one with no interface; and plain *mu*sic. The binary is still `qbzd`, so
+> every existing unit file, hook and `qbzd ...` command keeps working.
 
 `qbzd` is a standalone ~25 MB binary that turns any Linux box — a Raspberry Pi, a NAS, the
 living-room mini-PC — into a bit-perfect **Qobuz Connect endpoint** that appears in the
