@@ -29,3 +29,6 @@ tempfile = "3"
 # running" and dead AT-SPI accessibility. async-io futures are runtime-
 # agnostic, so our portal call still awaits fine inside tokio.
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "secret"] }
+
+[lints]
+workspace = true

@@ -520,6 +520,9 @@ mod tests {
     }
 
     #[tokio::test]
+    // Holds a std Mutex across await ON PURPOSE: the gate is process-global
+    // and tests run in parallel, so this lock is what serialises them.
+    #[allow(clippy::await_holding_lock)]
     async fn watch_broadcasts_on_change() {
         let _gate = serialize();
         let engine = std::sync::Arc::new(OfflineModeEngine::new());

@@ -33,6 +33,17 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/PhilipVinc/qbz"
 
+# Lints applied to every crate (each member opts in with `[lints] workspace = true`).
+[workspace.lints.clippy]
+# The wide functions are SQL row builders and playback-engine constructors:
+# one parameter per column / per shared handle. Grouping them into structs
+# would add a type per call site without making anything safer, and these
+# signatures are stable.
+too_many_arguments = "allow"
+# The complex types are channel and callback tuples at internal boundaries.
+# A type alias would name them without simplifying them.
+type_complexity = "allow"
+
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }

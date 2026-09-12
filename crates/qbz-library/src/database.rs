@@ -3174,6 +3174,9 @@ pub enum LocalContentStatus {
 }
 
 impl LocalContentStatus {
+    // Not `FromStr`: this is total (or Option-returning) with no error
+    // type to report, and the trait would force a Result.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "no" => Self::No,
@@ -3354,7 +3357,7 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
+                qobuz_playlist_id,
                 sort_by: sort_by.to_string(),
                 sort_order: sort_order.to_string(),
                 ..Default::default()
@@ -3390,7 +3393,7 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
+                qobuz_playlist_id,
                 custom_artwork_path: artwork_path.map(|s| s.to_string()),
                 ..Default::default()
             };
@@ -3425,7 +3428,7 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
+                qobuz_playlist_id,
                 last_search_query: query.map(|s| s.to_string()),
                 ..Default::default()
             };
@@ -3511,8 +3514,8 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
-                hidden: hidden,
+                qobuz_playlist_id,
+                hidden,
                 ..Default::default()
             };
             return self.save_playlist_settings(&settings);
@@ -3546,7 +3549,7 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
+                qobuz_playlist_id,
                 is_favorite: favorite,
                 ..Default::default()
             };
@@ -3632,8 +3635,8 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
-                position: position,
+                qobuz_playlist_id,
+                position,
                 ..Default::default()
             };
             return self.save_playlist_settings(&settings);
@@ -4003,7 +4006,7 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
+                qobuz_playlist_id,
                 folder_id: folder_id.map(|s| s.to_string()),
                 ..Default::default()
             };
@@ -5540,7 +5543,7 @@ impl LibraryDatabase {
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
             let settings = PlaylistSettings {
-                qobuz_playlist_id: qobuz_playlist_id,
+                qobuz_playlist_id,
                 has_local_content: status,
                 ..Default::default()
             };
@@ -6045,7 +6048,7 @@ mod metadata_grouping_tests {
             artist: artist.to_string(),
             album_group_key: album_group_key.to_string(),
             album_group_title: album_group_title.to_string(),
-            year: year,
+            year,
             ..Default::default()
         };
         db.insert_track(&t).unwrap();
@@ -6220,19 +6223,21 @@ mod folder_tree_tests {
         // row), so we never set track.source here. To insert with a
         // different source value (e.g. 'qobuz_download'), use
         // `insert_qobuz_download_at` below.
-        let mut t = LocalTrack::default();
-        t.file_path = file_path.to_string();
-        t.title = title.to_string();
-        t.album = "Test Album".to_string();
-        t.album_artist = Some("Test Artist".to_string());
-        t.artist = "Test Artist".to_string();
-        t.album_group_key = file_path
-            .rsplit_once('/')
-            .map(|(parent, _)| parent.to_string())
-            .unwrap_or_default();
-        t.album_group_title = "Test Album".to_string();
-        t.disc_number = disc;
-        t.track_number = track_no;
+        let t = LocalTrack {
+            file_path: file_path.to_string(),
+            title: title.to_string(),
+            album: "Test Album".to_string(),
+            album_artist: Some("Test Artist".to_string()),
+            artist: "Test Artist".to_string(),
+            album_group_key: file_path
+                .rsplit_once('/')
+                .map(|(parent, _)| parent.to_string())
+                .unwrap_or_default(),
+            album_group_title: "Test Album".to_string(),
+            disc_number: disc,
+            track_number: track_no,
+            ..Default::default()
+        };
         db.insert_track(&t).unwrap();
     }
 

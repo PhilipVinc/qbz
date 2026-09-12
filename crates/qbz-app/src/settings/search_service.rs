@@ -119,7 +119,7 @@ impl SearchService {
         &self,
         query: &str,
         kind: &str,
-        items: &mut Vec<T>,
+        items: &mut [T],
         id_of: impl Fn(&T) -> String,
     ) {
         if !self.enabled() {

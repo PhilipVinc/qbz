@@ -110,12 +110,16 @@ enum AudioCommand {
     /// Play a local DSD file via DoP (DSD over PCM) on ALSA direct (DSD plan
     /// Phase 2). The audio thread opens the demuxer + an S32 stream at the
     /// DoP carrier rate and feeds pre-packed words through the DoP engine.
+    // Constructed only on Linux (DoP/native DSD is an ALSA-only path).
+    #[allow(dead_code)]
     PlayDsdDop {
         path: std::path::PathBuf,
         track_id: u64,
     },
     /// Play a local DSD file NATIVELY (ALSA DSD_U32, DSD plan Phase 3) —
     /// requires the kernel to grant the device a DSD format (quirk table).
+    // Constructed only on Linux (DoP/native DSD is an ALSA-only path).
+    #[allow(dead_code)]
     PlayDsdNative {
         path: std::path::PathBuf,
         track_id: u64,

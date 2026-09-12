@@ -16,3 +16,6 @@ futures-util = { workspace = true }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 prost = "0.13"
 log = "0.4"
+
+[lints]
+workspace = true

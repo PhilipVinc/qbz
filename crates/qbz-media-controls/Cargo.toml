@@ -49,3 +49,6 @@ souvlaki = "0.8"
 # macOS desktop notifications (NSUserNotification / UserNotifications). Windows
 # is a no-op for now (parity with Tauri, which never implemented it).
 notify-rust = "4"
+
+[lints]
+workspace = true

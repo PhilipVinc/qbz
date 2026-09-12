@@ -34,6 +34,8 @@ pub(crate) struct SourceQueue<S> {
 }
 
 impl<S> SourceQueue<S> {
+    // Part of the Linux ALSA Direct engine; unused on other platforms.
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),
@@ -75,6 +77,8 @@ pub enum PlaybackEngine {
     /// Rodio-based (PipeWire, Pulse, ALSA via CPAL)
     Rodio { sink: RodioPlayer },
     /// Direct ALSA (hw: devices, bit-perfect) with gapless source queue
+    // Part of the Linux ALSA Direct engine; unused on other platforms.
+    #[allow(dead_code)]
     AlsaDirect {
         stream: Arc<AlsaDirectStream>,
         is_playing: Arc<AtomicBool>,
@@ -134,6 +138,8 @@ impl PlaybackEngine {
 
     /// Create ALSA Direct engine with gapless source queue.
     /// Spawns a single writer thread that lives for the engine's lifetime.
+    // Part of the Linux ALSA Direct engine; unused on other platforms.
+    #[allow(dead_code)]
     pub fn new_alsa_direct(stream: Arc<AlsaDirectStream>, hardware_volume: bool) -> Self {
         let is_playing = Arc::new(AtomicBool::new(false));
         let should_stop = Arc::new(AtomicBool::new(false));
@@ -736,6 +742,8 @@ impl PlaybackEngine {
 /// hardware, after a seek.
 ///
 /// `is_playing` already true means there is nothing to do.
+// Part of the Linux ALSA Direct engine; unused on other platforms.
+#[allow(dead_code)]
 fn should_resume_after_drain(resume_pending: bool, should_stop: bool, is_playing: bool) -> bool {
     resume_pending && !should_stop && !is_playing
 }
@@ -756,6 +764,8 @@ fn should_resume_after_drain(resume_pending: bool, should_stop: bool, is_playing
 /// With the keep-alive off, each caller keeps the cadence it always had —
 /// `when_off` — so turning the feature off changes nothing about how the
 /// writer idles.
+// Part of the Linux ALSA Direct engine; unused on other platforms.
+#[allow(dead_code)]
 fn keepalive_poll_interval(depth_ms: u32, when_off: Duration) -> Duration {
     if depth_ms == 0 {
         return when_off;
@@ -784,10 +794,14 @@ fn keepalive_poll_interval(depth_ms: u32, when_off: Duration) -> Duration {
 /// writer thread down with it. One warning, then we go quiet about it — the
 /// idle paths call this many times a second.
 /// The two gates on the keep-alive, named so they can be tested.
+// Part of the Linux ALSA Direct engine; unused on other platforms.
+#[allow(dead_code)]
 fn would_keep_alive(primed: bool, depth_ms: u32) -> bool {
     primed && depth_ms > 0
 }
 
+// Part of the Linux ALSA Direct engine; unused on other platforms.
+#[allow(dead_code)]
 fn keep_dac_awake(stream: &Arc<AlsaDirectStream>, cancel: &Arc<AtomicBool>, primed: bool) {
     let depth_ms = qbz_audio::alsa_direct::dac_keepalive_ms();
     if !would_keep_alive(primed, depth_ms) {
@@ -801,6 +815,8 @@ fn keep_dac_awake(stream: &Arc<AlsaDirectStream>, cancel: &Arc<AtomicBool>, prim
     }
 }
 
+// Part of the Linux ALSA Direct engine; unused on other platforms.
+#[allow(dead_code)]
 fn alsa_writer_thread(
     stream: Arc<AlsaDirectStream>,
     is_playing: Arc<AtomicBool>,

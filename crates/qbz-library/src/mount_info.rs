@@ -17,6 +17,7 @@ use std::path::Path;
 /// Filesystem types that require network to be reachable. Matched as
 /// a prefix against the fs_type column of /proc/mounts so variants
 /// like `fuse.sshfs` / `fuse.rclone` / `nfs4` all hit the same rule.
+#[cfg(target_os = "linux")]
 const NETWORK_FS_PREFIXES: &[&str] = &[
     "nfs",
     "cifs",

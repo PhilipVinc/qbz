@@ -56,6 +56,8 @@ jobs:
       # bump just rebuilds the test cache once.
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -71,6 +73,13 @@ jobs:
       # way. Cheap and fails fast, before the compile.
       - name: cargo fmt --check
         run: cargo fmt --all --check
+
+      # The workspace is clippy-clean at -D warnings on Linux, which is the
+      # platform that matters: a macOS run cannot even see the cfg(linux)
+      # audio code. Lints we deliberately do not take are allowed at the item
+      # that earns it, with the reason next to it, or in [workspace.lints].
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo test
         env:

@@ -10,3 +10,6 @@ repository.workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
 qbz-models = { path = "../qbz-models" }
+
+[lints]
+workspace = true

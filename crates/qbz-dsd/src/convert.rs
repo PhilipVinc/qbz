@@ -170,6 +170,9 @@ impl DsdPcmConverter {
     /// emitted frame count is exactly [`Self::total_frames`]: the final block
     /// is silence-padded or truncated as needed so the container size always
     /// matches the header.
+    // Index loops here mirror the reference dsd2pcm.c so the two stay
+    // line-comparable; an iterator rewrite would make auditing it harder.
+    #[allow(clippy::needless_range_loop)]
     pub fn next_block(&mut self) -> Result<Option<Vec<f32>>, DsdError> {
         if self.finished {
             return Ok(None);

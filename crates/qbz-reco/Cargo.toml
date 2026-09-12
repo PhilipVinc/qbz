@@ -15,3 +15,6 @@ rand = { workspace = true }
 qbz-models = { path = "../qbz-models" }
 qbz-qobuz = { path = "../qbz-qobuz" }
 qbz-integrations = { path = "../qbz-integrations" }
+
+[lints]
+workspace = true

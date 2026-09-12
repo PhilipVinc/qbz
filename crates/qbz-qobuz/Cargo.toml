@@ -58,3 +58,6 @@ rustls = { version = "0.23", features = ["aws_lc_rs"] }
 # wraps `sync_file_range`, so this is the layer that has it.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+[lints]
+workspace = true

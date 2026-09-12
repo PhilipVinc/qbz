@@ -441,7 +441,11 @@ pub struct AlsaDirectStream {
     _reservation: crate::DeviceReservation,
 }
 
+/// Compile-only stub so the type resolves off Linux; every method on it is a
+/// hard error at runtime. The fields mirror the real struct's shape and are
+/// deliberately never read.
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 pub struct AlsaDirectStream {
     sample_rate: u32,
     channels: u16,
@@ -1615,6 +1619,9 @@ mod stop_pad_tests {
     }
 
     #[test]
+    // Asserting on a constant is the point: this is a guard rail that fails
+    // the build if STOP_PAD_MS is ever retuned out of its safe range.
+    #[allow(clippy::assertions_on_constants)]
     fn the_pad_fits_inside_the_shortest_ring_a_host_can_ask_for() {
         // `alsa_buffer_ms` clamps to 50 ms at the low end. The pad is written
         // in steps as space frees, so it completes either way — but it should

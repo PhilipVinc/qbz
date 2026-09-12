@@ -121,6 +121,9 @@ impl DiscoverySectionId {
         }
     }
 
+    // Not `FromStr`: this is total (or Option-returning) with no error
+    // type to report, and the trait would force a Result.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         use DiscoverySectionId::*;
         Some(match s {

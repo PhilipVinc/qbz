@@ -29,3 +29,6 @@ url = "2"
 # matching the Tauri frontend's buildPlexArtworkUrl. Same crate used across
 # qbz-slint / qbz-media-controls / qbz-integrations.
 urlencoding = "2"
+
+[lints]
+workspace = true

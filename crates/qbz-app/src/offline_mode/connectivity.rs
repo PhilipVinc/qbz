@@ -241,6 +241,8 @@ impl Default for ConnectivityJudge {
 
 /// Parse `/proc/net/route` content: any non-loopback entry with destination
 /// 00000000 is an IPv4 default route.
+// Called only from the Linux arm of has_default_route; the unit tests
+#[allow(dead_code)]
 fn ipv4_has_default_route(content: &str) -> bool {
     content.lines().skip(1).any(|line| {
         let mut cols = line.split_whitespace();
@@ -252,6 +254,8 @@ fn ipv4_has_default_route(content: &str) -> bool {
 
 /// Parse `/proc/net/ipv6_route` content: any non-loopback entry with
 /// destination ::/0 (32 zero hex chars, prefix length 00) is a default route.
+// Called only from the Linux arm of has_default_route; the unit tests
+#[allow(dead_code)]
 fn ipv6_has_default_route(content: &str) -> bool {
     content.lines().any(|line| {
         let cols: Vec<&str> = line.split_whitespace().collect();

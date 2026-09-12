@@ -13,3 +13,6 @@ qbz-qobuz = { path = "../qbz-qobuz" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 log = { workspace = true }
 dirs = "5"
+
+[lints]
+workspace = true

@@ -3353,6 +3353,9 @@ mod tests {
     /// parallel, so the shared lock serializes gate-touching tests and the
     /// drop guard reopens the gate even if the test panics.
     #[tokio::test]
+    // Holds a std Mutex across await ON PURPOSE: the gate is process-global
+    // and tests run in parallel, so this lock is what serialises them.
+    #[allow(clippy::await_holding_lock)]
     async fn offline_gate_fails_fast_with_typed_error() {
         let _lock = crate::offline_gate::test_lock()
             .lock()
@@ -3387,6 +3390,9 @@ mod tests {
     /// on the missing bundle tokens instead — never `ApiError::OfflineMode`,
     /// and without touching the network.
     #[tokio::test]
+    // Holds a std Mutex across await ON PURPOSE: the gate is process-global
+    // and tests run in parallel, so this lock is what serialises them.
+    #[allow(clippy::await_holding_lock)]
     async fn offline_gate_exempts_login_methods() {
         let _lock = crate::offline_gate::test_lock()
             .lock()

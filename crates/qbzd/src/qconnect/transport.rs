@@ -601,11 +601,11 @@ pub async fn resolve_transport_config(runtime: &Runtime) -> Result<WsTransportCo
     };
 
     let config = WsTransportConfig {
-        endpoint_url: endpoint_url,
-        jwt_qws: jwt_qws,
+        endpoint_url,
+        jwt_qws,
         require_jwt: true,
         reconnect_idle_retry_ms: 60_000,
-        subscribe_channels: subscribe_channels,
+        subscribe_channels,
         ..Default::default()
     };
     Ok(config)

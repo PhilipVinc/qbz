@@ -261,6 +261,9 @@ impl DsdDemuxer for DsfReader {
         &self.info
     }
 
+    // Index loops here mirror the reference dsd2pcm.c so the two stay
+    // line-comparable; an iterator rewrite would make auditing it harder.
+    #[allow(clippy::needless_range_loop)]
     fn read_planar(
         &mut self,
         out: &mut [Vec<u8>],

@@ -40,3 +40,6 @@ rodio = { version = "0.22", features = ["symphonia-all"] }
 
 # HTTP client for streaming
 reqwest = { workspace = true }
+
+[lints]
+workspace = true

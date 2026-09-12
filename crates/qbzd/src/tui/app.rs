@@ -297,6 +297,10 @@ pub enum Msg {
 
 // ============================ active screen ============================
 
+// One value alive at a time for the life of the TUI — boxing a variant would
+// add an allocation per screen switch to save stack this program has no
+// shortage of.
+#[allow(clippy::large_enum_variant)]
 enum Active {
     Account(AccountState),
     Audio(AudioState),

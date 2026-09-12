@@ -40,6 +40,9 @@ struct Tables {
     ctables: [[f32; 256]; CTABLES],
 }
 
+// Index loops here mirror the reference dsd2pcm.c so the two stay
+// line-comparable; an iterator rewrite would make auditing it harder.
+#[allow(clippy::needless_range_loop)]
 fn tables() -> &'static Tables {
     static TABLES: OnceLock<Tables> = OnceLock::new();
     TABLES.get_or_init(|| {

@@ -27,27 +27,55 @@ cargo build --release -p qbzd
 ./scripts/qbzd-acceptance.sh     # end-to-end against a running daemon
 ```
 
-## Tests: 9 failures on macOS are NOT regressions
+## Tests and lints: the suite is GREEN, keep it that way
 
-On this macOS machine the suite always ends with the same 9 failures, on a clean
-tree, with no changes applied:
+`./scripts/cargo-test.sh` passes clean — 47 suites, 0 failures — on macOS and
+linux/arm64. `cargo clippy --workspace --all-targets -- -D warnings` is clean on
+both too, and CI enforces fmt + clippy + tests. **A failure is a regression.**
 
-- 6 × `qbz-app` `shell::tests::*`
-- 2 × `qbz-qobuz` `client::tests::offline_gate_*`
-- 1 × `qbzd` `paths::tests::defaults_resolve_under_xdg_roots_without_touching_real_home`
+(Historical note, because older commit messages say otherwise: there used to be
+"9 known failures" written off as macOS quirks. Eight were real and failed on
+Linux too — nothing installed the rustls `CryptoProvider` outside `qbzd`'s
+`main`, so any test building a reqwest client panicked. The ninth asserted XDG
+paths on a platform that does not use them. All fixed.)
 
-All are the same rustls "no provider set" panic plus an XDG-path assumption. Do
-not "fix" them as part of an unrelated change, and do not report them as broken by
-your work — diff the failure list against this one before concluding anything.
+## Formatting and lints
 
-## Formatting
+Run `cargo fmt --all`; the tree is rustfmt-clean and CI checks it. (Older
+comments say to format only touched lines — that rule is retired.)
 
-The tree **is** rustfmt-clean as of the workspace-wide format, and CI enforces it
-(`cargo fmt --all --check` in `test-crates.yml`). Just run `cargo fmt --all`.
+For clippy, prefer fixing over silencing. When a lint is genuinely wrong for the
+code, allow it **at the item**, with the reason in a comment beside it — not with
+a blanket module allow. Two lints are allowed workspace-wide in the root
+`Cargo.toml` `[workspace.lints.clippy]`, each with its rationale.
 
-Historical note, because older comments still say the opposite: formatting used to
-be restricted to touched lines only, because a crate-wide run buried real diffs and
-created rebase conflicts against upstream. Neither applies now.
+### VERIFY ON LINUX — this is not optional
+
+Large parts of the audio stack are `#[cfg(target_os = "linux")]`. A macOS
+`cargo check`/`clippy`/`test` **never compiles them**, so it cannot tell you the
+truth about them. This has already bitten once: `cargo clippy --fix` on macOS saw
+`stream` as unused in `PlaybackEngine::set_volume` — because the only reader is
+inside a Linux cfg block — and rewrote it to `stream: _`. That compiles on macOS
+and breaks ALSA hardware volume on the Pi.
+
+The container is the check:
+
+```bash
+docker run --rm --platform linux/arm64 \
+  -v "$PWD:/src:ro" -v qbzd-aarch64-target:/target \
+  -v qbzd-aarch64-registry:/usr/local/cargo/registry \
+  -w /src qbzd-aarch64-build:ubuntu22.04 \
+  bash -c 'cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace'
+```
+
+(Image: `docker build --platform linux/arm64 -t qbzd-aarch64-build:ubuntu22.04 \
+-f packaging/docker/qbzd-aarch64.Dockerfile packaging/docker`. On Apple silicon
+this runs natively, no QEMU. Needs colima or Docker Desktop up.)
+
+Also treat clippy's suggestions as drafts, not patches: in this tree three were
+wrong — one pasted a literal `<item>` placeholder, one mangled a counter loop into
+assigning to an immutable binding, one swapped `&PathBuf` for `&Path` without
+adding the import.
 
 ## Hard rules in the code
 

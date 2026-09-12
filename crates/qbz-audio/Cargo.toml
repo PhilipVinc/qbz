@@ -65,3 +65,6 @@ jack = "0.13"
 # CoreAudio for device probing, sample rate switching, and (future) hog mode / exclusive mode
 coreaudio-rs = "0.14.1"
 objc2-core-audio = "0.3.2"
+
+[lints]
+workspace = true

@@ -1,5 +1,8 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug, ::prost::Enumeration)]
 #[repr(i32)]
+// Variant names mirror the protobuf wire enum verbatim; renaming them to
+// please the lint would break the generated mapping.
+#[allow(clippy::enum_variant_names)]
 pub enum QConnectMessageType {
     MessageTypeRndrSrvrJoinSession = 21,
     MessageTypeRndrSrvrDeviceInfoUpdated = 22,
