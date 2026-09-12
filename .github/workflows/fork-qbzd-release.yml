@@ -6,6 +6,9 @@
 # touching the upstream release machinery:
 #   - triggers on `qbzd-v*` tags only, which the upstream `v*` filters never
 #     match, so tagging here fires exactly one workflow;
+#   - releases ONLY from `main`: the `guard` job refuses a tag whose commit is
+#     not an ancestor of main, so a tag pushed on a topic branch fails loudly
+#     instead of publishing a release nobody can reproduce from the trunk;
 #   - builds ONLY the slint-free qbzd binary (same steps, gates, and tarball
 #     layout as the upstream build-qbzd/qbzd-tarball jobs, so consumers like
 #     moOde's qobuz-installer.sh see the identical asset shape:
@@ -32,7 +35,37 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Releases are cut from main, and only from main. A `qbzd-v*` tag anywhere
+  # else (a topic branch, a detached build) stops here before anything is
+  # built or published. workflow_dispatch without a tag is a plain test build
+  # and is exempt — it publishes nothing.
+  guard:
+    name: tag must be on main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify the tagged commit is on main
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "Not a tag ref ($REF_NAME) — nothing to publish, skipping the check."
+            exit 0
+          fi
+          git fetch --no-tags --depth=0 origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::Tag $REF_NAME points at $GITHUB_SHA, which is not an ancestor of main. Merge to main first, then tag."
+            exit 1
+          fi
+          echo "$REF_NAME ($GITHUB_SHA) is on main."
+
   build:
+    needs: guard
     strategy:
       matrix:
         include:

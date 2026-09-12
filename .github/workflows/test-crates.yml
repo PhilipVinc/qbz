@@ -3,24 +3,21 @@
 # This fork is daemon-only: the Slint UI crates are gone, so the whole
 # workspace is testable (~5 min cold, ~1–2 min warm).
 #
-# Repo policy note: release builds stay tag/dispatch-only. This is the one
-# workflow that runs on pre-release integration so regressions land before a
-# release cut. Path-filtered so packaging/docs PRs skip it.
+# Repo policy note: `main` is the trunk and the only branch releases are cut
+# from (fork-qbzd-release.yml refuses a tag that is not on main). This is the
+# workflow that keeps main green. Path-filtered so packaging/docs PRs skip it.
 
 name: test-crates
 
 on:
   pull_request:
-    # pre-release is the real base; main is listed so a PR opened against main
-    # still runs once before redirect-pr-to-prerelease retargets it.
-    branches: [pre-release, main]
+    branches: [main]
     paths:
       - "crates/**"
       - "scripts/cargo-test.sh"
       - ".github/workflows/test-crates.yml"
   push:
-    # Integration branch only — never main (a push to main is a release merge).
-    branches: [pre-release]
+    branches: [main]
     paths:
       - "crates/**"
       - "scripts/cargo-test.sh"
@@ -67,9 +64,9 @@ jobs:
           workspaces: crates -> target
           shared-key: test-crates-linux
           cache-on-failure: true
-          # PRs restore only. pre-release pushes write so the integration
-          # branch keeps the cache warm.
-          save-if: ${{ github.ref == 'refs/heads/pre-release' }}
+          # PRs restore only. Pushes to main write, so the trunk keeps the
+          # cache warm for the next PR.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: cargo test
         env:

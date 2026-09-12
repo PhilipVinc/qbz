@@ -37,59 +37,53 @@ Examples:
 
 ## Branch workflow
 
-We use a **pre-release integration branch** to keep `main` stable and release-ready at all times.
+`main` is the trunk: it is what releases are cut from, and the only branch CI
+will release from. There is no `pre-release` integration branch here — upstream
+QBZ uses one, this fork does not.
 
 ```
 feature/xyz ──┐
-bugfix/abc  ──┼──> pre-release ──> main (tagged release)
+bugfix/abc  ──┼──> main ──> tag qbzd-vX.Y.Z ──> release
 hotfix/123  ──┘
 ```
 
 ### Branch hierarchy
 
-1. **`main`** - Releases ONLY. Protected branch. Merging here triggers a tagged release.
-2. **`pre-release`** - Integration branch. All features and fixes merge here first.
-3. **`feature/*`, `bugfix/*`, etc.** - Individual work branches.
+1. **`main`** — the trunk. PRs target it; CI keeps it green.
+2. **`feature/*`, `bugfix/*`, etc.** — individual work branches.
 
-### For contributors
+### Releasing
 
-**All PRs must target `pre-release`, not `main`.**
+Releases are tags, not merges. Tag a commit **that is already on `main`**:
 
-PRs targeting `main` will be closed and asked to retarget to `pre-release`.
+```bash
+git checkout main
+git pull
+git tag qbzd-v2.0.2.moodeN
+git push origin qbzd-v2.0.2.moodeN
+```
+
+`fork-qbzd-release.yml` builds the aarch64 + amd64 tarballs and publishes a
+prerelease GitHub Release. Its first job refuses any `qbzd-v*` tag whose commit
+is not an ancestor of `main`, so tagging a topic branch fails loudly instead of
+publishing something that is not on the trunk.
+
+`build-qbzd-arm64.yml` (manual dispatch, any ref) is the way to get a test
+binary for the Pi without tagging.
 
 ### Procedure (maintainer)
 
 1. **Triage**
    - Confirm scope and that it does not touch protected areas (audio routing/backends, credential storage, etc.) unless requested.
-   - Verify PR targets `pre-release` (not `main`).
 2. **Check out the PR**
    - `gh pr checkout <PR_NUMBER>`
 3. **Rename the checked-out branch (local)**
    - Use an `external` branch name so it's obvious these commits are third-party authored:
    - `git branch -m <type>/external/<topic>`
-4. **Merge to pre-release**
-   - `git checkout pre-release`
-   - `git merge --no-ff <type>/external/<topic>`
-5. **Run checks**
+4. **Run checks**
    - Build/validate a touched crate: `cargo check -p <crate>` (run from
      `crates/`), or the whole workspace with `./scripts/cargo-test.sh`.
-6. **Push pre-release**
-   - `git push origin pre-release`
-7. **Close the PR with a comment** explaining it was merged to `pre-release`.
-
-### Releasing to main
-
-When ready to release:
-
-```bash
-git checkout main
-git merge pre-release
-git push origin main
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-This is done exclusively by maintainers.
+5. **Merge to main** — `git merge --no-ff <type>/external/<topic>`, then push.
 
 ### Merge strategy note (to preserve “external” authorship)
 
