@@ -1,8 +1,9 @@
 # muqbzd — headless Qobuz Connect daemon
 
-This is a **daemon-only fork** of [QBZ](https://github.com/vicrodh/qbz). It carries `qbzd`
-and exactly the crates `qbzd` depends on; the Slint desktop UI, its packaging and its
-release tooling have been removed. For the desktop player, use upstream.
+**muqbzd started life as a fork of [QBZ](https://github.com/vicrodh/qbz), and has since
+diverged into a headless-only project.** See [Where this came from](#where-this-came-from)
+— QBZ is where nearly all of this code was written, and it is very much alive; if you want
+a desktop Qobuz player, go there, not here.
 
 > **The name.** *mu* reads three ways, all of them true: **μ**, because what's left is a
 > ~25 MB binary where the desktop build wanted ~30 GB of RAM to link; **無**, *nothing* —
@@ -31,6 +32,30 @@ official Qobuz apps like a hardware streamer.
 
 Upstream's manual still applies:
 **[Headless Daemon (qbzd) — Wiki](https://github.com/vicrodh/qbz/wiki/Headless-Daemon)**
+
+## Where this came from
+
+muqbzd is a fork of **[QBZ](https://github.com/vicrodh/qbz)**, written by
+**[@vicrodh](https://github.com/vicrodh)** — a native hi-fi Qobuz client for Linux and
+macOS, and the origin of nearly every line of code in this repository, `qbzd` itself
+included. The git history here *is* QBZ's history; this is a branch of that work, not a
+rewrite of it.
+
+The fork started because I wanted that daemon running on a Raspberry Pi under
+[moOde](https://moodeaudio.org/), and kept pushing it in directions that only matter when
+there is no screen attached: event hooks so an audio-box distro can react to playback
+instead of polling; Qobuz Connect pairing over the LAN; HTTP range requests so a seek or a
+resume doesn't re-download the track from zero; gapless prefetch and ALSA clock/buffer
+handling tuned for a small board; a much smaller memory footprint. Several of those have
+gone back to QBZ and been merged there, and more are in review — upstreaming is the
+preferred outcome, and this fork is not a competitor to it.
+
+The divergence became structural with the removal of the desktop player: this tree keeps
+`qbzd` and exactly the crates it depends on, and has dropped the Slint UI, its packaging
+and its release tooling entirely. That makes the two trees hard to reconcile in the UI
+direction, which is the honest reason to call it a separate project rather than a branch
+waiting to be merged. **QBZ remains actively developed and is the project to use** if you
+want the application; muqbzd only makes sense if you want a headless box.
 
 ## Legal / Branding
 
@@ -110,6 +135,25 @@ The HTTP API is `docs/openapi.yaml`.
 See `CONTRIBUTING.md`. UI changes belong upstream at
 [vicrodh/qbz](https://github.com/vicrodh/qbz).
 
+## Credits
+
+QBZ, and therefore almost all of this code, is the work of
+**[@vicrodh](https://github.com/vicrodh)** and the people who contributed to it:
+
+- [@vorce](https://github.com/vorce)
+- [@boxdot](https://github.com/boxdot)
+- [@arminfelder](https://github.com/arminfelder)
+- [@afonsojramos](https://github.com/afonsojramos) — macOS port
+- [@Vudgekek](https://github.com/Vudgekek) — macOS audio
+- [@GwendalBeaumont](https://github.com/GwendalBeaumont) — i18n
+- [@AdamArstall](https://github.com/AdamArstall)
+- [@DoubleGate](https://github.com/DoubleGate)
+
+Some of that work — the macOS port, the translations, the desktop UI it all hung on — is
+not part of *this* tree any more, having gone with the GUI. It is still in the history
+that got the daemon here, and the credit stands regardless of what this fork happens to
+compile today.
+
 ## License
 
-MIT. Upstream QBZ is by [@vicrodh](https://github.com/vicrodh) and its contributors.
+MIT, as upstream. See `LICENSE`.
