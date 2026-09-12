@@ -656,9 +656,11 @@ mod tests {
     #[test]
     fn local_renderer_role_separates_undetermined_from_not_active() {
         let role = |active, local| {
-            let mut session = QconnectSessionState::default();
-            session.active_renderer_id = active;
-            session.local_renderer_id = local;
+            let session = QconnectSessionState {
+                active_renderer_id: active,
+                local_renderer_id: local,
+                ..Default::default()
+            };
             local_renderer_role(&session)
         };
 
@@ -674,9 +676,11 @@ mod tests {
     /// report suppressors, and `None` has to collapse to "do not report".
     #[test]
     fn is_local_renderer_active_still_collapses_undetermined_to_false() {
-        let mut session = QconnectSessionState::default();
-        session.active_renderer_id = Some(9);
-        session.local_renderer_id = None;
+        let session = QconnectSessionState {
+            active_renderer_id: Some(9),
+            local_renderer_id: None,
+            ..Default::default()
+        };
         assert_eq!(local_renderer_role(&session), None);
         assert!(!is_local_renderer_active(&session));
     }

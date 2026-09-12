@@ -122,12 +122,14 @@ pub fn valid_ws_tokens(store: &PairingStore) -> Option<PairingTokens> {
 /// hardened defaults `resolve_transport_config` uses (require_jwt, 60s idle
 /// retry, the default connectionId/backend/controllers channels).
 pub fn transport_config_from(tokens: &PairingTokens) -> WsTransportConfig {
-    let mut config = WsTransportConfig::default();
-    config.endpoint_url = tokens.ws_endpoint.clone();
-    config.jwt_qws = Some(tokens.ws_jwt.clone());
-    config.require_jwt = true;
-    config.reconnect_idle_retry_ms = 60_000;
-    config.subscribe_channels = vec![vec![0x01], vec![0x02], vec![0x03]];
+    let config = WsTransportConfig {
+        endpoint_url: tokens.ws_endpoint.clone(),
+        jwt_qws: Some(tokens.ws_jwt.clone()),
+        require_jwt: true,
+        reconnect_idle_retry_ms: 60_000,
+        subscribe_channels: vec![vec![0x01], vec![0x02], vec![0x03]],
+        ..Default::default()
+    };
     config
 }
 

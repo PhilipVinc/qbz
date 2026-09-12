@@ -2604,8 +2604,10 @@ mod tests {
 
     #[test]
     fn queue_hashes_diverge_is_inert_without_local_algorithm() {
-        let mut queue = QConnectQueueState::default();
-        queue.last_server_queue_hash = Some(vec![9, 9, 9]);
+        let queue = QConnectQueueState {
+            last_server_queue_hash: Some(vec![9, 9, 9]),
+            ..Default::default()
+        };
         assert!(
             !queue_hashes_diverge(&queue),
             "divergence detection must stay inert until the local hash algorithm is known"

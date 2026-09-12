@@ -600,12 +600,14 @@ pub async fn resolve_transport_config(runtime: &Runtime) -> Result<WsTransportCo
         vec![vec![0x01], vec![0x02], vec![0x03]]
     };
 
-    let mut config = WsTransportConfig::default();
-    config.endpoint_url = endpoint_url;
-    config.jwt_qws = jwt_qws;
-    config.require_jwt = true;
-    config.reconnect_idle_retry_ms = 60_000;
-    config.subscribe_channels = subscribe_channels;
+    let config = WsTransportConfig {
+        endpoint_url: endpoint_url,
+        jwt_qws: jwt_qws,
+        require_jwt: true,
+        reconnect_idle_retry_ms: 60_000,
+        subscribe_channels: subscribe_channels,
+        ..Default::default()
+    };
     Ok(config)
 }
 

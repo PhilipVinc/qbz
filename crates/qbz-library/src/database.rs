@@ -3353,10 +3353,12 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.sort_by = sort_by.to_string();
-            settings.sort_order = sort_order.to_string();
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                sort_by: sort_by.to_string(),
+                sort_order: sort_order.to_string(),
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -3387,9 +3389,11 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.custom_artwork_path = artwork_path.map(|s| s.to_string());
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                custom_artwork_path: artwork_path.map(|s| s.to_string()),
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -3420,9 +3424,11 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.last_search_query = query.map(|s| s.to_string());
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                last_search_query: query.map(|s| s.to_string()),
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -3504,9 +3510,11 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.hidden = hidden;
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                hidden: hidden,
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -3537,9 +3545,11 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.is_favorite = favorite;
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                is_favorite: favorite,
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -3621,9 +3631,11 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.position = position;
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                position: position,
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -3651,9 +3663,11 @@ impl LibraryDatabase {
             // Ensure settings exist first
             let existing = self.get_playlist_settings(playlist_id)?;
             if existing.is_none() {
-                let mut settings = PlaylistSettings::default();
-                settings.qobuz_playlist_id = playlist_id;
-                settings.position = index as i32;
+                let settings = PlaylistSettings {
+                    qobuz_playlist_id: playlist_id,
+                    position: index as i32,
+                    ..Default::default()
+                };
                 self.save_playlist_settings(&settings)?;
             } else {
                 self.conn
@@ -3988,9 +4002,11 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.folder_id = folder_id.map(|s| s.to_string());
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                folder_id: folder_id.map(|s| s.to_string()),
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -5523,9 +5539,11 @@ impl LibraryDatabase {
         // First check if settings exist, if not create default
         let existing = self.get_playlist_settings(qobuz_playlist_id)?;
         if existing.is_none() {
-            let mut settings = PlaylistSettings::default();
-            settings.qobuz_playlist_id = qobuz_playlist_id;
-            settings.has_local_content = status;
+            let settings = PlaylistSettings {
+                qobuz_playlist_id: qobuz_playlist_id,
+                has_local_content: status,
+                ..Default::default()
+            };
             return self.save_playlist_settings(&settings);
         }
 
@@ -5717,14 +5735,16 @@ mod metadata_grouping_tests {
         artist: &str,
         album_group_key: &str,
     ) {
-        let mut t = LocalTrack::default();
-        t.file_path = file_path.to_string();
-        t.title = format!("Track at {}", file_path);
-        t.album = album.unwrap_or("").to_string();
-        t.album_artist = album_artist.map(String::from);
-        t.artist = artist.to_string();
-        t.album_group_key = album_group_key.to_string();
-        t.album_group_title = album.unwrap_or("").to_string();
+        let t = LocalTrack {
+            file_path: file_path.to_string(),
+            title: format!("Track at {}", file_path),
+            album: album.unwrap_or("").to_string(),
+            album_artist: album_artist.map(String::from),
+            artist: artist.to_string(),
+            album_group_key: album_group_key.to_string(),
+            album_group_title: album.unwrap_or("").to_string(),
+            ..Default::default()
+        };
         db.insert_track(&t).unwrap();
     }
 
@@ -6017,15 +6037,17 @@ mod metadata_grouping_tests {
         album_group_title: &str,
         year: Option<u32>,
     ) {
-        let mut t = LocalTrack::default();
-        t.file_path = file_path.to_string();
-        t.title = format!("Track at {}", file_path);
-        t.album = album.to_string();
-        t.album_artist = album_artist.map(String::from);
-        t.artist = artist.to_string();
-        t.album_group_key = album_group_key.to_string();
-        t.album_group_title = album_group_title.to_string();
-        t.year = year;
+        let t = LocalTrack {
+            file_path: file_path.to_string(),
+            title: format!("Track at {}", file_path),
+            album: album.to_string(),
+            album_artist: album_artist.map(String::from),
+            artist: artist.to_string(),
+            album_group_key: album_group_key.to_string(),
+            album_group_title: album_group_title.to_string(),
+            year: year,
+            ..Default::default()
+        };
         db.insert_track(&t).unwrap();
     }
 
@@ -6691,11 +6713,13 @@ mod sidecar_position_tests {
     fn seed_local_tracks(db: &LibraryDatabase, count: usize) -> Vec<i64> {
         (0..count)
             .map(|i| {
-                let mut t = LocalTrack::default();
-                t.file_path = format!("/t/track{i}.flac");
-                t.title = format!("T{i}");
-                t.artist = "A".into();
-                t.album = "B".into();
+                let t = LocalTrack {
+                    file_path: format!("/t/track{i}.flac"),
+                    title: format!("T{i}"),
+                    artist: "A".into(),
+                    album: "B".into(),
+                    ..Default::default()
+                };
                 db.insert_track(&t).unwrap()
             })
             .collect()
