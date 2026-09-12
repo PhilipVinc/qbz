@@ -817,10 +817,7 @@ fn plan_audio_machine(
             device_survives = false;
         }
         None => {
-            if device_no_change || device_is_null || !device_present {
-                resolved_device = bundle_device.clone();
-                device_survives = true;
-            } else if device_found {
+            if device_no_change || device_is_null || !device_present || device_found {
                 resolved_device = bundle_device.clone();
                 device_survives = true;
             } else {
@@ -846,9 +843,7 @@ fn plan_audio_machine(
             None => Value::Null,
         };
         if resolved_device == bundle_device {
-            let why = if device_no_change {
-                ""
-            } else if device_is_null {
+            let why = if device_no_change || device_is_null {
                 ""
             } else {
                 "found on this machine"

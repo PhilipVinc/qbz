@@ -328,7 +328,7 @@ impl SearchRanking {
         &self,
         query: &str,
         kind: &str,
-        items: &mut Vec<T>,
+        items: &mut [T],
         id_of: impl Fn(&T) -> String,
     ) {
         let key = normalize_query(query);

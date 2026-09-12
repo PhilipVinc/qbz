@@ -659,7 +659,7 @@ impl SuggestionsEngine {
         // Step 2: Search for tracks by artist name
         // Fetch many more since search results include tracks where the artist appears,
         // not just tracks BY the artist. We filter down to exact matches.
-        let search_limit = ((limit * 5) as u32).max(100).min(500); // Between 100-500
+        let search_limit = ((limit * 5) as u32).clamp(100, 500); // Between 100-500
         match client
             .search_tracks(&search_query, search_limit, 0, None)
             .await

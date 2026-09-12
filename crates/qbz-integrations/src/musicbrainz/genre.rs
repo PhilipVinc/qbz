@@ -207,7 +207,7 @@ pub fn extract_affinity_seeds(tags: &[Tag]) -> AffinitySeeds {
 
     // Sort by vote count descending
     let mut sorted_tags: Vec<_> = tags.iter().collect();
-    sorted_tags.sort_by(|a, b| b.count.unwrap_or(0).cmp(&a.count.unwrap_or(0)));
+    sorted_tags.sort_by_key(|a| std::cmp::Reverse(a.count.unwrap_or(0)));
 
     let mut genres = Vec::new();
     let mut secondary_tags = Vec::new();

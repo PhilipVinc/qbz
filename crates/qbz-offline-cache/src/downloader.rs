@@ -255,9 +255,9 @@ impl Default for StreamFetcher {
 /// On success: the encrypted CMAF bundle is persisted under
 /// `<offline_root>/tracks-cmaf/<track_id>/`, the per-track AES content key
 /// + session infos are wrapped via `qbz-secrets` and stored on the DB row,
-/// `cache_format` flips to 2, `mark_complete` fires, and the library row
-/// is populated with the same metadata the legacy path would populate
-/// (title/artist/album, etc.).
+///   `cache_format` flips to 2, `mark_complete` fires, and the library row
+///   is populated with the same metadata the legacy path would populate
+///   (title/artist/album, etc.).
 ///
 /// Returns `Err` for any failure that makes CMAF unusable — the caller
 /// falls back to the legacy plain-FLAC path.

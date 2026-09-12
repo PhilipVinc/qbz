@@ -488,18 +488,6 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
     }
 }
 
-/// 503 `audio_unavailable` — the frozen taxonomy's device/audio bucket
-/// (02 §3.1.3), exit 5. Reserved for GENUINE audio/device conditions: the
-/// DSD-direct guards (handled inline via `err_json`, not this helper) and
-/// cold-start's `play_track_resolved` failure (no device / stream resolve
-/// failed). Each route's documented exit set (02 §2.2) decides which one
-/// applies — `pause`/`stop`/plain `seek`/`volume`/`next`/`prev` never list
-/// exit 5, so their `Player`/`QbzCore` command failures use
-/// [`runtime_error`] instead.
-fn device_error(message: &str) -> Response<Cursor<Vec<u8>>> {
-    err_json(503, "audio_unavailable", message, "check: qbzd status")
-}
-
 /// A generic runtime failure, exit 1 (02 §1.3's catch-all) — e.g. the
 /// player's command channel is dead. `code` "internal" is NOT one of
 /// `error_from_envelope`'s special-cased codes, so it falls to
@@ -591,4 +579,20 @@ mod tests {
         assert!(rendered.contains("\"volume\":0.8"), "got: {rendered}");
         assert!(!rendered.contains("0.80000"), "got: {rendered}");
     }
+}
+
+/// 503 `audio_unavailable` — the frozen taxonomy's device/audio bucket
+/// (02 §3.1.3), exit 5. Reserved for GENUINE audio/device conditions: the
+/// DSD-direct guards (handled inline via `err_json`, not this helper) and
+/// cold-start's `play_track_resolved` failure (no device / stream resolve
+/// failed). Each route's documented exit set (02 §2.2) decides which one
+/// applies — `pause`/`stop`/plain `seek`/`volume`/`next`/`prev` never list
+/// exit 5, so their `Player`/`QbzCore` command failures use
+/// [`runtime_error`] instead.
+/// Currently unconstructed: the cold-start path builds its 503 through
+/// `err_json` inline. Kept because the taxonomy is frozen, the CLI still
+/// maps this code, and two doc comments link to it.
+#[allow(dead_code)]
+fn device_error(message: &str) -> Response<Cursor<Vec<u8>>> {
+    err_json(503, "audio_unavailable", message, "check: qbzd status")
 }

@@ -90,11 +90,9 @@ pub fn apply_event(
                 state.shuffle_mode = *enabled;
             }
 
-            if state.shuffle_mode {
-                state.shuffle_order = None;
-            } else {
-                state.shuffle_order = None;
-            }
+            // Cleared either way: a reload invalidates any existing order,
+            // and the shuffled order is rebuilt lazily on next use.
+            state.shuffle_order = None;
 
             if *autoplay_reset {
                 state.autoplay_items.clear();

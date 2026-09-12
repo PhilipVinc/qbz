@@ -171,9 +171,7 @@ impl BufferingLatch {
         let Ok(mut guard) = self.0.lock() else {
             return None;
         };
-        let Some(b) = guard.as_ref() else {
-            return None;
-        };
+        let b = guard.as_ref()?;
         let audible = player_track_id == b.track_id
             && position_ms > b.start_position_secs.saturating_mul(1000);
         if audible || b.since.elapsed() > BUFFERING_MAX {

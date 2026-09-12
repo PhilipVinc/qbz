@@ -237,7 +237,7 @@ pub fn musicbrainz_full_to_metadata(
         .as_ref()
         .map(|tags| {
             let mut sorted: Vec<_> = tags.iter().collect();
-            sorted.sort_by(|a, b| b.count.cmp(&a.count));
+            sorted.sort_by_key(|a| std::cmp::Reverse(a.count));
             sorted.iter().take(5).map(|t| t.name.clone()).collect()
         })
         .unwrap_or_default();

@@ -215,8 +215,8 @@ pub enum DownloadedTrack {
 ///   * a single blocking, fsync'd write of the whole track afterwards, 11-15 s
 ///     with the card pinned, which underran ALSA and was audible (twice,
 ///     measured, mid-write).
-/// Writing as the segments decrypt spreads the same bytes across the ~40 s the
-/// download already takes, so neither the copy nor the burst exists.
+///     Writing as the segments decrypt spreads the same bytes across the ~40 s the
+///     download already takes, so neither the copy nor the burst exists.
 pub async fn download_full_sized(
     client: &QobuzClient,
     track_id: u64,

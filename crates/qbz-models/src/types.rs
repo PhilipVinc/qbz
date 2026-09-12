@@ -1320,13 +1320,13 @@ pub struct PageArtistAward {
 /// Qobuz uses three different embedded shapes across endpoints:
 /// - `/discover/index` — {id: int, name, awarded_at: "YYYY-MM-DD"}
 /// - `/album/get`      — LegacyAwardDto {awardId: string, name,
-///                        publicationId, publicationName, awardSlug,
-///                        awardedAt: long, …}
+///   publicationId, publicationName, awardSlug,
+///   awardedAt: long, …}
 /// - `/artist/page`    — PageArtistAward {id: int, name, awarded_at}
-/// id is emitted as String downstream so the frontend has a single
-/// type to carry into /award/page and /award/getAlbums. The `alias`
-/// list covers the LegacyAwardDto field name the web app never sees
-/// but the mobile API uses.
+///   id is emitted as String downstream so the frontend has a single
+///   type to carry into /award/page and /award/getAlbums. The `alias`
+///   list covers the LegacyAwardDto field name the web app never sees
+///   but the mobile API uses.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AlbumAward {
     #[serde(

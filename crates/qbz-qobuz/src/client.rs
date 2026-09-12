@@ -1751,11 +1751,7 @@ impl QobuzClient {
     pub async fn get_artist_basic(&self, artist_id: u64) -> Result<Artist> {
         let url = endpoints::build_url(paths::ARTIST_GET);
         let locale = self.locale().await;
-        let query = vec![
-            ("artist_id", artist_id.to_string()),
-            ("lang", locale),
-            // No "extra" parameter = only basic info (id, name, image)
-        ];
+        let query = [("artist_id", artist_id.to_string()), ("lang", locale)];
 
         let http_response = self
             .signed_get(

@@ -4568,9 +4568,9 @@ impl LibraryDatabase {
         if moves.is_empty() {
             return Ok(Vec::new());
         }
-        let mut next = ((qobuz_track_count as i32) + sidecar_total as i32).max(max_pos + 1);
+        let first = ((qobuz_track_count as i32) + sidecar_total as i32).max(max_pos + 1);
         let mut healed = Vec::with_capacity(moves.len());
-        for (kind, rowid, reference, old) in moves {
+        for (next, (kind, rowid, reference, old)) in (first..).zip(moves) {
             let sql = if kind == "local" {
                 "UPDATE playlist_local_tracks SET position = ?1 WHERE id = ?2"
             } else {
@@ -4580,7 +4580,6 @@ impl LibraryDatabase {
                 LibraryError::Database(format!("Failed to heal sidecar position: {}", e))
             })?;
             healed.push(format!("{kind} {reference}: {old} -> {next}"));
-            next += 1;
         }
         Ok(healed)
     }

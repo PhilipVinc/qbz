@@ -2771,7 +2771,7 @@ pub fn normalize_artist_name(name: &str) -> String {
 /// Deterministic shuffle keyed by `seed_mbid` (and optionally a tag).
 /// Same artist page produces the same order across runs; different
 /// artist or different fallback tag produces a different order.
-fn shuffle_with_seed<T>(items: &mut Vec<T>, seed_mbid: &str, secondary_tag: Option<&str>) {
+fn shuffle_with_seed<T>(items: &mut [T], seed_mbid: &str, secondary_tag: Option<&str>) {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();

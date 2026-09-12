@@ -94,8 +94,8 @@ pub enum PlaybackEngine {
     },
     /// Native JACK output (#263 Tier 3). Mirrors AlsaDirect (gapless source queue
     /// + a single long-lived feeder thread), but the feeder resamples each source
-    /// to the JACK graph rate and writes interleaved stereo f32 into the client's
-    /// lock-free ring buffer via `JackStream::write_f32`. NOT bit-perfect.
+    ///   to the JACK graph rate and writes interleaved stereo f32 into the client's
+    ///   lock-free ring buffer via `JackStream::write_f32`. NOT bit-perfect.
     #[cfg(target_os = "linux")]
     Jack {
         is_playing: Arc<AtomicBool>,

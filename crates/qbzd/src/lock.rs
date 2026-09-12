@@ -24,6 +24,9 @@ impl InstanceLock {
         let path = data_root.join("qbzd.lock");
         let mut file = OpenOptions::new()
             .create(true)
+            // Never truncate: the file carries the holder's pid, and a second
+            // daemon must be able to read it to report who holds the lock.
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)

@@ -9,7 +9,7 @@
 // T11's `write_one`, import/export through the T12 bundle engine, auth through
 // the T5 login engine. The TUI adds no persistence of its own (03 §6).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 
 use serde_json::{json, Value};
@@ -91,7 +91,7 @@ pub enum Focus {
 }
 
 /// Construct the path to the OAuth token file in the config root.
-fn cred_file_path(config_root: &PathBuf) -> PathBuf {
+fn cred_file_path(config_root: &Path) -> PathBuf {
     config_root.join(".qbz-oauth-token")
 }
 
@@ -132,8 +132,8 @@ fn section_title(screen: Screen) -> &'static str {
 /// Breadcrumb node composition (max 2 levels, FB3). Pure so it can be pinned:
 /// - not editing → (`Setup`, section)   — dim prefix, accent current.
 /// - editing a field → (section, field) — the field label is the current node.
-/// Modals/pickers are the third level (overlays); they do NOT change the crumb,
-/// so the caller passes `None` for them (see each screen's `editing_label`).
+///   Modals/pickers are the third level (overlays); they do NOT change the crumb,
+///   so the caller passes `None` for them (see each screen's `editing_label`).
 fn breadcrumb_nodes<'a>(section: &'a str, editing_field: Option<&'a str>) -> (&'a str, &'a str) {
     match editing_field {
         Some(field) => (section, field),
@@ -448,7 +448,7 @@ impl App {
 
     /// Load a section into the content frame (a §5.5 "screen entry": disk reads
     /// + a fresh daemon-status fetch happen here, never on a keystroke). Sets the
-    /// active section and syncs the sidebar cursor to it.
+    ///   active section and syncs the sidebar cursor to it.
     fn enter_screen(&mut self, screen: Screen) {
         self.refresh_status();
         self.active_section = screen;

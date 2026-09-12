@@ -452,9 +452,9 @@ pub fn target_path(
 /// Ordering & failure semantics (Addendum B.1 — replicated verbatim):
 ///   1. write `target.with_extension("{ext}.part")` → `2. fs::rename` to final
 ///      → `3. mark_purchase_downloaded`.
-///   If the file write/rename SUCCEEDS but the registry write FAILS, this
-///   returns `Err` with the file LEFT ON DISK (orphaned, no registry row). Do
-///   NOT roll back the file or treat the registry failure as success.
+///      If the file write/rename SUCCEEDS but the registry write FAILS, this
+///      returns `Err` with the file LEFT ON DISK (orphaned, no registry row). Do
+///      NOT roll back the file or treat the registry failure as success.
 ///
 /// No collision preflight (Addendum B.3): `.part`→`fs::rename` overwrites any
 /// pre-existing final file or stale `.part` silently.

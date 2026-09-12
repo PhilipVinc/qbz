@@ -347,7 +347,7 @@ impl MusicBrainzClient {
             .into_iter()
             .filter(|tag| tag.count.unwrap_or(0) > 0)
             .collect();
-        tags.sort_by(|a, b| b.count.unwrap_or(0).cmp(&a.count.unwrap_or(0)));
+        tags.sort_by_key(|a| std::cmp::Reverse(a.count.unwrap_or(0)));
         Ok(tags
             .into_iter()
             .map(|tag| tag.name.to_lowercase())
@@ -386,7 +386,7 @@ impl MusicBrainzClient {
         self.rate_limiter.wait().await;
 
         let base = self.base_url().await;
-        let limit = limit.min(100).max(1);
+        let limit = limit.clamp(1, 100);
         let query = format!("tag:\"{}\"", Self::escape_query(tag));
         let url = format!(
             "{}/artist?query={}&fmt=json&limit={}",
@@ -413,7 +413,7 @@ impl MusicBrainzClient {
         self.rate_limiter.wait().await;
 
         let base = self.base_url().await;
-        let limit = limit.min(100).max(1);
+        let limit = limit.clamp(1, 100);
         let search_area = country.unwrap_or(area_name);
         let query = format!(
             "tag:\"{}\" AND area:\"{}\"",
@@ -487,7 +487,7 @@ impl MusicBrainzClient {
             )
         };
 
-        let limit = limit.min(25).max(1);
+        let limit = limit.clamp(1, 25);
         let url = format!(
             "{}/release?query={}&fmt=json&limit={}",
             base,
@@ -530,7 +530,7 @@ impl MusicBrainzClient {
         self.rate_limiter.wait().await;
 
         let base = self.base_url().await;
-        let limit = limit.min(100).max(1);
+        let limit = limit.clamp(1, 100);
         let url = format!(
             "{}/artist?area={}&fmt=json&limit={}&offset={}&inc=tags",
             base, area_id, limit, offset

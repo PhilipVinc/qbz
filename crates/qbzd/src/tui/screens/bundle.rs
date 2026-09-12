@@ -586,8 +586,8 @@ impl BundleState {
 
         widgets::panel(f, area, s::BUNDLE_TITLE, lines, self.scroll);
 
-        if self.device_picker.is_some() {
-            self.device_picker.as_ref().unwrap().draw(f, area);
+        if let Some(picker) = &self.device_picker {
+            picker.draw(f, area);
         } else if self.auth_confirm {
             widgets::modal(
                 f,

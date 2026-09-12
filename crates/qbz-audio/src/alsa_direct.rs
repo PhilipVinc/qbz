@@ -416,8 +416,6 @@ pub fn f32_to_s32(sample: f32) -> i32 {
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct ConvScratch {
-    i32s: Vec<i32>,
-    i16s: Vec<i16>,
     bytes: Vec<u8>,
 }
 
