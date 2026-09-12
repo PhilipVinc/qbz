@@ -32,7 +32,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::{cue_to_tracks, CueParser, LibraryError, LibraryScanner, LocalTrack, MetadataExtractor};
+use crate::{
+    cue_to_tracks, CueParser, LibraryError, LibraryScanner, LocalTrack, MetadataExtractor,
+};
 use serde::Serialize;
 
 /// Floor for synthetic ephemeral track ids. Any id at or above this
@@ -235,9 +237,10 @@ impl EphemeralLibraryState {
                         let mut found =
                             MetadataExtractor::extract_artwork(&canonical, &artwork_cache);
                         if found.is_none() {
-                            if let Some(folder_art) =
-                                MetadataExtractor::find_folder_artwork(&canonical, cue.title.as_deref())
-                            {
+                            if let Some(folder_art) = MetadataExtractor::find_folder_artwork(
+                                &canonical,
+                                cue.title.as_deref(),
+                            ) {
                                 found = MetadataExtractor::cache_artwork_file(
                                     Path::new(&folder_art),
                                     &artwork_cache,
@@ -259,7 +262,11 @@ impl EphemeralLibraryState {
                     cue_referenced_audio.insert(canonical);
                 }
                 Err(e) => {
-                    log::warn!("[ephemeral] failed to parse CUE {}: {}", cue_path.display(), e);
+                    log::warn!(
+                        "[ephemeral] failed to parse CUE {}: {}",
+                        cue_path.display(),
+                        e
+                    );
                     skipped_files += 1;
                 }
             }

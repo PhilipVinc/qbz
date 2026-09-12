@@ -44,7 +44,10 @@ pub async fn status(host: Option<String>, json: bool, roots: &ProfileRoots) -> i
 
     // Version skew (§1.6): breaking api_version mismatch refuses; a semver-only
     // mismatch is a warning that does not stop the render.
-    let daemon_api = payload.get("api_version").and_then(|a| a.as_u64()).unwrap_or(0) as u32;
+    let daemon_api = payload
+        .get("api_version")
+        .and_then(|a| a.as_u64())
+        .unwrap_or(0) as u32;
     if daemon_api != crate::API_VERSION {
         eprintln!("{}", copy::api_version_skew(daemon_api, crate::API_VERSION));
         return 1;
@@ -110,7 +113,10 @@ fn render(p: &Value, host: &str) -> String {
     out.push_str(&format!("qconnect  : {}\n", render_qconnect(p)));
     out.push_str(&format!(
         "network   : {}\n",
-        if p.pointer("/network/online").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if p.pointer("/network/online")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             "online"
         } else {
             "offline"
@@ -138,12 +144,19 @@ fn render_auth(p: &Value) -> String {
 
 fn render_audio(p: &Value) -> String {
     let backend = p.pointer("/audio/backend").and_then(|v| v.as_str());
-    let device = p.pointer("/audio/configured_device").and_then(|v| v.as_str());
-    let present = p.pointer("/audio/device_present").and_then(|v| v.as_bool()).unwrap_or(false);
+    let device = p
+        .pointer("/audio/configured_device")
+        .and_then(|v| v.as_str());
+    let present = p
+        .pointer("/audio/device_present")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let bit_perfect = p.pointer("/audio/bit_perfect").and_then(|v| v.as_str());
     let sr = p.pointer("/audio/sample_rate").and_then(|v| v.as_u64());
     let bd = p.pointer("/audio/bit_depth").and_then(|v| v.as_u64());
-    let out_sr = p.pointer("/audio/output_sample_rate").and_then(|v| v.as_u64());
+    let out_sr = p
+        .pointer("/audio/output_sample_rate")
+        .and_then(|v| v.as_u64());
 
     let mut parts: Vec<String> = Vec::new();
     let head = match (backend, device) {
@@ -153,7 +166,11 @@ fn render_audio(p: &Value) -> String {
         (None, None) => "system default".to_string(),
     };
     parts.push(head);
-    parts.push(if present { "present".into() } else { "not present".into() });
+    parts.push(if present {
+        "present".into()
+    } else {
+        "not present".into()
+    });
     if let Some(bp) = bit_perfect {
         // A named PCM is opened directly, but whatever its chain does next is
         // invisible from here — with CamillaDSP or an equalizer behind the name
@@ -191,16 +208,31 @@ fn render_audio(p: &Value) -> String {
 
 fn render_playback(p: &Value) -> String {
     let state = str_at(p, &["playback", "state"]);
-    let queue = p.pointer("/playback/queue_len").and_then(|v| v.as_u64()).unwrap_or(0);
+    let queue = p
+        .pointer("/playback/queue_len")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     if state == "stopped" {
         return format!("stopped · queue {queue}");
     }
     let title = p.pointer("/playback/title").and_then(|v| v.as_str());
     let artist = p.pointer("/playback/artist").and_then(|v| v.as_str());
-    let pos = p.pointer("/playback/position").and_then(|v| v.as_u64()).unwrap_or(0);
-    let dur = p.pointer("/playback/duration").and_then(|v| v.as_u64()).unwrap_or(0);
-    let vol = p.pointer("/playback/volume").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let muted = p.pointer("/playback/muted").and_then(|v| v.as_bool()).unwrap_or(false);
+    let pos = p
+        .pointer("/playback/position")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let dur = p
+        .pointer("/playback/duration")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let vol = p
+        .pointer("/playback/volume")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let muted = p
+        .pointer("/playback/muted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let track = match (title, artist) {
         (Some(t), Some(a)) => format!("\"{t}\" — {a}"),
@@ -220,14 +252,30 @@ fn render_playback(p: &Value) -> String {
 }
 
 fn render_qconnect(p: &Value) -> String {
-    let enabled = p.pointer("/qconnect/enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    let enabled = p
+        .pointer("/qconnect/enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     if !enabled {
         return "off".to_string();
     }
-    let state = p.pointer("/qconnect/state").and_then(|v| v.as_str()).unwrap_or("");
-    let session = p.pointer("/qconnect/session_active").and_then(|v| v.as_bool()).unwrap_or(false);
-    let name = p.pointer("/qconnect/device_name").and_then(|v| v.as_str()).unwrap_or("");
-    let mut parts = vec![if state.is_empty() { "enabled".to_string() } else { state.to_string() }];
+    let state = p
+        .pointer("/qconnect/state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let session = p
+        .pointer("/qconnect/session_active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let name = p
+        .pointer("/qconnect/device_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let mut parts = vec![if state.is_empty() {
+        "enabled".to_string()
+    } else {
+        state.to_string()
+    }];
     if session {
         parts.push("session active".to_string());
     }
@@ -239,7 +287,10 @@ fn render_qconnect(p: &Value) -> String {
 
 fn render_last_error(p: &Value) -> String {
     for key in ["stream", "auth", "transport"] {
-        if let Some(m) = p.pointer(&format!("/last_errors/{key}")).and_then(|v| v.as_str()) {
+        if let Some(m) = p
+            .pointer(&format!("/last_errors/{key}"))
+            .and_then(|v| v.as_str())
+        {
             if !m.is_empty() {
                 return format!("{key}: {m}");
             }
@@ -341,11 +392,25 @@ mod tests {
     #[test]
     fn render_covers_the_composite_block() {
         let block = render(&logged_in_payload(), "127.0.0.1:8182");
-        assert!(block.contains("qbzd 2.1.0 · api v1 · up 3d 0h · 127.0.0.1:8182"), "{block}");
-        assert!(block.contains("auth      : logged in (user 1234567, studio)"), "{block}");
+        assert!(
+            block.contains("qbzd 2.1.0 · api v1 · up 3d 0h · 127.0.0.1:8182"),
+            "{block}"
+        );
+        assert!(
+            block.contains("auth      : logged in (user 1234567, studio)"),
+            "{block}"
+        );
         assert!(block.contains("alsa hw:CARD=D30,DEV=0 · present · bit-perfect: DirectHardware · 192000 Hz / 24-bit"), "{block}");
-        assert!(block.contains("playback  : playing · \"Spain\" — Chick Corea · 3:12 / 9:41 · vol 80% · queue 14"), "{block}");
-        assert!(block.contains("qconnect  : connected · session active · name \"QBZ (kitchen-pi)\""), "{block}");
+        assert!(
+            block.contains(
+                "playback  : playing · \"Spain\" — Chick Corea · 3:12 / 9:41 · vol 80% · queue 14"
+            ),
+            "{block}"
+        );
+        assert!(
+            block.contains("qconnect  : connected · session active · name \"QBZ (kitchen-pi)\""),
+            "{block}"
+        );
         assert!(block.contains("last error: none"), "{block}");
     }
 

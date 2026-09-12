@@ -90,7 +90,11 @@ impl PlaybackCache {
                 if let Ok(metadata) = entry.metadata() {
                     if metadata.is_file() {
                         // Sweep a write that a crash or power cut interrupted.
-                        if entry.file_name().to_str().is_some_and(|n| n.ends_with(".part")) {
+                        if entry
+                            .file_name()
+                            .to_str()
+                            .is_some_and(|n| n.ends_with(".part"))
+                        {
                             let _ = fs::remove_file(entry.path());
                             continue;
                         }
@@ -551,12 +555,18 @@ mod tests {
         let (cache, dir) = temp_cache(10 * 1024 * 1024);
         let data = vec![7u8; 4096];
         cache.insert(1, &data);
-        let first = fs::metadata(dir.join("1.audio")).unwrap().modified().unwrap();
+        let first = fs::metadata(dir.join("1.audio"))
+            .unwrap()
+            .modified()
+            .unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(20));
         cache.insert(1, &data);
 
-        let second = fs::metadata(dir.join("1.audio")).unwrap().modified().unwrap();
+        let second = fs::metadata(dir.join("1.audio"))
+            .unwrap()
+            .modified()
+            .unwrap();
         assert_eq!(first, second, "the file was not rewritten");
         assert!(cache.contains(1));
         assert_eq!(cache.stats().current_size_bytes, 4096, "counted once");

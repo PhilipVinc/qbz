@@ -357,7 +357,10 @@ impl MusicBrainzClient {
     /// MBID -> ISRCs bridge. Looks up a recording's ISRCs (the strong key for Qobuz matching).
     /// GET {base}/recording/{recording_mbid}?inc=isrcs&fmt=json
     /// Returns the ISRC list, or an EMPTY vec on any non-success/parse failure (a missing ISRC is normal, not an error).
-    pub async fn get_recording_isrcs(&self, recording_mbid: &str) -> IntegrationResult<Vec<String>> {
+    pub async fn get_recording_isrcs(
+        &self,
+        recording_mbid: &str,
+    ) -> IntegrationResult<Vec<String>> {
         self.check_enabled().await?;
         self.rate_limiter.wait().await;
         let base = self.base_url().await;
@@ -698,17 +701,14 @@ impl MusicBrainzClient {
             }
 
             // Find "part of" parent
-            let parent = detail
-                .relations
-                .as_ref()
-                .and_then(|rels| {
-                    rels.iter()
-                        .find(|rel| {
-                            rel.relation_type == "part of"
-                                && rel.direction.as_deref() == Some("backward")
-                        })
-                        .and_then(|rel| rel.area.as_ref())
-                });
+            let parent = detail.relations.as_ref().and_then(|rels| {
+                rels.iter()
+                    .find(|rel| {
+                        rel.relation_type == "part of"
+                            && rel.direction.as_deref() == Some("backward")
+                    })
+                    .and_then(|rel| rel.area.as_ref())
+            });
 
             match parent {
                 Some(p) => {

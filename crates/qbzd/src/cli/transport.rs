@@ -34,17 +34,32 @@ pub async fn now(host: Option<String>, json: bool, roots: &ProfileRoots) -> i32 
 fn render_now(v: &Value) -> String {
     let track = v.get("track").filter(|t| !t.is_null());
     let Some(track) = track else {
-        let queue_len = v.pointer("/playback/queue_len").and_then(|n| n.as_u64()).unwrap_or(0);
+        let queue_len = v
+            .pointer("/playback/queue_len")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0);
         return format!("stopped · queue {queue_len} tracks");
     };
 
-    let is_playing = v.pointer("/playback/is_playing").and_then(|b| b.as_bool()).unwrap_or(false);
+    let is_playing = v
+        .pointer("/playback/is_playing")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
     let state = if is_playing { "playing" } else { "paused" };
     let artist = track.get("artist").and_then(|a| a.as_str()).unwrap_or("");
     let title = track.get("title").and_then(|a| a.as_str()).unwrap_or("");
-    let pos = v.pointer("/playback/position").and_then(|p| p.as_u64()).unwrap_or(0);
-    let dur = v.pointer("/playback/duration").and_then(|p| p.as_u64()).unwrap_or(0);
-    let vol = v.pointer("/playback/volume").and_then(|p| p.as_f64()).unwrap_or(0.0);
+    let pos = v
+        .pointer("/playback/position")
+        .and_then(|p| p.as_u64())
+        .unwrap_or(0);
+    let dur = v
+        .pointer("/playback/duration")
+        .and_then(|p| p.as_u64())
+        .unwrap_or(0);
+    let vol = v
+        .pointer("/playback/volume")
+        .and_then(|p| p.as_f64())
+        .unwrap_or(0.0);
     let sr = v.pointer("/playback/sample_rate").and_then(|p| p.as_u64());
     let bd = v.pointer("/playback/bit_depth").and_then(|p| p.as_u64());
 
@@ -121,7 +136,10 @@ fn render_advance(v: &Value) -> String {
         return "queue finished".to_string();
     }
     if v.get("queued").and_then(|q| q.as_bool()).unwrap_or(false) {
-        let direction = v.get("direction").and_then(|d| d.as_str()).unwrap_or("next");
+        let direction = v
+            .get("direction")
+            .and_then(|d| d.as_str())
+            .unwrap_or("next");
         return format!("-> queued ({direction})");
     }
     let artist = v.get("artist").and_then(|s| s.as_str()).unwrap_or("");
@@ -171,7 +189,9 @@ pub fn parse_seek_arg(s: &str) -> Result<SeekArg, String> {
             .parse()
             .map_err(|_| format!("invalid seek position '{s}' — expected mm:ss"))?;
         if ss >= 60 {
-            return Err(format!("invalid seek position '{s}' — seconds must be 0-59"));
+            return Err(format!(
+                "invalid seek position '{s}' — seconds must be 0-59"
+            ));
         }
         return Ok(SeekArg::Absolute(mm * 60 + ss));
     }
@@ -277,13 +297,24 @@ pub fn volume_body(arg: VolumeArg) -> Value {
 /// /api/now-playing`, extracting `{volume, muted}` (no dedicated read route,
 /// 02 §2.2). With an argument: `POST /api/playback/volume`. Exit:
 /// 0 · 1 · 2 (local parse failure) · 3 · 5.
-pub async fn volume(host: Option<String>, roots: &ProfileRoots, value: Option<String>, json: bool) -> i32 {
+pub async fn volume(
+    host: Option<String>,
+    roots: &ProfileRoots,
+    value: Option<String>,
+    json: bool,
+) -> i32 {
     let client = ApiClient::new(host, roots);
     match value {
         None => match client.get("/api/now-playing").await {
             Ok(v) => {
-                let vol = v.pointer("/playback/volume").and_then(|x| x.as_f64()).unwrap_or(0.0);
-                let muted = v.pointer("/playback/muted").and_then(|x| x.as_bool()).unwrap_or(false);
+                let vol = v
+                    .pointer("/playback/volume")
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.0);
+                let muted = v
+                    .pointer("/playback/muted")
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false);
                 if json {
                     let out = serde_json::json!({"volume": vol, "muted": muted});
                     println!("{}", serde_json::to_string(&out).unwrap_or_default());
@@ -310,7 +341,10 @@ pub async fn volume(host: Option<String>, roots: &ProfileRoots, value: Option<St
                     return 2;
                 }
             };
-            match client.post("/api/playback/volume", volume_body(parsed)).await {
+            match client
+                .post("/api/playback/volume", volume_body(parsed))
+                .await
+            {
                 Ok(v) => {
                     let vol = v.get("volume").and_then(|x| x.as_f64()).unwrap_or(0.0);
                     println!("vol {}%", fraction_to_pct(vol));
@@ -403,8 +437,14 @@ mod tests {
 
     #[test]
     fn seek_body_maps_to_legacy_position_or_additive_delta() {
-        assert_eq!(seek_body(SeekArg::Absolute(90)), serde_json::json!({"position": 90}));
-        assert_eq!(seek_body(SeekArg::Delta(-10)), serde_json::json!({"delta": -10}));
+        assert_eq!(
+            seek_body(SeekArg::Absolute(90)),
+            serde_json::json!({"position": 90})
+        );
+        assert_eq!(
+            seek_body(SeekArg::Delta(-10)),
+            serde_json::json!({"delta": -10})
+        );
     }
 
     #[test]
@@ -428,16 +468,34 @@ mod tests {
 
     #[test]
     fn volume_body_converts_absolute_and_delta_percent_to_fraction() {
-        assert_eq!(volume_body(VolumeArg::Absolute(80)), serde_json::json!({"volume": 0.8}));
-        assert_eq!(volume_body(VolumeArg::Delta(5)), serde_json::json!({"delta": 0.05}));
-        assert_eq!(volume_body(VolumeArg::Delta(-5)), serde_json::json!({"delta": -0.05}));
+        assert_eq!(
+            volume_body(VolumeArg::Absolute(80)),
+            serde_json::json!({"volume": 0.8})
+        );
+        assert_eq!(
+            volume_body(VolumeArg::Delta(5)),
+            serde_json::json!({"delta": 0.05})
+        );
+        assert_eq!(
+            volume_body(VolumeArg::Delta(-5)),
+            serde_json::json!({"delta": -0.05})
+        );
     }
 
     #[test]
     fn mute_body_maps_bare_on_off_to_the_three_states() {
-        assert_eq!(mute_body(None).unwrap(), serde_json::json!({"mute": "toggle"}));
-        assert_eq!(mute_body(Some("on")).unwrap(), serde_json::json!({"mute": "on"}));
-        assert_eq!(mute_body(Some("off")).unwrap(), serde_json::json!({"mute": "off"}));
+        assert_eq!(
+            mute_body(None).unwrap(),
+            serde_json::json!({"mute": "toggle"})
+        );
+        assert_eq!(
+            mute_body(Some("on")).unwrap(),
+            serde_json::json!({"mute": "on"})
+        );
+        assert_eq!(
+            mute_body(Some("off")).unwrap(),
+            serde_json::json!({"mute": "off"})
+        );
         assert!(mute_body(Some("bogus")).is_err());
     }
 

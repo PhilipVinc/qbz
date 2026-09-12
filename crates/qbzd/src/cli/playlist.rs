@@ -29,7 +29,13 @@ pub async fn list(host: Option<String>, json: bool, roots: &ProfileRoots) -> i32
 }
 
 /// `qbzd playlist show <ID> [--ids] [--json]`.
-pub async fn show(host: Option<String>, id: u64, ids: bool, json: bool, roots: &ProfileRoots) -> i32 {
+pub async fn show(
+    host: Option<String>,
+    id: u64,
+    ids: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let client = ApiClient::new(host, roots);
     match client.get(&format!("/api/playlist?id={id}")).await {
         Ok(v) => {
@@ -52,15 +58,27 @@ pub async fn show(host: Option<String>, id: u64, ids: bool, json: bool, roots: &
 }
 
 /// `qbzd playlist create <NAME> [--desc D] [--public]`.
-pub async fn create(host: Option<String>, name: String, desc: Option<String>, public: bool, roots: &ProfileRoots) -> i32 {
+pub async fn create(
+    host: Option<String>,
+    name: String,
+    desc: Option<String>,
+    public: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let mut body = serde_json::json!({ "name": name, "public": public });
     if let Some(d) = desc {
         body["description"] = Value::String(d);
     }
     post(host, roots, "/api/playlist/create", body, |v| {
         let pl = v.get("playlist");
-        let id = pl.and_then(|p| p.get("id")).and_then(|x| x.as_u64()).unwrap_or(0);
-        let nm = pl.and_then(|p| p.get("name")).and_then(|x| x.as_str()).unwrap_or("");
+        let id = pl
+            .and_then(|p| p.get("id"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0);
+        let nm = pl
+            .and_then(|p| p.get("name"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
         format!("created playlist {id} \"{nm}\"")
     })
     .await
@@ -68,7 +86,15 @@ pub async fn create(host: Option<String>, name: String, desc: Option<String>, pu
 
 /// `qbzd playlist edit <ID> [--name N] [--desc D] [--public|--private]`.
 #[allow(clippy::too_many_arguments)]
-pub async fn edit(host: Option<String>, id: u64, name: Option<String>, desc: Option<String>, public: bool, private: bool, roots: &ProfileRoots) -> i32 {
+pub async fn edit(
+    host: Option<String>,
+    id: u64,
+    name: Option<String>,
+    desc: Option<String>,
+    public: bool,
+    private: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     if public && private {
         eprintln!("error: --public and --private are mutually exclusive");
         return 2;
@@ -85,7 +111,10 @@ pub async fn edit(host: Option<String>, id: u64, name: Option<String>, desc: Opt
     } else if private {
         body["public"] = Value::Bool(false);
     }
-    post(host, roots, "/api/playlist/update", body, |_| "playlist updated".to_string()).await
+    post(host, roots, "/api/playlist/update", body, |_| {
+        "playlist updated".to_string()
+    })
+    .await
 }
 
 /// `qbzd playlist rm <ID> --yes`.
@@ -95,14 +124,23 @@ pub async fn rm(host: Option<String>, id: u64, yes: bool, roots: &ProfileRoots) 
         eprintln!("  → qbzd playlist rm {id} --yes");
         return 2;
     }
-    post(host, roots, "/api/playlist/delete", serde_json::json!({ "id": id }), move |_| {
-        format!("deleted playlist {id}")
-    })
+    post(
+        host,
+        roots,
+        "/api/playlist/delete",
+        serde_json::json!({ "id": id }),
+        move |_| format!("deleted playlist {id}"),
+    )
     .await
 }
 
 /// `qbzd playlist add <ID> <TRACK_IDS...|->`.
-pub async fn add(host: Option<String>, id: u64, track_ids: Vec<String>, roots: &ProfileRoots) -> i32 {
+pub async fn add(
+    host: Option<String>,
+    id: u64,
+    track_ids: Vec<String>,
+    roots: &ProfileRoots,
+) -> i32 {
     let ids = match resolve_ids(track_ids) {
         Ok(i) => i,
         Err(m) => {
@@ -120,7 +158,12 @@ pub async fn add(host: Option<String>, id: u64, track_ids: Vec<String>, roots: &
 
 /// `qbzd playlist remove <ID> <TRACK_IDS...>` (plain track ids; the daemon
 /// resolves them to per-playlist row ids).
-pub async fn remove(host: Option<String>, id: u64, track_ids: Vec<String>, roots: &ProfileRoots) -> i32 {
+pub async fn remove(
+    host: Option<String>,
+    id: u64,
+    track_ids: Vec<String>,
+    roots: &ProfileRoots,
+) -> i32 {
     let ids = match resolve_ids(track_ids) {
         Ok(i) => i,
         Err(m) => {
@@ -138,7 +181,13 @@ pub async fn remove(host: Option<String>, id: u64, track_ids: Vec<String>, roots
 
 // ============================ internals ============================
 
-async fn post<F: Fn(&Value) -> String>(host: Option<String>, roots: &ProfileRoots, path: &str, body: Value, render_ok: F) -> i32 {
+async fn post<F: Fn(&Value) -> String>(
+    host: Option<String>,
+    roots: &ProfileRoots,
+    path: &str,
+    body: Value,
+    render_ok: F,
+) -> i32 {
     let client = ApiClient::new(host, roots);
     match client.post(path, body).await {
         Ok(v) => {
@@ -167,7 +216,9 @@ fn resolve_ids(args: Vec<String>) -> Result<Vec<u64>, String> {
     }
     let mut ids = Vec::with_capacity(raw.len());
     for s in raw {
-        let n: u64 = s.parse().map_err(|_| format!("'{s}' is not a numeric track id"))?;
+        let n: u64 = s
+            .parse()
+            .map_err(|_| format!("'{s}' is not a numeric track id"))?;
         ids.push(n);
     }
     Ok(ids)
@@ -180,8 +231,15 @@ fn render_list(v: &Value) -> String {
         Some(a) if !a.is_empty() => {
             let mut out = String::new();
             for pl in a {
-                let id = pl.get("id").and_then(|x| x.as_u64()).map(|n| n.to_string()).unwrap_or_default();
-                let name = pl.get("name").and_then(|x| x.as_str()).unwrap_or("(untitled)");
+                let id = pl
+                    .get("id")
+                    .and_then(|x| x.as_u64())
+                    .map(|n| n.to_string())
+                    .unwrap_or_default();
+                let name = pl
+                    .get("name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("(untitled)");
                 let count = pl.get("tracks_count").and_then(|x| x.as_u64()).unwrap_or(0);
                 out.push_str(&format!("{id}  {name} ({count} tracks)\n"));
             }
@@ -208,6 +266,9 @@ mod tests {
 
     #[test]
     fn render_list_empty() {
-        assert_eq!(render_list(&serde_json::json!({"playlists": []})), "no playlists\n");
+        assert_eq!(
+            render_list(&serde_json::json!({"playlists": []})),
+            "no playlists\n"
+        );
     }
 }

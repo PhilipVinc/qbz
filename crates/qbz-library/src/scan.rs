@@ -86,7 +86,8 @@ fn process_cue_file(
     }
     cue.audio_file = audio_path.to_string_lossy().to_string();
 
-    let properties = MetadataExtractor::extract_properties(&audio_path).map_err(|e| e.to_string())?;
+    let properties =
+        MetadataExtractor::extract_properties(&audio_path).map_err(|e| e.to_string())?;
     let format = MetadataExtractor::detect_format(&audio_path);
     let mut tracks = cue_to_tracks(&cue, properties.duration_secs, format, &properties);
 
@@ -110,8 +111,7 @@ fn process_cue_file(
         if let Some(folder_art) =
             MetadataExtractor::find_folder_artwork(&audio_path, cue.title.as_deref())
         {
-            artwork =
-                MetadataExtractor::cache_artwork_file(Path::new(&folder_art), artwork_cache);
+            artwork = MetadataExtractor::cache_artwork_file(Path::new(&folder_art), artwork_cache);
         }
     }
     if let Some(p) = artwork.as_ref() {
@@ -155,7 +155,9 @@ pub fn scan_with_progress(
             .collect(),
     };
     if targets.is_empty() {
-        return Err(LibraryError::Other("No library folders to scan".to_string()));
+        return Err(LibraryError::Other(
+            "No library folders to scan".to_string(),
+        ));
     }
     let single = folder_ids.is_some();
 
@@ -347,12 +349,14 @@ pub fn scan_with_progress(
                 .collect()
         })
         .unwrap_or_default();
-    let under_unavailable =
-        |p: &str| unavailable_prefixes.iter().any(|pre| p.starts_with(pre.as_str()));
+    let under_unavailable = |p: &str| {
+        unavailable_prefixes
+            .iter()
+            .any(|pre| p.starts_with(pre.as_str()))
+    };
     if let Ok(tracks) = db.get_all_track_paths() {
         let missing: Vec<i64> = if single {
-            let prefixes: Vec<String> =
-                targets.iter().map(|f| folder_prefix(&f.path)).collect();
+            let prefixes: Vec<String> = targets.iter().map(|f| folder_prefix(&f.path)).collect();
             tracks
                 .iter()
                 .filter(|(_, p)| {

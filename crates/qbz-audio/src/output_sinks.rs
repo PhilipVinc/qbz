@@ -64,10 +64,7 @@ pub fn list_output_sinks() -> Result<Vec<OutputSinkInfo>, String> {
         .default_output_device()
         .and_then(|d| cpal_device_name(&d));
 
-    log::debug!(
-        "[qbz-audio] CPAL default device: {:?}",
-        default_device_name
-    );
+    log::debug!("[qbz-audio] CPAL default device: {:?}", default_device_name);
 
     let sinks: Vec<OutputSinkInfo> = host
         .output_devices()

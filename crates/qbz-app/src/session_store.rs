@@ -591,8 +591,14 @@ mod tests {
         assert!(loaded.playback.was_playing);
         assert!(loaded.playback.saved_at > 0);
         assert_eq!(loaded.shell_view.last_view, "album");
-        assert_eq!(loaded.shell_view.view_context_id.as_deref(), Some("album-1"));
-        assert_eq!(loaded.shell_view.view_context_type.as_deref(), Some("album"));
+        assert_eq!(
+            loaded.shell_view.view_context_id.as_deref(),
+            Some("album-1")
+        );
+        assert_eq!(
+            loaded.shell_view.view_context_type.as_deref(),
+            Some("album")
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

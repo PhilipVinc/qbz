@@ -95,14 +95,22 @@ pub fn row_state(field: AField, a: &StagedAudio) -> (bool, bool, Option<&'static
         Device => (true, true, None),
         AlsaPlugin => (alsa, true, None), // shown only on ALSA
         // NB: `use AField::*` shadows the AlsaPlugin type here — qualify it.
-        HwVolume => (alsa && a.alsa_plugin == qbz_audio::AlsaPlugin::Hw, true, None),
+        HwVolume => (
+            alsa && a.alsa_plugin == qbz_audio::AlsaPlugin::Hw,
+            true,
+            None,
+        ),
         Dsd => (alsa, true, None),
         Exclusive => (true, alsa, if alsa { None } else { Some(s::R_ALSA_ONLY) }),
         Reserve => (true, true, None),
         Passthrough => (
             true,
             pipewire,
-            if pipewire { None } else { Some(s::R_PIPEWIRE_ONLY) },
+            if pipewire {
+                None
+            } else {
+                Some(s::R_PIPEWIRE_ONLY)
+            },
         ),
         // shown only when passthrough on AND PipeWire.
         ForceBp => (a.dac_passthrough && pipewire, true, None),
@@ -110,7 +118,11 @@ pub fn row_state(field: AField, a: &StagedAudio) -> (bool, bool, Option<&'static
         LockOutput => (
             pipewire,
             !a.dac_passthrough,
-            if a.dac_passthrough { Some(s::R_PASSTHROUGH_OFF) } else { None },
+            if a.dac_passthrough {
+                Some(s::R_PASSTHROUGH_OFF)
+            } else {
+                None
+            },
         ),
         StreamUncached => (true, true, None),
         Buffer => (a.stream_first_track, true, None), // shown when stream uncached on
@@ -122,8 +134,19 @@ pub fn row_state(field: AField, a: &StagedAudio) -> (bool, bool, Option<&'static
 pub fn visible_fields(a: &StagedAudio) -> Vec<AField> {
     use AField::*;
     [
-        Backend, Device, AlsaPlugin, HwVolume, Dsd, Exclusive, Reserve, Passthrough, ForceBp,
-        LockOutput, StreamUncached, Buffer, StreamingOnly,
+        Backend,
+        Device,
+        AlsaPlugin,
+        HwVolume,
+        Dsd,
+        Exclusive,
+        Reserve,
+        Passthrough,
+        ForceBp,
+        LockOutput,
+        StreamUncached,
+        Buffer,
+        StreamingOnly,
     ]
     .into_iter()
     .filter(|f| row_state(*f, a).0)
@@ -284,7 +307,10 @@ enum Editor {
     AlsaPlugin(SelectPopup),
     Dsd(SelectPopup),
     /// The §3.2.4 DSD guard: `prev` is restored on Esc.
-    DsdConfirm { new: String, prev: String },
+    DsdConfirm {
+        new: String,
+        prev: String,
+    },
 }
 
 pub struct AudioState {
@@ -369,7 +395,9 @@ impl AudioState {
         if a.output_device != b.output_device {
             push(
                 "device",
-                a.output_device.clone().unwrap_or_else(|| "system".to_string()),
+                a.output_device
+                    .clone()
+                    .unwrap_or_else(|| "system".to_string()),
             );
         }
         if a.alsa_plugin != b.alsa_plugin {
@@ -513,7 +541,10 @@ impl AudioState {
     fn open_backend_picker(&mut self) {
         let backends = BackendManager::available_backends();
         let options: Vec<String> = backends.iter().map(|b| backend_label(*b)).collect();
-        let sel = backends.iter().position(|b| *b == self.staged.backend).unwrap_or(0);
+        let sel = backends
+            .iter()
+            .position(|b| *b == self.staged.backend)
+            .unwrap_or(0);
         self.editor = Some(Editor::Backend(SelectPopup::new(
             s::A_BACKEND,
             options,
@@ -526,15 +557,25 @@ impl AudioState {
         let options: Vec<String> = self
             .devices
             .iter()
-            .map(|d| if d.bp { format!("{} {}", d.label, s::BP_BADGE) } else { d.label.clone() })
+            .map(|d| {
+                if d.bp {
+                    format!("{} {}", d.label, s::BP_BADGE)
+                } else {
+                    d.label.clone()
+                }
+            })
             .collect();
         let headers: Vec<Option<String>> = self.devices.iter().map(|d| d.header.clone()).collect();
         let sel = self
             .devices
             .iter()
-            .position(|d| Some(&d.id) == self.staged.output_device.as_ref() || (d.id.is_empty() && self.staged.output_device.is_none()))
+            .position(|d| {
+                Some(&d.id) == self.staged.output_device.as_ref()
+                    || (d.id.is_empty() && self.staged.output_device.is_none())
+            })
             .unwrap_or(0);
-        let mut popup = SelectPopup::new(s::DEVICE_PICKER_TITLE, options, sel, true).with_headers(headers);
+        let mut popup =
+            SelectPopup::new(s::DEVICE_PICKER_TITLE, options, sel, true).with_headers(headers);
         if filter {
             popup.filter = String::new();
         }
@@ -542,17 +583,30 @@ impl AudioState {
     }
 
     fn open_alsa_plugin_picker(&mut self) {
-        let opts = vec![s::ALSA_HW.to_string(), s::ALSA_PLUGHW.to_string(), s::ALSA_PCM.to_string()];
+        let opts = vec![
+            s::ALSA_HW.to_string(),
+            s::ALSA_PLUGHW.to_string(),
+            s::ALSA_PCM.to_string(),
+        ];
         let sel = match self.staged.alsa_plugin {
             AlsaPlugin::Hw => 0,
             AlsaPlugin::PlugHw => 1,
             AlsaPlugin::Pcm => 2,
         };
-        self.editor = Some(Editor::AlsaPlugin(SelectPopup::new(s::A_ALSA_PLUGIN, opts, sel, false)));
+        self.editor = Some(Editor::AlsaPlugin(SelectPopup::new(
+            s::A_ALSA_PLUGIN,
+            opts,
+            sel,
+            false,
+        )));
     }
 
     fn open_dsd_picker(&mut self) {
-        let opts = vec![s::DSD_CONVERT.to_string(), s::DSD_DOP.to_string(), s::DSD_NATIVE.to_string()];
+        let opts = vec![
+            s::DSD_CONVERT.to_string(),
+            s::DSD_DOP.to_string(),
+            s::DSD_NATIVE.to_string(),
+        ];
         let sel = match self.staged.dsd_mode.as_str() {
             "dop" => 1,
             "native" => 2,
@@ -607,8 +661,11 @@ impl AudioState {
             Editor::Device(mut p) => match p.handle_key(key) {
                 SelectOutcome::Chosen(i) => {
                     if let Some(d) = self.devices.get(i) {
-                        self.staged.output_device =
-                            if d.id.is_empty() { None } else { Some(d.id.clone()) };
+                        self.staged.output_device = if d.id.is_empty() {
+                            None
+                        } else {
+                            Some(d.id.clone())
+                        };
                     }
                     ScreenAction::Consumed
                 }
@@ -669,7 +726,9 @@ impl AudioState {
         let fields = visible_fields(&self.staged);
         let focused_field = fields.get(self.focus).copied();
         let active = |members: &[AField]| {
-            focused_field.map(|ff| members.contains(&ff)).unwrap_or(false)
+            focused_field
+                .map(|ff| members.contains(&ff))
+                .unwrap_or(false)
         };
         // ONE control column for the whole screen (owner's "misma área de columna").
         let labels: Vec<&str> = fields.iter().map(|f| self.field_display(*f).0).collect();
@@ -680,45 +739,81 @@ impl AudioState {
         let mut anchor: Option<widgets::FocusAnchor> = None;
 
         let out_members: &[AField] = &[Backend, Device, AlsaPlugin, HwVolume, Dsd];
-        let (mut out_lines, out_a) = self.group_block(&fields, out_members, focused_field, ctrl_col, width);
+        let (mut out_lines, out_a) =
+            self.group_block(&fields, out_members, focused_field, ctrl_col, width);
         if self.staged.backend == AudioBackendType::Jack {
             out_lines.extend(widgets::wrapped_note(s::JACK_WARNING, width, theme::warn()));
         }
         if !out_lines.is_empty() {
-            widgets::push_section(&mut secs, &mut anchor, s::AUDIO_GROUP_OUTPUT, active(out_members), out_lines, out_a);
+            widgets::push_section(
+                &mut secs,
+                &mut anchor,
+                s::AUDIO_GROUP_OUTPUT,
+                active(out_members),
+                out_lines,
+                out_a,
+            );
         }
 
         let bp_members: &[AField] = &[Exclusive, Reserve, Passthrough, ForceBp, LockOutput];
-        let (bp_lines, bp_a) = self.group_block(&fields, bp_members, focused_field, ctrl_col, width);
+        let (bp_lines, bp_a) =
+            self.group_block(&fields, bp_members, focused_field, ctrl_col, width);
         if !bp_lines.is_empty() {
-            widgets::push_section(&mut secs, &mut anchor, s::AUDIO_GROUP_BITPERFECT, active(bp_members), bp_lines, bp_a);
+            widgets::push_section(
+                &mut secs,
+                &mut anchor,
+                s::AUDIO_GROUP_BITPERFECT,
+                active(bp_members),
+                bp_lines,
+                bp_a,
+            );
         }
 
         let tr_members: &[AField] = &[StreamUncached, Buffer, StreamingOnly];
-        let (tr_lines, tr_a) = self.group_block(&fields, tr_members, focused_field, ctrl_col, width);
+        let (tr_lines, tr_a) =
+            self.group_block(&fields, tr_members, focused_field, ctrl_col, width);
         if !tr_lines.is_empty() {
-            widgets::push_section(&mut secs, &mut anchor, s::AUDIO_GROUP_TRANSPORT, active(tr_members), tr_lines, tr_a);
+            widgets::push_section(
+                &mut secs,
+                &mut anchor,
+                s::AUDIO_GROUP_TRANSPORT,
+                active(tr_members),
+                tr_lines,
+                tr_a,
+            );
         }
 
         widgets::sections_scroll(f, area, &secs, anchor);
 
         // Overlays.
         match &self.editor {
-            Some(Editor::Backend(p))
-            | Some(Editor::AlsaPlugin(p))
-            | Some(Editor::Dsd(p)) => p.draw(f, area),
+            Some(Editor::Backend(p)) | Some(Editor::AlsaPlugin(p)) | Some(Editor::Dsd(p)) => {
+                p.draw(f, area)
+            }
             Some(Editor::Device(p)) => {
                 if self.scanning {
                     widgets::busy_overlay(f, area, s::AUDIO_SCANNING, 0);
                 } else if self.devices.len() <= 1 {
                     // Only the synthetic "System default" — the §5.1 hint panel.
-                    widgets::modal(f, area, s::DEVICE_PICKER_TITLE, s::NO_DEVICES, s::HELP_SELECT);
+                    widgets::modal(
+                        f,
+                        area,
+                        s::DEVICE_PICKER_TITLE,
+                        s::NO_DEVICES,
+                        s::HELP_SELECT,
+                    );
                 } else {
                     p.draw(f, area);
                 }
             }
             Some(Editor::DsdConfirm { .. }) => {
-                widgets::modal(f, area, s::DSD_GUARD_TITLE, s::DSD_GUARD_BODY, s::DSD_GUARD_HINT);
+                widgets::modal(
+                    f,
+                    area,
+                    s::DSD_GUARD_TITLE,
+                    s::DSD_GUARD_BODY,
+                    s::DSD_GUARD_HINT,
+                );
             }
             None => {}
         }
@@ -750,7 +845,13 @@ impl AudioState {
         (lines, within)
     }
 
-    fn field_block(&self, field: AField, focus_pos: usize, ctrl_col: u16, width: u16) -> Vec<Line<'static>> {
+    fn field_block(
+        &self,
+        field: AField,
+        focus_pos: usize,
+        ctrl_col: u16,
+        width: u16,
+    ) -> Vec<Line<'static>> {
         let (_, enabled, reason) = row_state(field, &self.staged);
         let focused = focus_pos == self.focus && self.editor.is_none();
         let (label, value, widget) = self.field_display(field);
@@ -768,7 +869,13 @@ impl AudioState {
 
     fn field_display(&self, field: AField) -> (&'static str, String, &'static str) {
         let a = &self.staged;
-        let on_off = |b: bool| if b { "on".to_string() } else { "off".to_string() };
+        let on_off = |b: bool| {
+            if b {
+                "on".to_string()
+            } else {
+                "off".to_string()
+            }
+        };
         match field {
             AField::Backend => (s::A_BACKEND, backend_label(a.backend), "[select]"),
             AField::Device => {
@@ -779,7 +886,11 @@ impl AudioState {
                 };
                 (s::A_DEVICE, dev, "[select]")
             }
-            AField::AlsaPlugin => (s::A_ALSA_PLUGIN, alsa_plugin_label(a.alsa_plugin).to_string(), "[select]"),
+            AField::AlsaPlugin => (
+                s::A_ALSA_PLUGIN,
+                alsa_plugin_label(a.alsa_plugin).to_string(),
+                "[select]",
+            ),
             AField::HwVolume => (s::A_HW_VOLUME, on_off(a.alsa_hardware_volume), "[toggle]"),
             AField::Dsd => (s::A_DSD, dsd_label(&a.dsd_mode).to_string(), "[select]"),
             AField::Exclusive => (s::A_EXCLUSIVE, on_off(a.exclusive_mode), "[toggle]"),
@@ -787,8 +898,16 @@ impl AudioState {
             AField::Passthrough => (s::A_PASSTHROUGH, on_off(a.dac_passthrough), "[toggle]"),
             AField::ForceBp => (s::A_FORCE_BP, on_off(a.pw_force_bitperfect), "[toggle]"),
             AField::LockOutput => (s::A_LOCK_OUTPUT, on_off(a.skip_sink_switch), "[toggle]"),
-            AField::StreamUncached => (s::A_STREAM_UNCACHED, on_off(a.stream_first_track), "[toggle]"),
-            AField::Buffer => (s::A_BUFFER, format!("{} s", a.stream_buffer_seconds), "[slider]"),
+            AField::StreamUncached => (
+                s::A_STREAM_UNCACHED,
+                on_off(a.stream_first_track),
+                "[toggle]",
+            ),
+            AField::Buffer => (
+                s::A_BUFFER,
+                format!("{} s", a.stream_buffer_seconds),
+                "[slider]",
+            ),
             AField::StreamingOnly => (s::A_STREAMING_ONLY, on_off(a.streaming_only), "[toggle]"),
         }
     }
@@ -800,7 +919,13 @@ impl AudioState {
                 .devices
                 .iter()
                 .find(|d| &d.id == id)
-                .map(|d| if d.bp { format!("{} {}", d.label, s::BP_BADGE) } else { d.label.clone() })
+                .map(|d| {
+                    if d.bp {
+                        format!("{} {}", d.label, s::BP_BADGE)
+                    } else {
+                        d.label.clone()
+                    }
+                })
                 .unwrap_or_else(|| short_device(id)),
         }
     }
@@ -892,7 +1017,10 @@ mod tests {
         a.skip_sink_switch = true;
         a.dac_passthrough = true;
         cascade_on_toggle(&mut a, AField::Passthrough);
-        assert!(!a.skip_sink_switch, "item 1: passthrough ON forces lock-output off");
+        assert!(
+            !a.skip_sink_switch,
+            "item 1: passthrough ON forces lock-output off"
+        );
     }
 
     #[test]
@@ -901,7 +1029,10 @@ mod tests {
         a.pw_force_bitperfect = true;
         a.dac_passthrough = false;
         cascade_on_toggle(&mut a, AField::Passthrough);
-        assert!(!a.pw_force_bitperfect, "item 2: passthrough OFF forces force-BP off");
+        assert!(
+            !a.pw_force_bitperfect,
+            "item 2: passthrough OFF forces force-BP off"
+        );
     }
 
     #[test]
@@ -910,7 +1041,10 @@ mod tests {
         a.gapless_enabled = true;
         a.streaming_only = true;
         cascade_on_toggle(&mut a, AField::StreamingOnly);
-        assert!(!a.gapless_enabled, "item 3: streaming-only ON forces gapless off");
+        assert!(
+            !a.gapless_enabled,
+            "item 3: streaming-only ON forces gapless off"
+        );
     }
 
     // ---- cascades §3.2.3 items 4-7 (backend switch) ----
@@ -951,7 +1085,10 @@ mod tests {
         a.output_device = Some("hw:CARD=D30,DEV=0".to_string());
         a.backend = AudioBackendType::PipeWire;
         cascade_on_backend_change(&mut a);
-        assert_eq!(a.output_device, None, "item 7: stale device id must never survive");
+        assert_eq!(
+            a.output_device, None,
+            "item 7: stale device id must never survive"
+        );
     }
 
     // ---- constraint matrix §3.2.3 ----
@@ -981,9 +1118,15 @@ mod tests {
         let mut a = base();
         a.backend = AudioBackendType::PipeWire;
         a.dac_passthrough = false;
-        assert!(!row_state(AField::ForceBp, &a).0, "hidden when passthrough off");
+        assert!(
+            !row_state(AField::ForceBp, &a).0,
+            "hidden when passthrough off"
+        );
         a.dac_passthrough = true;
-        assert!(row_state(AField::ForceBp, &a).0, "shown when passthrough on + PW");
+        assert!(
+            row_state(AField::ForceBp, &a).0,
+            "shown when passthrough on + PW"
+        );
         a.backend = AudioBackendType::Alsa;
         assert!(!row_state(AField::ForceBp, &a).0, "hidden off PW");
     }
@@ -1007,11 +1150,20 @@ mod tests {
         a.backend = AudioBackendType::Alsa;
         a.alsa_plugin = AlsaPlugin::Hw;
         assert!(row_state(AField::AlsaPlugin, &a).0);
-        assert!(row_state(AField::HwVolume, &a).0, "hw volume shown on ALSA hw");
+        assert!(
+            row_state(AField::HwVolume, &a).0,
+            "hw volume shown on ALSA hw"
+        );
         a.alsa_plugin = AlsaPlugin::PlugHw;
-        assert!(!row_state(AField::HwVolume, &a).0, "hw volume hidden off hw plugin");
+        assert!(
+            !row_state(AField::HwVolume, &a).0,
+            "hw volume hidden off hw plugin"
+        );
         a.backend = AudioBackendType::PipeWire;
-        assert!(!row_state(AField::AlsaPlugin, &a).0, "alsa plugin hidden off ALSA");
+        assert!(
+            !row_state(AField::AlsaPlugin, &a).0,
+            "alsa plugin hidden off ALSA"
+        );
     }
 
     #[test]
@@ -1030,7 +1182,10 @@ mod tests {
         let devices = vec![dev("pw-node-1", "USB DAC", false, true)];
         let rows = group_devices(AudioBackendType::PipeWire, devices);
         assert_eq!(rows[0].id, "", "System default leads");
-        assert!(rows.iter().all(|r| r.header.is_none()), "no headers off ALSA");
+        assert!(
+            rows.iter().all(|r| r.header.is_none()),
+            "no headers off ALSA"
+        );
         assert!(rows[1].bp, "PipeWire hardware node is BP");
     }
 
@@ -1089,6 +1244,9 @@ mod tests {
         assert!(st.save_keys().is_empty(), "clean screen writes nothing");
         st.staged.exclusive_mode = true;
         let keys = st.save_keys();
-        assert_eq!(keys, vec![("audio.exclusive_mode".to_string(), "true".to_string())]);
+        assert_eq!(
+            keys,
+            vec![("audio.exclusive_mode".to_string(), "true".to_string())]
+        );
     }
 }

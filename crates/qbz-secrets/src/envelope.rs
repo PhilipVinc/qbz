@@ -31,7 +31,9 @@ pub struct WrappedSecret<'a> {
 
 impl<'a> WrappedSecret<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self, SecretError> {
-        if bytes.len() < HEADER_LEN + 16 /* GCM tag */ {
+        if bytes.len() < HEADER_LEN + 16
+        /* GCM tag */
+        {
             return Err(SecretError::Malformed(format!(
                 "wrapped blob too short ({} bytes)",
                 bytes.len()

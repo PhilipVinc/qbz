@@ -95,9 +95,7 @@ impl QueueManager {
             let Some(key) = track.source_item_id_hint.as_deref() else {
                 continue;
             };
-            if let Some((_, bit_depth, sample_rate)) =
-                updates.iter().find(|(k, _, _)| k == key)
-            {
+            if let Some((_, bit_depth, sample_rate)) = updates.iter().find(|(k, _, _)| k == key) {
                 if let Some(bd) = *bit_depth {
                     track.bit_depth = Some(bd);
                     track.hires = bd > 16;
@@ -270,7 +268,10 @@ impl QueueManager {
                     // History stores indices into `tracks`. Remap by track id
                     // so entries for removed rows drop and any entry that still
                     // refers to the kept track points at index 0.
-                    Self::remap_history_by_track_id_internal(&mut state, std::slice::from_ref(&kept));
+                    Self::remap_history_by_track_id_internal(
+                        &mut state,
+                        std::slice::from_ref(&kept),
+                    );
                     state.tracks = vec![kept];
                     state.current_index = Some(0);
                 } else {
@@ -1050,12 +1051,7 @@ impl QueueManager {
                     .filter_map(|&idx| state.tracks.get(idx).cloned())
                     .collect()
             } else {
-                state
-                    .tracks
-                    .iter()
-                    .skip(curr_idx + 1)
-                    .cloned()
-                    .collect()
+                state.tracks.iter().skip(curr_idx + 1).cloned().collect()
             }
         } else {
             state.tracks.clone()
@@ -1695,11 +1691,7 @@ mod tests {
 
         let state = queue.get_state();
         assert_eq!(
-            state
-                .upcoming
-                .iter()
-                .map(|t| t.id)
-                .collect::<Vec<_>>(),
+            state.upcoming.iter().map(|t| t.id).collect::<Vec<_>>(),
             vec![5, 2, 4, 1]
         );
 
@@ -2022,7 +2014,11 @@ mod tests {
         let fired = queue.consume_stop_after_if(102);
 
         assert!(fired, "consume should return true on match");
-        assert_eq!(queue.get_stop_after(), None, "marker should be cleared after firing");
+        assert_eq!(
+            queue.get_stop_after(),
+            None,
+            "marker should be cleared after firing"
+        );
     }
 
     #[test]
@@ -2035,7 +2031,11 @@ mod tests {
         let fired = queue.consume_stop_after_if(101);
 
         assert!(!fired, "consume should return false on mismatch");
-        assert_eq!(queue.get_stop_after(), Some(102), "marker should remain on mismatch");
+        assert_eq!(
+            queue.get_stop_after(),
+            Some(102),
+            "marker should remain on mismatch"
+        );
     }
 
     #[test]
@@ -2195,10 +2195,7 @@ mod tests {
     fn test_remove_upcoming_after_linear() {
         let queue = QueueManager::new();
         // 101 playing, upcoming = [102, 103, 104, 105].
-        queue.set_queue(
-            (101..=105).map(create_test_track).collect(),
-            Some(0),
-        );
+        queue.set_queue((101..=105).map(create_test_track).collect(), Some(0));
 
         // Keep upcoming positions 0..=1 (102, 103); drop 2, 3 (104, 105).
         let removed = queue.remove_upcoming_after(1);
@@ -2295,7 +2292,11 @@ mod tests {
         assert_eq!(capped.upcoming.len(), 20, "get_state caps upcoming at 20");
 
         let full = queue.get_state_full();
-        assert_eq!(full.upcoming.len(), 49, "get_state_full returns all upcoming");
+        assert_eq!(
+            full.upcoming.len(),
+            49,
+            "get_state_full returns all upcoming"
+        );
         assert_eq!(full.total_tracks, 50);
         assert_eq!(full.upcoming.first().unwrap().id, 2);
         assert_eq!(full.upcoming.last().unwrap().id, 50);

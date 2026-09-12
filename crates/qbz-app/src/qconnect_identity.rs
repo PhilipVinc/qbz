@@ -106,10 +106,8 @@ mod tests {
 
     #[test]
     fn device_uuid_persists_and_is_reused_across_calls() {
-        let tmp = std::env::temp_dir().join(format!(
-            "qbz_qconnect_uuid_test_{}.db",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("qbz_qconnect_uuid_test_{}.db", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
 
         // First call generates and persists.

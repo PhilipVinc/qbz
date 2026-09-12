@@ -8,7 +8,13 @@ use crate::cli::client::ApiClient;
 use crate::paths::ProfileRoots;
 
 /// `qbzd fav list [--type track|album|artist] [--ids] [--json]`.
-pub async fn list(host: Option<String>, kind: Option<String>, ids: bool, json: bool, roots: &ProfileRoots) -> i32 {
+pub async fn list(
+    host: Option<String>,
+    kind: Option<String>,
+    ids: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let t = kind.unwrap_or_else(|| "track".to_string());
     let path = format!("/api/favorites?type={}", urlencoding::encode(&t));
     let client = ApiClient::new(host, roots);
@@ -33,7 +39,13 @@ pub async fn list(host: Option<String>, kind: Option<String>, ids: bool, json: b
 }
 
 /// `qbzd fav add <track|album|artist> <ID>` · `qbzd fav add track --current`.
-pub async fn add(host: Option<String>, fav_type: String, id: Option<String>, current: bool, roots: &ProfileRoots) -> i32 {
+pub async fn add(
+    host: Option<String>,
+    fav_type: String,
+    id: Option<String>,
+    current: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let mut body = serde_json::json!({ "fav_type": fav_type });
     if current {
         body["current"] = Value::Bool(true);
@@ -51,14 +63,25 @@ pub async fn add(host: Option<String>, fav_type: String, id: Option<String>, cur
 }
 
 /// `qbzd fav remove <track|album|artist> <ID>`.
-pub async fn remove(host: Option<String>, fav_type: String, id: String, roots: &ProfileRoots) -> i32 {
+pub async fn remove(
+    host: Option<String>,
+    fav_type: String,
+    id: String,
+    roots: &ProfileRoots,
+) -> i32 {
     let body = serde_json::json!({ "fav_type": fav_type, "item_id": id });
     post(host, roots, "/api/favorites/remove", body, "unfavorited").await
 }
 
 // ============================ internals ============================
 
-async fn post(host: Option<String>, roots: &ProfileRoots, path: &str, body: Value, verb: &str) -> i32 {
+async fn post(
+    host: Option<String>,
+    roots: &ProfileRoots,
+    path: &str,
+    body: Value,
+    verb: &str,
+) -> i32 {
     let client = ApiClient::new(host, roots);
     match client.post(path, body).await {
         Ok(v) => {

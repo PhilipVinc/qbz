@@ -52,7 +52,11 @@ struct SseReader {
 
 impl SseReader {
     fn new(rx: broadcast::Receiver<CoreEvent>) -> Self {
-        SseReader { rx, frame: Cursor::new(Vec::new()), primed: false }
+        SseReader {
+            rx,
+            frame: Cursor::new(Vec::new()),
+            primed: false,
+        }
     }
 
     /// The next frame to send, blocking for a bus event. `None` = bus closed.
@@ -102,7 +106,11 @@ fn format_event(ev: &CoreEvent) -> Option<String> {
         return None;
     }
     let value = serde_json::to_value(ev).ok()?;
-    let typ = value.get("type").and_then(|v| v.as_str()).unwrap_or("event").to_string();
+    let typ = value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("event")
+        .to_string();
     let data = serde_json::to_string(&value).ok()?;
     Some(format!("event: {typ}\ndata: {data}\n\n"))
 }
@@ -143,7 +151,10 @@ mod tests {
 
     #[test]
     fn bulky_and_internal_events_are_not_emitted() {
-        assert!(format_event(&CoreEvent::LoadingStarted { operation: "x".into() }).is_none());
+        assert!(format_event(&CoreEvent::LoadingStarted {
+            operation: "x".into()
+        })
+        .is_none());
         assert!(format_event(&CoreEvent::DownloadCompleted { track_id: 1 }).is_none());
         assert!(format_event(&CoreEvent::NavigateToArtist { artist_id: 1 }).is_none());
     }

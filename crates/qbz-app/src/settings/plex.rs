@@ -576,9 +576,7 @@ mod tests {
         assert_eq!(settings.selected_section_key, "3");
 
         // Empty list clears the mirror.
-        store
-            .set_selected_section_keys(&[])
-            .expect("clear keys");
+        store.set_selected_section_keys(&[]).expect("clear keys");
         let cleared = store.get_settings().expect("get settings");
         assert!(cleared.selected_section_keys.is_empty());
         assert!(cleared.selected_section_key.is_empty());

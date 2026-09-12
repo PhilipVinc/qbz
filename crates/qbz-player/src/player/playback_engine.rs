@@ -207,7 +207,13 @@ impl PlaybackEngine {
             let transition_c = source_transition.clone();
             thread::spawn(move || {
                 jack_feeder_thread(
-                    stream_c, playing_c, stop_c, pos_c, dur_c, queue_c, transition_c,
+                    stream_c,
+                    playing_c,
+                    stop_c,
+                    pos_c,
+                    dur_c,
+                    queue_c,
+                    transition_c,
                 );
             })
         };
@@ -243,7 +249,14 @@ impl PlaybackEngine {
             let channels = stream.channels();
             thread::spawn(move || {
                 dop_writer_thread(
-                    stream_c, playing_c, stop_c, pos_c, queue_c, transition_c, channels, native,
+                    stream_c,
+                    playing_c,
+                    stop_c,
+                    pos_c,
+                    queue_c,
+                    transition_c,
+                    channels,
+                    native,
                 );
             })
         };
@@ -370,9 +383,7 @@ impl PlaybackEngine {
                 Ok(())
             }
             #[cfg(target_os = "linux")]
-            Self::AlsaDop { .. } => {
-                Err("cannot append a PCM source to a DoP engine".to_string())
-            }
+            Self::AlsaDop { .. } => Err("cannot append a PCM source to a DoP engine".to_string()),
         }
     }
 
@@ -1147,20 +1158,19 @@ fn dop_writer_thread(
     let mut current: Option<BoxedDopIter> = None;
     let mut had_source = false;
 
-    let write_silence = |packer: &mut qbz_dsd::DopPacker,
-                             silence_buf: &mut Vec<i32>,
-                             frames: usize| {
-        silence_buf.clear();
-        if native {
-            // Native DSD silence: 0x69 in every byte lane, no DoP markers.
-            silence_buf.resize(frames * channels as usize, qbz_dsd::NATIVE_DSD_SILENCE_U32);
-        } else {
-            packer.silence(frames, channels, silence_buf);
-        }
-        if let Err(e) = stream.write_dop_i32(silence_buf) {
-            log::warn!("[DoP Engine] Silence write failed: {}", e);
-        }
-    };
+    let write_silence =
+        |packer: &mut qbz_dsd::DopPacker, silence_buf: &mut Vec<i32>, frames: usize| {
+            silence_buf.clear();
+            if native {
+                // Native DSD silence: 0x69 in every byte lane, no DoP markers.
+                silence_buf.resize(frames * channels as usize, qbz_dsd::NATIVE_DSD_SILENCE_U32);
+            } else {
+                packer.silence(frames, channels, silence_buf);
+            }
+            if let Err(e) = stream.write_dop_i32(silence_buf) {
+                log::warn!("[DoP Engine] Silence write failed: {}", e);
+            }
+        };
 
     log::info!("[DoP Engine] Writer thread started (gapless-capable)");
     'thread: loop {

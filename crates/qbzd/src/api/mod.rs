@@ -14,6 +14,7 @@
 // The two-call split — `bind` at boot step 5 (stateless, so the foreign-occupant
 // diagnosis runs BEFORE the stores/runtime exist), `serve` at boot step 11 — is
 // what keeps the 01-architecture.md §8.1 boot order honest.
+pub mod artwork;
 pub mod browse;
 pub mod discover;
 pub mod fav;
@@ -25,7 +26,6 @@ pub mod queue;
 pub mod radio;
 pub mod reco;
 pub mod search;
-pub mod artwork;
 pub mod settings;
 pub mod sse;
 pub mod status;
@@ -227,9 +227,7 @@ pub fn probe_is_qbzd(addr: SocketAddr) -> bool {
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
-    let req = format!(
-        "GET /api/ping HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
-    );
+    let req = format!("GET /api/ping HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
     if stream.write_all(req.as_bytes()).is_err() {
         return false;
     }
@@ -271,9 +269,13 @@ pub fn serve(server: BoundServer, state: ApiState) -> ApiHandle {
                         .iter()
                         .find(|h| h.field.equiv("Authorization"))
                         .map(|h| h.value.as_str().to_owned());
-                    if let Some(reject) =
-                        access_gate(has_origin, "GET", "/api/events", auth.as_deref(), state.token.as_deref())
-                    {
+                    if let Some(reject) = access_gate(
+                        has_origin,
+                        "GET",
+                        "/api/events",
+                        auth.as_deref(),
+                        state.token.as_deref(),
+                    ) {
                         let _ = req.respond(reject.response());
                         continue;
                     }
@@ -310,8 +312,13 @@ fn route(state: &ApiState, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
 
     // Origin shield (ALWAYS on) + opt-in [server] token — one pre-routing gate,
     // /api/ping exempt from the token only (§3.1.2).
-    if let Some(reject) = access_gate(has_origin, &method, &path, auth_header, state.token.as_deref())
-    {
+    if let Some(reject) = access_gate(
+        has_origin,
+        &method,
+        &path,
+        auth_header,
+        state.token.as_deref(),
+    ) {
         return reject.response();
     }
 
@@ -604,7 +611,10 @@ mod tests {
         assert!(P1_ROUTES.contains(&("POST", "/api/queue/jump")));
         assert!(P1_ROUTES.contains(&("POST", "/api/queue/stop-after")));
         for r in P1_ROUTES {
-            assert!(!P0_ROUTES.contains(r), "{r:?} is duplicated across P0 and P1");
+            assert!(
+                !P0_ROUTES.contains(r),
+                "{r:?} is duplicated across P0 and P1"
+            );
         }
     }
 
@@ -636,7 +646,13 @@ mod tests {
         }
         // ...and the Origin shield wins even when a valid Bearer is present.
         assert_eq!(
-            code(access_gate(true, "GET", "/api/ping", Some("Bearer s3cret"), Some("s3cret"))),
+            code(access_gate(
+                true,
+                "GET",
+                "/api/ping",
+                Some("Bearer s3cret"),
+                Some("s3cret")
+            )),
             Some("origin_forbidden")
         );
     }
@@ -645,7 +661,10 @@ mod tests {
     fn open_mode_answers_every_route_without_auth() {
         // Step 4(b): token=None → no auth machinery; nothing is rejected.
         for (m, p) in P0_ROUTES {
-            assert!(access_gate(false, m, p, None, None).is_none(), "{m} {p} must be open");
+            assert!(
+                access_gate(false, m, p, None, None).is_none(),
+                "{m} {p} must be open"
+            );
         }
     }
 
@@ -654,9 +673,18 @@ mod tests {
         // Step 4(c): token=Some → missing/wrong bearer is 401 on non-ping routes;
         // /api/ping stays 200 (exempt); the correct bearer passes.
         let tok = Some("s3cret");
-        assert_eq!(code(access_gate(false, "GET", "/api/status", None, tok)), Some("invalid_token"));
         assert_eq!(
-            code(access_gate(false, "GET", "/api/status", Some("Bearer nope"), tok)),
+            code(access_gate(false, "GET", "/api/status", None, tok)),
+            Some("invalid_token")
+        );
+        assert_eq!(
+            code(access_gate(
+                false,
+                "GET",
+                "/api/status",
+                Some("Bearer nope"),
+                tok
+            )),
             Some("invalid_token")
         );
         assert!(access_gate(false, "GET", "/api/status", Some("Bearer s3cret"), tok).is_none());
@@ -672,7 +700,10 @@ mod tests {
         assert_eq!(serde_json::to_string(&canon_volume(0.8f32)).unwrap(), "0.8");
         assert_eq!(serde_json::to_string(&canon_volume(1.0f32)).unwrap(), "1.0");
         assert_eq!(serde_json::to_string(&canon_volume(0.0f32)).unwrap(), "0.0");
-        assert_eq!(serde_json::to_string(&canon_volume(0.75f32)).unwrap(), "0.75");
+        assert_eq!(
+            serde_json::to_string(&canon_volume(0.75f32)).unwrap(),
+            "0.75"
+        );
     }
 
     #[test]

@@ -6,9 +6,9 @@
 // parks on signals — API-less but fully diagnosable in-process.
 use std::sync::{Arc, Mutex};
 
+use qbz_app::playback_driver::{self, DriverDeps};
 use qbz_app::settings::daemon_prefs;
 use qbz_app::shell::AppRuntime;
-use qbz_app::playback_driver::{self, DriverDeps};
 use qbz_core::CoreError;
 use qbz_models::{CoreEvent, UserSession};
 use tokio::sync::broadcast;
@@ -70,7 +70,10 @@ pub async fn run(roots: ProfileRoots, cfg: QbzdConfig, warns: Vec<String>) -> Re
         // FB6: the default bind is now 0.0.0.0 — LAN-first posture (Sonos/
         // Chromecast parity), not a misconfiguration. One INFO line, not a
         // stderr warning; loopback binds stay silent.
-        log::info!("{}", crate::cli::copy::lan_posture_note(&bind_addr.to_string()));
+        log::info!(
+            "{}",
+            crate::cli::copy::lan_posture_note(&bind_addr.to_string())
+        );
     }
 
     // 6.-9. compose stores + runtime + restore credentials + restore session.
@@ -149,7 +152,10 @@ pub async fn run(roots: ProfileRoots, cfg: QbzdConfig, warns: Vec<String>) -> Re
     //       Holds no Arc<AppRuntime>; aborted for a clean shutdown.
     let hooks = match crate::hooks::script(&roots) {
         Some(path) => {
-            log::info!("[hooks] running {} on daemon events (hooks.script)", path.display());
+            log::info!(
+                "[hooks] running {} on daemon events (hooks.script)",
+                path.display()
+            );
             Some(crate::hooks::spawn(path, booted.bus.subscribe()))
         }
         None => None,
@@ -300,7 +306,11 @@ pub async fn run(roots: ProfileRoots, cfg: QbzdConfig, warns: Vec<String>) -> Re
 /// Steps 6-9 of §8.1: open the daemon-root stores, compose the runtime with the
 /// two NORMATIVE substitutions (`with_audio_settings` + `activate_at`), and
 /// restore the saved session per the §6.2 clearing taxonomy.
-async fn boot(roots: &ProfileRoots, cfg: &QbzdConfig, warn_count: usize) -> Result<BootedRuntime, String> {
+async fn boot(
+    roots: &ProfileRoots,
+    cfg: &QbzdConfig,
+    warn_count: usize,
+) -> Result<BootedRuntime, String> {
     // 6.+7. stores + runtime composition. The two substitutions (01 §2.2):
     //   - with_audio_settings, NOT AppRuntime::new (which hardcodes the
     //     desktop-global AudioSettingsStore — shell.rs:87-101);
@@ -571,7 +581,9 @@ pub(crate) fn set_needs_auth(shared: &Arc<Mutex<DaemonShared>>, err: Option<Core
     match err {
         None => log::info!("Not logged in — run 'qbzd setup' (or 'qbzd login')"),
         Some(e) => {
-            log::warn!("Qobuz rejected the saved session ({e}) — run 'qbzd login' to re-authenticate")
+            log::warn!(
+                "Qobuz rejected the saved session ({e}) — run 'qbzd login' to re-authenticate"
+            )
         }
     }
 }
@@ -605,9 +617,7 @@ pub(crate) fn latch_undecryptable_token(shared: &Arc<Mutex<DaemonShared>>) {
             "the saved token could not be decrypted by this daemon — run 'qbzd login' to re-authenticate".into(),
         );
     }
-    log::warn!(
-        "saved token present but undecryptable — run 'qbzd login' to re-authenticate"
-    );
+    log::warn!("saved token present but undecryptable — run 'qbzd login' to re-authenticate");
 }
 
 /// Latch an auth error so a `status` call remains diagnosable after the fact
@@ -668,7 +678,10 @@ fn spawn_auth_retry(
                     return;
                 }
                 Err(e) => {
-                    log::warn!("session restore retry {} failed (network-class): {e}", i + 1);
+                    log::warn!(
+                        "session restore retry {} failed (network-class): {e}",
+                        i + 1
+                    );
                     // 01 §9.3: latch `network.online` false on every real
                     // network-class outcome, not just the first.
                     if let Ok(s) = shared.lock() {
@@ -824,7 +837,9 @@ pub(crate) fn reload_audio(state: &crate::api::ApiState) {
         .map(|old| audio_routing_changed(&old, &fresh))
         .unwrap_or(false);
     if needs_reinit {
-        log::info!("[reload] routing-critical audio field changed — reinitializing the output device");
+        log::info!(
+            "[reload] routing-critical audio field changed — reinitializing the output device"
+        );
         if let Err(e) = player.reinit_device(fresh.output_device.clone()) {
             log::warn!("[reload] player.reinit_device failed: {e}");
         }
@@ -1153,7 +1168,10 @@ mod tests {
 
         let mut hw_vol = base.clone();
         hw_vol.alsa_hardware_volume = !base.alsa_hardware_volume;
-        assert!(audio_routing_changed(&base, &hw_vol), "alsa_hardware_volume");
+        assert!(
+            audio_routing_changed(&base, &hw_vol),
+            "alsa_hardware_volume"
+        );
 
         let mut excl = base.clone();
         excl.exclusive_mode = !base.exclusive_mode;
@@ -1173,7 +1191,10 @@ mod tests {
 
         let mut rate = base.clone();
         rate.device_max_sample_rate = Some(192_000);
-        assert!(audio_routing_changed(&base, &rate), "device_max_sample_rate");
+        assert!(
+            audio_routing_changed(&base, &rate),
+            "device_max_sample_rate"
+        );
     }
 
     #[test]

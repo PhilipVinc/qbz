@@ -127,7 +127,10 @@ impl std::fmt::Display for RuntimeError {
             Self::V2AuthFailed(msg) => write!(f, "V2 authentication failed: {}", msg),
             Self::V2NotInitialized => write!(f, "V2 CoreBridge not initialized"),
             Self::TrackNotAvailableOffline => {
-                write!(f, "Track not available in offline cache while in offline mode")
+                write!(
+                    f,
+                    "Track not available in offline cache while in offline mode"
+                )
             }
             Self::Internal(msg) => write!(f, "Internal error: {}", msg),
         }
@@ -396,7 +399,8 @@ mod tests {
         assert_eq!(mgr.get_queue_source_collection().await, None);
 
         // Set Some
-        mgr.set_queue_source_collection(Some("col-abc".to_string())).await;
+        mgr.set_queue_source_collection(Some("col-abc".to_string()))
+            .await;
         assert_eq!(
             mgr.get_queue_source_collection().await,
             Some("col-abc".to_string())
@@ -480,7 +484,8 @@ mod tests {
             .await
             .is_ok());
         assert!(matches!(
-            mgr.check_requirements(CommandRequirement::RequiresAuth).await,
+            mgr.check_requirements(CommandRequirement::RequiresAuth)
+                .await,
             Err(RuntimeError::RuntimeNotInitialized)
         ));
     }

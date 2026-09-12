@@ -24,9 +24,16 @@ pub fn current(state: &ApiState) -> Response<Cursor<Vec<u8>>> {
 
     match url {
         Some(u) => match Header::from_bytes(&b"Location"[..], u.as_bytes()) {
-            Ok(location) => Response::from_data(Vec::new()).with_status_code(302).with_header(location),
+            Ok(location) => Response::from_data(Vec::new())
+                .with_status_code(302)
+                .with_header(location),
             // A non-header-safe URL (control bytes) — never expected from the CDN.
-            Err(_) => err_json(500, "internal", "artwork url is not a valid redirect target", "check: qbzd now"),
+            Err(_) => err_json(
+                500,
+                "internal",
+                "artwork url is not a valid redirect target",
+                "check: qbzd now",
+            ),
         },
         None => err_json(
             404,

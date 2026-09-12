@@ -95,7 +95,8 @@ fn artwork_cache_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "Could not find cache directory".to_string())?
         .join("qbz")
         .join("artwork");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create artwork cache dir: {e}"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create artwork cache dir: {e}"))?;
     Ok(dir)
 }
 
@@ -175,8 +176,8 @@ fn cache_artwork(url: &str, offline: bool) -> Result<PathBuf, String> {
     let bytes = response
         .bytes()
         .map_err(|e| format!("Failed to read artwork bytes: {e}"))?;
-    let mut file =
-        std::fs::File::create(&cache_path).map_err(|e| format!("Failed to create cache file: {e}"))?;
+    let mut file = std::fs::File::create(&cache_path)
+        .map_err(|e| format!("Failed to create cache file: {e}"))?;
     file.write_all(&bytes)
         .map_err(|e| format!("Failed to write artwork cache: {e}"))?;
     Ok(cache_path)
@@ -200,8 +201,7 @@ const PORTAL_ICON_MAX_BYTES: usize = 4 * 1024 * 1024;
 fn prepare_icon_bytes(path: &std::path::Path) -> Result<Vec<u8>, String> {
     use std::io::Cursor;
 
-    let bytes =
-        std::fs::read(path).map_err(|e| format!("Failed to read artwork {path:?}: {e}"))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("Failed to read artwork {path:?}: {e}"))?;
     let source = image::load_from_memory(&bytes)
         .map_err(|e| format!("Failed to decode artwork {path:?}: {e}"))?;
     let (w, h) = (source.width(), source.height());
@@ -252,8 +252,7 @@ pub async fn show_track_notification(meta: NotificationMeta, offline: bool) {
         use ashpd::desktop::notification::{Notification as PortalNotification, NotificationProxy};
         use ashpd::desktop::Icon;
 
-        let mut notification =
-            PortalNotification::new(&meta.title).body(Some(body.as_str()));
+        let mut notification = PortalNotification::new(&meta.title).body(Some(body.as_str()));
 
         if let Some(url) = meta.art_url.clone() {
             let prepared = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
@@ -288,13 +287,16 @@ pub async fn show_track_notification(meta: NotificationMeta, offline: bool) {
     {
         let _ = tokio::task::spawn_blocking(move || {
             let _ = notify_rust::set_application("com.blitzfc.qbz");
-            let artwork_path = meta.art_url.as_deref().and_then(|url| match cache_artwork(url, offline) {
-                Ok(path) => Some(path),
-                Err(e) => {
-                    log::debug!("[notify] could not cache artwork: {e}");
-                    None
-                }
-            });
+            let artwork_path =
+                meta.art_url
+                    .as_deref()
+                    .and_then(|url| match cache_artwork(url, offline) {
+                        Ok(path) => Some(path),
+                        Err(e) => {
+                            log::debug!("[notify] could not cache artwork: {e}");
+                            None
+                        }
+                    });
             let mut notification = notify_rust::Notification::new();
             notification.summary(&meta.title).body(&body);
             if let Some(path) = artwork_path.as_ref().and_then(|p| p.to_str()) {

@@ -145,8 +145,15 @@ async fn scrobble(s: &ScrobblerSettings, t: &QueueTrack, started_at: u64, roots:
     }
     if s.listenbrainz_active() {
         let c = lb_client(s);
-        match c.submit_listen(&t.artist, &t.title, album, started_at as i64, None).await {
-            Ok(()) => log::info!("[scrobbler] listenbrainz submitted: {} — {}", t.artist, t.title),
+        match c
+            .submit_listen(&t.artist, &t.title, album, started_at as i64, None)
+            .await
+        {
+            Ok(()) => log::info!(
+                "[scrobbler] listenbrainz submitted: {} — {}",
+                t.artist,
+                t.title
+            ),
             Err(e) => {
                 // Persist to the shared offline queue; the periodic drain retries it.
                 log::warn!("[scrobbler] listenbrainz submit failed, queueing: {e}");
@@ -275,7 +282,10 @@ fn album_opt(t: &QueueTrack) -> Option<&str> {
 }
 
 fn now_unix() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -318,7 +328,10 @@ mod tests {
 
     #[test]
     fn album_opt_drops_empty_and_unknown() {
-        assert_eq!(album_opt(&qt("Light as a Feather")), Some("Light as a Feather"));
+        assert_eq!(
+            album_opt(&qt("Light as a Feather")),
+            Some("Light as a Feather")
+        );
         assert_eq!(album_opt(&qt("")), None);
         assert_eq!(album_opt(&qt("Unknown Album")), None);
     }

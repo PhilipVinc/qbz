@@ -261,7 +261,11 @@ pub fn spawn(
 
     log::info!(
         "[QConnect/Pairing] serving /streamcore on port {port} as \"{friendly_name}\"{}",
-        if mdns.is_some() { " (mDNS registered)" } else { "" }
+        if mdns.is_some() {
+            " (mDNS registered)"
+        } else {
+            ""
+        }
     );
     Ok(PairingHandle {
         server,
@@ -319,8 +323,7 @@ const REFRESH_LEAD_SECS: u64 = 300;
 /// `Arc<AppRuntime>` — #521 ordering, same contract as the report scheduler).
 pub fn spawn_token_refresh(store: PairingStore, runtime: Runtime) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut tick =
-            tokio::time::interval(std::time::Duration::from_secs(REFRESH_CHECK_SECS));
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(REFRESH_CHECK_SECS));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
@@ -438,7 +441,9 @@ async fn refresh_if_needed(store: &PairingStore, runtime: &Runtime) {
                         }
                         log::info!("[QConnect/Pairing] refreshed jwt_api (exp {exp})");
                     } else {
-                        log::info!("[QConnect/Pairing] dropped stale jwt_api refresh (store changed)");
+                        log::info!(
+                            "[QConnect/Pairing] dropped stale jwt_api refresh (store changed)"
+                        );
                         return;
                     }
                 }
@@ -464,7 +469,9 @@ async fn refresh_if_needed(store: &PairingStore, runtime: &Runtime) {
                         // one is what the reconnect credential re-resolve uses.
                         log::info!("[QConnect/Pairing] refreshed jwt_qws (exp {exp})");
                     } else {
-                        log::info!("[QConnect/Pairing] dropped stale jwt_qws refresh (store changed)");
+                        log::info!(
+                            "[QConnect/Pairing] dropped stale jwt_qws refresh (store changed)"
+                        );
                     }
                 }
             }
@@ -528,9 +535,7 @@ fn handle(
             let session_id = valid_ws_tokens(&service.pairing_store())
                 .map(|t| t.session_id)
                 .unwrap_or_default();
-            let app_id = rt
-                .block_on(service.current_app_id())
-                .unwrap_or_default();
+            let app_id = rt.block_on(service.current_app_id()).unwrap_or_default();
             json(
                 200,
                 json!({ "current_session_id": session_id, "app_id": app_id }),
@@ -686,7 +691,10 @@ mod tests {
             api_exp: 0,
         })));
         assert!(valid_ws_tokens(&store).is_none());
-        assert!(store.lock().unwrap().is_none(), "expired entry must be cleared");
+        assert!(
+            store.lock().unwrap().is_none(),
+            "expired entry must be cleared"
+        );
     }
 
     #[test]

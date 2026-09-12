@@ -50,8 +50,7 @@ pub const CMAF_PREFETCH_CONCURRENCY: usize = 3;
 /// so the caller can emit UI progress events without knowing the CMAF
 /// internals. Callbacks must be `Send + Sync` because segments are
 /// fetched in parallel.
-pub type CmafProgressCallback =
-    std::sync::Arc<dyn Fn(CmafProgressUpdate) + Send + Sync>;
+pub type CmafProgressCallback = std::sync::Arc<dyn Fn(CmafProgressUpdate) + Send + Sync>;
 
 /// A single progress tick. `segments_completed` is cumulative (1..=n),
 /// `n_segments` is the total including the init segment if you count it.
@@ -117,7 +116,9 @@ pub async fn setup_streaming(
     track_id: u64,
     quality: Quality,
 ) -> std::result::Result<CmafStreamingInfo, String> {
-    let file_url = client.get_file_url(track_id, quality).await
+    let file_url = client
+        .get_file_url(track_id, quality)
+        .await
         .map_err(|e| format!("get_file_url failed: {}", e))?;
 
     let url_template = file_url
@@ -125,12 +126,11 @@ pub async fn setup_streaming(
         .as_ref()
         .ok_or("No url_template in file/url response")?
         .clone();
-    let key_str = file_url
-        .key
-        .as_ref()
-        .ok_or("No key in file/url response")?;
+    let key_str = file_url.key.as_ref().ok_or("No key in file/url response")?;
 
-    let (_session_id, infos) = client.ensure_cmaf_session().await
+    let (_session_id, infos) = client
+        .ensure_cmaf_session()
+        .await
         .map_err(|e| format!("ensure_cmaf_session failed: {}", e))?;
 
     let session_key = qbz_cmaf::derive_session_key(crate::auth::CMAF_SEED, &infos)
@@ -274,9 +274,8 @@ pub async fn download_full_sized(
             let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(2);
             let writer_path = path.clone();
             let header = setup.flac_header.clone();
-            let writer = tokio::task::spawn_blocking(move || {
-                write_track_to_disk(&writer_path, header, rx)
-            });
+            let writer =
+                tokio::task::spawn_blocking(move || write_track_to_disk(&writer_path, header, rx));
 
             let fetch = fetch_decrypt_in_order(
                 &http,
@@ -480,9 +479,9 @@ impl Sink<'_> {
                 // A shared scratch would have to be copied out to send anyway.
                 let mut chunk = Vec::new();
                 decrypt_segment_into(seg_data, seg_number, content_key, &mut chunk)?;
-                tx.send(chunk).await.map_err(|_| {
-                    format!("disk writer stopped before segment {seg_number}")
-                })
+                tx.send(chunk)
+                    .await
+                    .map_err(|_| format!("disk writer stopped before segment {seg_number}"))
             }
         }
     }
@@ -537,7 +536,11 @@ pub async fn download_full_with_quality_progress(
     let http = build_cdn_client()?;
 
     let total_size: usize = setup.flac_header.len()
-        + setup.segment_table.iter().map(|s| s.byte_len as usize).sum::<usize>();
+        + setup
+            .segment_table
+            .iter()
+            .map(|s| s.byte_len as usize)
+            .sum::<usize>();
 
     // Pre-sized so the decrypted track never reallocates, and filled segment by
     // segment so the encrypted copy is never resident as a whole.
@@ -599,7 +602,9 @@ pub async fn download_raw_with_progress(
     quality: Quality,
     on_progress: Option<CmafProgressCallback>,
 ) -> std::result::Result<CmafRawBundle, String> {
-    let file_url = client.get_file_url(track_id, quality).await
+    let file_url = client
+        .get_file_url(track_id, quality)
+        .await
         .map_err(|e| format!("get_file_url failed: {}", e))?;
 
     let url_template = file_url
@@ -607,12 +612,11 @@ pub async fn download_raw_with_progress(
         .as_ref()
         .ok_or("No url_template in file/url response")?
         .clone();
-    let key_str = file_url
-        .key
-        .as_ref()
-        .ok_or("No key in file/url response")?;
+    let key_str = file_url.key.as_ref().ok_or("No key in file/url response")?;
 
-    let (_session_id, infos) = client.ensure_cmaf_session().await
+    let (_session_id, infos) = client
+        .ensure_cmaf_session()
+        .await
         .map_err(|e| format!("ensure_cmaf_session failed: {}", e))?;
 
     let session_key = qbz_cmaf::derive_session_key(crate::auth::CMAF_SEED, &infos)
@@ -747,7 +751,10 @@ async fn fetch_all_segments(
         let counter = completed_count.clone();
 
         handles.push(tokio::spawn(async move {
-            let permit = sem.acquire_owned().await.map_err(|e| format!("semaphore: {}", e))?;
+            let permit = sem
+                .acquire_owned()
+                .await
+                .map_err(|e| format!("semaphore: {}", e))?;
             let seg_data =
                 fetch_bytes_with_retry(&http, &seg_url, &format!("{} seg {}", log_tag, seg_idx))
                     .await
@@ -1040,7 +1047,10 @@ mod segment_assembly_tests {
             decrypt_segment_into(seg, i + 1, &key, &mut streamed).expect("one at a time");
         }
 
-        assert!(!batch.is_empty(), "fixture produced no audio — parser drift?");
+        assert!(
+            !batch.is_empty(),
+            "fixture produced no audio — parser drift?"
+        );
         assert_eq!(batch, streamed);
     }
 
@@ -1073,7 +1083,9 @@ mod segment_assembly_tests {
         {
             let mut sink = Sink::Memory(&mut in_memory);
             for (i, seg) in segments.iter().enumerate() {
-                sink.append_segment(seg, i + 1, &key).await.expect("memory sink");
+                sink.append_segment(seg, i + 1, &key)
+                    .await
+                    .expect("memory sink");
             }
         }
 
@@ -1089,7 +1101,9 @@ mod segment_assembly_tests {
         {
             let mut sink = Sink::File { tx };
             for (i, seg) in segments.iter().enumerate() {
-                sink.append_segment(seg, i + 1, &key).await.expect("file sink");
+                sink.append_segment(seg, i + 1, &key)
+                    .await
+                    .expect("file sink");
             }
             // Dropping the sink closes the channel, which is how the writer
             // learns the track is finished.
@@ -1101,7 +1115,11 @@ mod segment_assembly_tests {
 
         assert!(!in_memory.is_empty(), "fixture produced no audio");
         assert_eq!(in_memory, on_disk, "disk and memory assembly diverged");
-        assert_eq!(written, on_disk.len(), "byte count must match what was written");
+        assert_eq!(
+            written,
+            on_disk.len(),
+            "byte count must match what was written"
+        );
     }
 
     /// Order is load-bearing: the same segments assembled out of order must NOT

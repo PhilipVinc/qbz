@@ -64,10 +64,7 @@ pub async fn purge_all_cached_files(
     if let Ok(entries) = std::fs::read_dir(&cache_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !is_purgeable_cache_dir_name(name) {
                 continue;
             }

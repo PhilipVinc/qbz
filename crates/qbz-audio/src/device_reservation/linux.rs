@@ -311,9 +311,8 @@ fn try_acquire_name(
     bus_name: &str,
     replace: bool,
 ) -> Result<RequestNameReply, ReservationError> {
-    let proxy = DBusProxy::new(conn).map_err(|e| {
-        ReservationError::DbusError(format!("DBusProxy::new failed: {}", e))
-    })?;
+    let proxy = DBusProxy::new(conn)
+        .map_err(|e| ReservationError::DbusError(format!("DBusProxy::new failed: {}", e)))?;
     let well_known: WellKnownName<'_> = bus_name.try_into().map_err(|e| {
         ReservationError::DbusError(format!("invalid bus name '{}': {}", bus_name, e))
     })?;
@@ -352,9 +351,8 @@ fn resolve_contention(
     // it twice for back-to-back property reads has been observed to cost an
     // extra GetAll round trip on some bus daemons; one proxy is both faster
     // and clearer.
-    let holder_proxy = open_holder_proxy(conn, bus_name, object_path).map_err(|e| {
-        ReservationError::DbusError(format!("Proxy::new for holder failed: {}", e))
-    })?;
+    let holder_proxy = open_holder_proxy(conn, bus_name, object_path)
+        .map_err(|e| ReservationError::DbusError(format!("Proxy::new for holder failed: {}", e)))?;
 
     // Default to 0 if the holder is uncooperative or doesn't expose Priority.
     // Rationale: PulseAudio/PipeWire are the most common holders and run at
@@ -681,10 +679,7 @@ mod tests {
         ] {
             match parse_card_index(s) {
                 Ok(_) | Err(ReservationError::InvalidDevice(_)) => {}
-                Err(other) => panic!(
-                    "unexpected error variant for {:?}: {:?}",
-                    s, other
-                ),
+                Err(other) => panic!("unexpected error variant for {:?}: {:?}", s, other),
             }
         }
     }

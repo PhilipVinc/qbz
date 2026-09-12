@@ -94,7 +94,12 @@ impl ScrobblerSettingsStore {
             .map_err(|e| format!("Failed to open scrobbler settings database: {}", e))?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
-            .map_err(|e| format!("Failed to enable WAL for scrobbler settings database: {}", e))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to enable WAL for scrobbler settings database: {}",
+                    e
+                )
+            })?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS scrobbler_settings (
@@ -418,9 +423,13 @@ mod tests {
         let store = ScrobblerSettingsStore::new_at(&dir).expect("open store");
         store.set_enabled(true).expect("enabled");
         store.set_lastfm_enabled(true).expect("lfm enabled");
-        store.set_lastfm_session("sk", "alice").expect("lfm session");
+        store
+            .set_lastfm_session("sk", "alice")
+            .expect("lfm session");
         store.set_listenbrainz_enabled(true).expect("lb enabled");
-        store.set_listenbrainz_token("tok", "bob").expect("lb token");
+        store
+            .set_listenbrainz_token("tok", "bob")
+            .expect("lb token");
 
         store.disconnect_lastfm().expect("disconnect lfm");
         store.disconnect_listenbrainz().expect("disconnect lb");

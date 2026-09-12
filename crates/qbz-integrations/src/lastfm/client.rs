@@ -900,14 +900,11 @@ fn extract_mbid(value: &serde_json::Value) -> Option<String> {
 
 /// Extract a Unix timestamp from a Last.fm `date.uts` field (string or number).
 fn extract_uts(value: &serde_json::Value) -> Option<i64> {
-    value
-        .get("date")
-        .and_then(|d| d.get("uts"))
-        .and_then(|u| {
-            u.as_str()
-                .and_then(|s| s.parse::<i64>().ok())
-                .or_else(|| u.as_i64())
-        })
+    value.get("date").and_then(|d| d.get("uts")).and_then(|u| {
+        u.as_str()
+            .and_then(|s| s.parse::<i64>().ok())
+            .or_else(|| u.as_i64())
+    })
 }
 
 /// Parse a `u64` that Last.fm may return as a JSON string or number; defaults to 0.

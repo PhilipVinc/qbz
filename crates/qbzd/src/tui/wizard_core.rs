@@ -56,7 +56,11 @@ pub fn detect_blocking() -> Vec<DacCandidateData> {
         } else {
             String::new()
         };
-        let description = if d.name.is_empty() { d.id.clone() } else { d.name };
+        let description = if d.name.is_empty() {
+            d.id.clone()
+        } else {
+            d.name
+        };
         out.push(DacCandidateData {
             id: d.id,
             description,
@@ -220,7 +224,9 @@ fn install(d: Distro, pkgs: &str) -> String {
         Distro::Gentoo => format!("sudo emerge {pkgs}   # package name may differ on Gentoo"),
         Distro::Void => format!("sudo xbps-install -S {pkgs}"),
         // NixOS is special-cased in remediations(); this is an unreached fallback.
-        Distro::NixOS => format!("# NixOS: add to configuration.nix (see the PipeWire block) — {pkgs}"),
+        Distro::NixOS => {
+            format!("# NixOS: add to configuration.nix (see the PipeWire block) — {pkgs}")
+        }
         Distro::Other => format!("Install with your package manager: {pkgs}"),
     }
 }
@@ -461,10 +467,34 @@ pub struct TestSeed {
 }
 
 pub const TEST_SEEDS: [TestSeed; 4] = [
-    TestSeed { depth: 16, rate: 44100.0, id_hint: 19301386, artist: "George Harrison", title: "My Sweet Lord" },
-    TestSeed { depth: 24, rate: 44100.0, id_hint: 266725027, artist: "Billie Eilish", title: "LUNCH" },
-    TestSeed { depth: 24, rate: 96000.0, id_hint: 126886854, artist: "Iron Maiden", title: "Stratego" },
-    TestSeed { depth: 24, rate: 192000.0, id_hint: 52265, artist: "Toto", title: "Africa" },
+    TestSeed {
+        depth: 16,
+        rate: 44100.0,
+        id_hint: 19301386,
+        artist: "George Harrison",
+        title: "My Sweet Lord",
+    },
+    TestSeed {
+        depth: 24,
+        rate: 44100.0,
+        id_hint: 266725027,
+        artist: "Billie Eilish",
+        title: "LUNCH",
+    },
+    TestSeed {
+        depth: 24,
+        rate: 96000.0,
+        id_hint: 126886854,
+        artist: "Iron Maiden",
+        title: "Stratego",
+    },
+    TestSeed {
+        depth: 24,
+        rate: 192000.0,
+        id_hint: 52265,
+        artist: "Toto",
+        title: "Africa",
+    },
 ];
 
 /// True if a resolved track matches this seed's family (rate + bit depth — the
@@ -474,7 +504,10 @@ pub fn track_matches_seed(track: &qbz_models::Track, seed: &TestSeed) -> bool {
         .maximum_sampling_rate
         .map(|r| (r * 1000.0 - seed.rate).abs() < 1.0 || (r - seed.rate).abs() < 1.0)
         .unwrap_or(false);
-    let depth_ok = track.maximum_bit_depth.map(|d| d == seed.depth).unwrap_or(false);
+    let depth_ok = track
+        .maximum_bit_depth
+        .map(|d| d == seed.depth)
+        .unwrap_or(false);
     rate_ok && depth_ok
 }
 
@@ -505,7 +538,12 @@ pub fn khz(hz: u32) -> String {
 /// (N6). `S32_LE` = 24-bit carried in a 32-bit frame — this is the container, so
 /// the wizard's "matched" verdict keys on the RATE, not the format string.
 pub fn negotiated_label(n: &NegotiatedRate) -> String {
-    format!("DAC: {} · {} · {} ch", khz(n.sample_rate), n.format, n.channels)
+    format!(
+        "DAC: {} · {} · {} ch",
+        khz(n.sample_rate),
+        n.format,
+        n.channels
+    )
 }
 
 #[cfg(test)]
@@ -514,7 +552,9 @@ mod tests {
 
     #[test]
     fn validates_node_names_like_tauri() {
-        assert!(validate_node_name("alsa_output.usb-Cambridge-00.analog-stereo"));
+        assert!(validate_node_name(
+            "alsa_output.usb-Cambridge-00.analog-stereo"
+        ));
         assert!(validate_node_name("alsa_input.pci-0000_00.analog-stereo"));
         assert!(!validate_node_name(""));
         assert!(!validate_node_name("   "));
@@ -523,8 +563,14 @@ mod tests {
 
     #[test]
     fn detects_dac_type() {
-        assert_eq!(detect_dac_type("alsa_output.usb-Cambridge-00.analog-stereo"), "usb");
-        assert_eq!(detect_dac_type("alsa_output.pci-0000_00_1f.3.analog-stereo"), "pci");
+        assert_eq!(
+            detect_dac_type("alsa_output.usb-Cambridge-00.analog-stereo"),
+            "usb"
+        );
+        assert_eq!(
+            detect_dac_type("alsa_output.pci-0000_00_1f.3.analog-stereo"),
+            "pci"
+        );
         assert_eq!(detect_dac_type("bluez_output.AA"), "bluetooth");
         assert_eq!(detect_dac_type("alsa_output.virtual-dummy"), "virtual");
         assert_eq!(detect_dac_type("something.else"), "unknown");
@@ -538,15 +584,26 @@ mod tests {
 
     #[test]
     fn slugifies_descriptions() {
-        assert_eq!(slugify("DacMagic Plus Analog Stereo"), "dacmagic-plus-analog-stereo");
-        assert_eq!(slugify("Built-in Audio Analog Stereo"), "built-in-audio-analog-stereo");
+        assert_eq!(
+            slugify("DacMagic Plus Analog Stereo"),
+            "dacmagic-plus-analog-stereo"
+        );
+        assert_eq!(
+            slugify("Built-in Audio Analog Stereo"),
+            "built-in-audio-analog-stereo"
+        );
         assert_eq!(slugify("  weird__name!! "), "weird-name");
         assert_eq!(slugify(""), "");
     }
 
     #[test]
     fn wireplumber_conf_pins_node_and_rates() {
-        let c = wireplumber_conf("dacmagic", "alsa_output.usb-x.analog-stereo", &[44100, 192000], "DacMagic");
+        let c = wireplumber_conf(
+            "dacmagic",
+            "alsa_output.usb-x.analog-stereo",
+            &[44100, 192000],
+            "DacMagic",
+        );
         assert!(c.contains("node.name = \"alsa_output.usb-x.analog-stereo\""));
         assert!(c.contains("audio.allowed-rates = [ 44100 192000 ]"));
         assert!(c.contains("99-qbz-dac-dacmagic.conf"));
@@ -575,10 +632,19 @@ mod tests {
     #[test]
     fn seed_lookup_matches_known_reference_rates() {
         // 24/192 → Toto "Africa"; 16/44100 → George Harrison.
-        assert_eq!(seed_for_rate_depth(192000, 24).map(|s| s.title), Some("Africa"));
-        assert_eq!(seed_for_rate_depth(44100, 16).map(|s| s.title), Some("My Sweet Lord"));
+        assert_eq!(
+            seed_for_rate_depth(192000, 24).map(|s| s.title),
+            Some("Africa")
+        );
+        assert_eq!(
+            seed_for_rate_depth(44100, 16).map(|s| s.title),
+            Some("My Sweet Lord")
+        );
         // The two 44.1 seeds differ only by depth.
-        assert_eq!(seed_for_rate_depth(44100, 24).map(|s| s.title), Some("LUNCH"));
+        assert_eq!(
+            seed_for_rate_depth(44100, 24).map(|s| s.title),
+            Some("LUNCH")
+        );
         // An off-grid rate matches nothing.
         assert!(seed_for_rate_depth(48000, 24).is_none());
     }
@@ -608,22 +674,33 @@ mod tests {
             any_devices: true,
         };
         let r = remediations(missing_bridge, Distro::Debian, InitSystem::Systemd);
-        assert!(r.iter().any(|(_, cmd)| cmd == "sudo apt install pipewire-alsa"));
+        assert!(r
+            .iter()
+            .any(|(_, cmd)| cmd == "sudo apt install pipewire-alsa"));
         // needs_restart flipped → an init-aware systemd restart block is appended.
-        assert!(r.iter().any(|(_, cmd)| cmd.contains("systemctl --user restart")));
+        assert!(r
+            .iter()
+            .any(|(_, cmd)| cmd.contains("systemctl --user restart")));
     }
 
     #[test]
     fn reference_commands_used_in_sandbox_full_stack() {
         let r = reference_commands(Distro::Debian, InitSystem::Systemd);
         assert_eq!(r.len(), 2);
-        assert!(r[0].1.contains("pipewire-alsa"), "full stack must include the ALSA bridge");
+        assert!(
+            r[0].1.contains("pipewire-alsa"),
+            "full stack must include the ALSA bridge"
+        );
         assert!(r[1].1.contains("systemctl --user restart"));
     }
 
     #[test]
     fn negotiated_label_shows_rate_format_channels() {
-        let n = NegotiatedRate { sample_rate: 192000, format: "S32_LE".to_string(), channels: 2 };
+        let n = NegotiatedRate {
+            sample_rate: 192000,
+            format: "S32_LE".to_string(),
+            channels: 2,
+        };
         assert_eq!(negotiated_label(&n), "DAC: 192 kHz · S32_LE · 2 ch");
     }
 }

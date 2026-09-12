@@ -17,7 +17,12 @@ use std::process::Command;
 /// `qbzd service [INIT] [--user U] [--bin PATH] [--system]`. Prints the unit to
 /// stdout (pipe/redirect it into place); install steps go to stderr so stdout
 /// stays clean. Exit 0, or 2 on an unknown/undetectable init.
-pub fn service(init: Option<String>, user: Option<String>, bin: Option<String>, system: bool) -> i32 {
+pub fn service(
+    init: Option<String>,
+    user: Option<String>,
+    bin: Option<String>,
+    system: bool,
+) -> i32 {
     let init = match init.map(|s| s.to_ascii_lowercase()).or_else(detect_init) {
         Some(i) => i,
         None => {
@@ -58,7 +63,11 @@ struct Target {
 
 fn resolve(user: Option<String>, bin: Option<String>) -> Target {
     let bin = bin
-        .or_else(|| std::env::current_exe().ok().and_then(|p| p.to_str().map(String::from)))
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.to_str().map(String::from))
+        })
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| "/usr/bin/qbzd".to_string());
 
@@ -77,7 +86,14 @@ fn resolve(user: Option<String>, bin: Option<String>) -> Target {
         .filter(|s| is_current && !s.is_empty())
         .unwrap_or_else(|| format!("/run/user/{uid}"));
 
-    Target { user, group, uid, home, xdg_runtime, bin }
+    Target {
+        user,
+        group,
+        uid,
+        home,
+        xdg_runtime,
+        bin,
+    }
 }
 
 /// `(uid, home)` for a user via `getent passwd` (name:x:uid:gid:gecos:home:sh),
@@ -111,7 +127,8 @@ fn detect_init() -> Option<String> {
     let exists = |p: &str| std::path::Path::new(p).exists();
     if exists("/run/systemd/system") {
         Some("systemd".into())
-    } else if exists("/run/openrc") || exists("/sbin/openrc") || exists("/etc/init.d/functions.sh") {
+    } else if exists("/run/openrc") || exists("/sbin/openrc") || exists("/etc/init.d/functions.sh")
+    {
         Some("openrc".into())
     } else if exists("/run/runit") || exists("/etc/runit") || exists("/etc/sv") {
         Some("runit".into())
@@ -304,7 +321,10 @@ mod tests {
     #[test]
     fn system_templates_carry_the_audio_env_for_the_target_user() {
         for tpl in [systemd_system(&t()), openrc(&t()), runit(&t())] {
-            assert!(tpl_has(&tpl, "/run/user/1001"), "missing XDG_RUNTIME_DIR:\n{tpl}");
+            assert!(
+                tpl_has(&tpl, "/run/user/1001"),
+                "missing XDG_RUNTIME_DIR:\n{tpl}"
+            );
             assert!(tpl_has(&tpl, "/home/alice"), "missing HOME:\n{tpl}");
             assert!(tpl_has(&tpl, "alice"), "missing user:\n{tpl}");
             // The bin + a `run` invocation, however each init spells it (systemd/

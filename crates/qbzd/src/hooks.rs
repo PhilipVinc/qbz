@@ -88,7 +88,10 @@ fn hook_env(ev: &CoreEvent) -> Option<Vec<(String, String)>> {
     let mut vars: Vec<(String, String)> = Vec::new();
     let mut push = |k: &str, v: String| vars.push((format!("QBZ_{k}"), v));
     match ev {
-        TrackStarted { track, position_secs } => {
+        TrackStarted {
+            track,
+            position_secs,
+        } => {
             push("EVENT", "TrackStarted".into());
             push("TRACK_ID", track.id.to_string());
             push("TITLE", track.title.clone());
@@ -117,9 +120,16 @@ fn hook_env(ev: &CoreEvent) -> Option<Vec<(String, String)>> {
         VolumeChanged { volume } => {
             push("EVENT", "VolumeChanged".into());
             // 0-100, the same scale the `qbzd volume` verb speaks.
-            push("VOLUME", (((*volume).clamp(0.0, 1.0) * 100.0).round() as u32).to_string());
+            push(
+                "VOLUME",
+                (((*volume).clamp(0.0, 1.0) * 100.0).round() as u32).to_string(),
+            );
         }
-        QconnectSessionChanged { state, device_name, session_active } => {
+        QconnectSessionChanged {
+            state,
+            device_name,
+            session_active,
+        } => {
             push("EVENT", "QconnectSessionChanged".into());
             push("STATE", state.clone());
             push("SESSION_ACTIVE", session_active.to_string());
@@ -130,7 +140,11 @@ fn hook_env(ev: &CoreEvent) -> Option<Vec<(String, String)>> {
         LoggedIn { .. } => push("EVENT", "LoggedIn".into()),
         LoggedOut => push("EVENT", "LoggedOut".into()),
         SessionExpired => push("EVENT", "SessionExpired".into()),
-        Error { code, message, recoverable } => {
+        Error {
+            code,
+            message,
+            recoverable,
+        } => {
             push("EVENT", "Error".into());
             push("CODE", code.clone());
             push("MESSAGE", message.clone());
@@ -186,8 +200,11 @@ mod tests {
     #[test]
     fn track_started_carries_metadata_and_json() {
         let track = test_track();
-        let vars = hook_env(&CoreEvent::TrackStarted { track, position_secs: 7 })
-            .expect("TrackStarted is forwarded");
+        let vars = hook_env(&CoreEvent::TrackStarted {
+            track,
+            position_secs: 7,
+        })
+        .expect("TrackStarted is forwarded");
         assert_eq!(get(&vars, "QBZ_EVENT"), Some("TrackStarted"));
         assert_eq!(get(&vars, "QBZ_TITLE"), Some("Red Beans"));
         assert_eq!(get(&vars, "QBZ_ARTIST"), Some("Jon Batiste"));
@@ -243,9 +260,16 @@ mod tests {
 
     #[test]
     fn chatty_and_bulky_events_are_not_forwarded() {
-        assert!(hook_env(&CoreEvent::PositionUpdated { position_secs: 1, duration_secs: 2 }).is_none());
+        assert!(hook_env(&CoreEvent::PositionUpdated {
+            position_secs: 1,
+            duration_secs: 2
+        })
+        .is_none());
         assert!(hook_env(&CoreEvent::ShuffleChanged { enabled: true }).is_none());
-        assert!(hook_env(&CoreEvent::LoadingStarted { operation: "x".into() }).is_none());
+        assert!(hook_env(&CoreEvent::LoadingStarted {
+            operation: "x".into()
+        })
+        .is_none());
     }
 
     #[test]

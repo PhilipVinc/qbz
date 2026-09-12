@@ -80,8 +80,10 @@ impl JackStream {
     /// Open the JACK client, register stable stereo ports, activate, and
     /// auto-connect to the system's physical playback.
     pub fn new(channels: u16) -> Result<Self, String> {
-        let (client, _status) = Client::new("qbz", ClientOptions::NO_START_SERVER)
-            .map_err(|e| format!("JACK client open failed (is a JACK/pipewire-jack server running?): {e}"))?;
+        let (client, _status) =
+            Client::new("qbz", ClientOptions::NO_START_SERVER).map_err(|e| {
+                format!("JACK client open failed (is a JACK/pipewire-jack server running?): {e}")
+            })?;
 
         let sample_rate = client.sample_rate() as u32;
 
@@ -123,7 +125,8 @@ impl JackStream {
                 }
                 log::info!(
                     "[JACK] auto-connected qbz:out_FL/FR -> {} / {}",
-                    playback[0], playback[1]
+                    playback[0],
+                    playback[1]
                 );
             } else {
                 log::warn!(

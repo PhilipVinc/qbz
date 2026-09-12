@@ -125,9 +125,7 @@ fn try_open_keyring(service_name: &str) -> Result<[u8; MASTER_KEY_LEN], SecretEr
             entry
                 .set_password(&encoded)
                 .map_err(|e| SecretError::Keyring(format!("set_password: {}", e)))?;
-            log::info!(
-                "[qbz-secrets] Generated fresh 256-bit master key and stored in OS keyring"
-            );
+            log::info!("[qbz-secrets] Generated fresh 256-bit master key and stored in OS keyring");
             Ok(key)
         }
         Err(e) => Err(SecretError::Keyring(format!("get_password: {}", e))),

@@ -53,9 +53,7 @@ pub fn is_network_path(path: &Path) -> bool {
 
     // Canonicalize for best matching; fall back to raw path if the
     // file already disappeared / permission denied.
-    let target = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
     match best_fs_type(&mounts, &target.to_string_lossy()) {
         Some(fs_type) => is_network_fs(fs_type),
@@ -80,9 +78,7 @@ pub fn network_fs_label(path: &Path) -> Option<String> {
     if mounts.is_empty() {
         return None;
     }
-    let target = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let target = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
     let fs_type = best_fs_type(&mounts, &target.to_string_lossy())?;
     if !is_network_fs(fs_type) {
@@ -200,9 +196,7 @@ fn is_network_fs(fs_type: &str) -> bool {
         .iter()
         .any(|prefix| match fs_type.strip_prefix(prefix) {
             Some("") => true,
-            Some(rest) => {
-                rest.starts_with('.') || rest.chars().all(|c| c.is_ascii_digit())
-            }
+            Some(rest) => rest.starts_with('.') || rest.chars().all(|c| c.is_ascii_digit()),
             None => false,
         })
 }
@@ -236,7 +230,10 @@ mod tests {
             ("/mnt/music".to_string(), "nfs4".to_string()),
         ];
         assert_eq!(best_fs_type(&mounts, "/mnt/music"), Some("nfs4"));
-        assert_eq!(best_fs_type(&mounts, "/mnt/music/Albums/x.flac"), Some("nfs4"));
+        assert_eq!(
+            best_fs_type(&mounts, "/mnt/music/Albums/x.flac"),
+            Some("nfs4")
+        );
         // A sibling dir sharing the string prefix must NOT inherit the
         // mount's fs type — it falls through to `/`.
         assert_eq!(best_fs_type(&mounts, "/mnt/music2/x.flac"), Some("ext4"));

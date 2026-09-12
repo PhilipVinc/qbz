@@ -237,7 +237,11 @@ impl DaemonEventSink {
             if shared.qconnect.is_active != is_active {
                 log::info!(
                     "[QConnect] Render ownership: {}",
-                    if is_active { "this device" } else { "elsewhere" }
+                    if is_active {
+                        "this device"
+                    } else {
+                        "elsewhere"
+                    }
                 );
             }
             shared.qconnect.is_active = is_active;
@@ -254,8 +258,8 @@ impl DaemonEventSink {
             .await;
 
         if let Some(loop_mode) = outcome.apply_loop_mode {
-            if let Err(err) = qconnect_app::renderer::apply_remote_loop_mode(&self.engine, loop_mode)
-                .await
+            if let Err(err) =
+                qconnect_app::renderer::apply_remote_loop_mode(&self.engine, loop_mode).await
             {
                 log::warn!("[QConnect] Failed to apply remote loop mode: {err}");
             }
@@ -435,8 +439,7 @@ impl QconnectEventSink for DaemonEventSink {
             }
             QconnectAppEvent::RendererCommandApplied { command, state } => {
                 log::info!("[QConnect] Renderer command applied: {:?}", command);
-                let became_active =
-                    matches!(command, RendererCommand::SetActive { active: true });
+                let became_active = matches!(command, RendererCommand::SetActive { active: true });
                 // A real SetVolume means the controller has actually told us a
                 // level, so there is nothing stale to correct — stand the
                 // join-time assertion down for good. This is what keeps the
@@ -508,9 +511,7 @@ impl QconnectEventSink for DaemonEventSink {
             QconnectAppEvent::LifecycleChanged { state } => {
                 log::info!("[QConnect] Lifecycle -> {state:?}");
             }
-            QconnectAppEvent::Diagnostic {
-                channel, level, ..
-            } => {
+            QconnectAppEvent::Diagnostic { channel, level, .. } => {
                 log::debug!("[QConnect] diagnostic {channel} [{level}]");
             }
             _ => {}

@@ -107,7 +107,12 @@ impl NetworkState {
     }
 
     fn port_invalid(&self) -> bool {
-        !self.staged.port.parse::<u16>().map(|p| p >= 1).unwrap_or(false)
+        !self
+            .staged
+            .port
+            .parse::<u16>()
+            .map(|p| p >= 1)
+            .unwrap_or(false)
     }
 
     // -------------------------- input --------------------------
@@ -130,7 +135,11 @@ impl NetworkState {
         }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
-                self.focus = if self.focus == 0 { FIELDS.len() - 1 } else { self.focus - 1 };
+                self.focus = if self.focus == 0 {
+                    FIELDS.len() - 1
+                } else {
+                    self.focus - 1
+                };
                 ScreenAction::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
@@ -171,13 +180,28 @@ impl NetworkState {
         let mut within: Option<(u16, u16)> = None;
         for (i, field) in FIELDS.iter().enumerate() {
             let focused = i == self.focus && self.editor.is_none();
-            let editing = self.editor.as_ref().map(|(nf, _)| *nf == *field).unwrap_or(false);
+            let editing = self
+                .editor
+                .as_ref()
+                .map(|(nf, _)| *nf == *field)
+                .unwrap_or(false);
             let (label, value, widget) = match field {
-                NField::Bind => (s::N_BIND, self.field_value(NField::Bind, editing), "[input]"),
-                NField::Port => (s::N_PORT, self.field_value(NField::Port, editing), "[input]"),
+                NField::Bind => (
+                    s::N_BIND,
+                    self.field_value(NField::Bind, editing),
+                    "[input]",
+                ),
+                NField::Port => (
+                    s::N_PORT,
+                    self.field_value(NField::Port, editing),
+                    "[input]",
+                ),
                 NField::Token => {
                     let v = if editing {
-                        self.editor.as_ref().map(|(_, i)| i.display()).unwrap_or_default()
+                        self.editor
+                            .as_ref()
+                            .map(|(_, i)| i.display())
+                            .unwrap_or_default()
                     } else if self.staged.token.trim().is_empty() {
                         s::N_TOKEN_HINT.to_string()
                     } else {
@@ -188,7 +212,15 @@ impl NetworkState {
             };
             let start = lines.len() as u16;
             let block = widgets::field_block(
-                &widgets::Field { label, value, widget, focused, enabled: true, reason: None, description: None },
+                &widgets::Field {
+                    label,
+                    value,
+                    widget,
+                    focused,
+                    enabled: true,
+                    reason: None,
+                    description: None,
+                },
                 ctrl_col,
                 width,
             );
@@ -204,7 +236,11 @@ impl NetworkState {
             lines.push(widgets::err_line(s::N_BAD_IP));
         } else if self.bind_is_lan() {
             lines.push(widgets::blank());
-            lines.extend(widgets::wrapped_note(s::NETWORK_LAN_POSTURE, width, theme::dim()));
+            lines.extend(widgets::wrapped_note(
+                s::NETWORK_LAN_POSTURE,
+                width,
+                theme::dim(),
+            ));
         }
         if self.port_invalid() {
             lines.push(widgets::err_line(s::N_BAD_PORT));
@@ -213,13 +249,28 @@ impl NetworkState {
         // Pre-save unknown-key warning (§3.5).
         if !self.unknown_keys.is_empty() {
             lines.push(widgets::blank());
-            lines.extend(widgets::wrapped_note(s::N_DROP_UNKNOWN, width, theme::warn()));
-            lines.extend(widgets::wrapped_note(&self.unknown_keys.join(", "), width, theme::warn()));
+            lines.extend(widgets::wrapped_note(
+                s::N_DROP_UNKNOWN,
+                width,
+                theme::warn(),
+            ));
+            lines.extend(widgets::wrapped_note(
+                &self.unknown_keys.join(", "),
+                width,
+                theme::warn(),
+            ));
         }
 
         let mut secs: Vec<widgets::Section> = Vec::new();
         let mut anchor: Option<widgets::FocusAnchor> = None;
-        widgets::push_section(&mut secs, &mut anchor, s::NETWORK_SECTION, true, lines, within);
+        widgets::push_section(
+            &mut secs,
+            &mut anchor,
+            s::NETWORK_SECTION,
+            true,
+            lines,
+            within,
+        );
         widgets::sections_scroll(f, area, &secs, anchor);
 
         if let Some((field, input)) = &self.editor {
@@ -304,7 +355,10 @@ mod tests {
         let existing = "[server]\nport = 8182\ntoken = \"old\"\n";
         let out = rewrite_toml(existing, "127.0.0.1", 8182, None).unwrap();
         let parsed: toml::Table = toml::from_str(&out).unwrap();
-        assert!(parsed["server"].get("token").is_none(), "empty token removes the key");
+        assert!(
+            parsed["server"].get("token").is_none(),
+            "empty token removes the key"
+        );
     }
 
     #[test]

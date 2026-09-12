@@ -1044,8 +1044,16 @@ fn queue_version_opt(
     };
 
     // Qobuz may send QueueVersionRef with missing major/minor — default to 0
-    let major = version.major.map(|v| i32_to_u64(v)).transpose()?.unwrap_or(0);
-    let minor = version.minor.map(|v| i32_to_u64(v)).transpose()?.unwrap_or(0);
+    let major = version
+        .major
+        .map(|v| i32_to_u64(v))
+        .transpose()?
+        .unwrap_or(0);
+    let minor = version
+        .minor
+        .map(|v| i32_to_u64(v))
+        .transpose()?
+        .unwrap_or(0);
     Ok(Some(QueueVersion::new(major, minor)))
 }
 
@@ -1152,8 +1160,8 @@ mod tests {
             messages: vec![message],
         };
 
-        let parsed = decode_renderer_server_commands(&batch.encode_to_vec())
-            .expect("batch decodes");
+        let parsed =
+            decode_renderer_server_commands(&batch.encode_to_vec()).expect("batch decodes");
 
         assert!(parsed.is_empty(), "a pending SetActive yields no command");
     }
@@ -1175,8 +1183,8 @@ mod tests {
                 messages: vec![message],
             };
 
-            let parsed = decode_renderer_server_commands(&batch.encode_to_vec())
-                .expect("batch decodes");
+            let parsed =
+                decode_renderer_server_commands(&batch.encode_to_vec()).expect("batch decodes");
 
             assert_eq!(parsed.len(), 1, "active={active}");
             assert_eq!(parsed[0].payload["active"], active, "active={active}");

@@ -100,8 +100,16 @@ fn base64(input: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(T[((n >> 18) & 63) as usize] as char);
         out.push(T[((n >> 12) & 63) as usize] as char);
-        out.push(if chunk.len() > 1 { T[((n >> 6) & 63) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            T[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -151,9 +159,19 @@ pub fn write_wizard_file(stem: &str, text: &str) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(&dir)?;
     let safe: String = stem
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let stem = if safe.trim_matches('-').is_empty() { "dac".to_string() } else { safe };
+    let stem = if safe.trim_matches('-').is_empty() {
+        "dac".to_string()
+    } else {
+        safe
+    };
     let path = dir.join(format!("{stem}.conf"));
     std::fs::write(&path, text)?;
     Ok(path)
@@ -215,8 +233,9 @@ fn try_tier(tier: Tier, text: &str, stem: &str, tmux: bool) -> Option<String> {
                 "sent via OSC 52 — paste to confirm".to_string()
             }
         }),
-        Tier::WlCopy => pipe_to("wl-copy", &[], text)
-            .then(|| "copied to clipboard (wl-copy)".to_string()),
+        Tier::WlCopy => {
+            pipe_to("wl-copy", &[], text).then(|| "copied to clipboard (wl-copy)".to_string())
+        }
         Tier::Xclip => pipe_to("xclip", &["-selection", "clipboard"], text)
             .then(|| "copied to clipboard (xclip)".to_string()),
         Tier::File => write_wizard_file(stem, text)
@@ -291,25 +310,53 @@ mod tests {
         // `\x1bP` and the trailing `\x1b\\`; every ESC in between is doubled, so
         // no single ESC is adjacent to a non-ESC in the inner body.
         assert_eq!(p.matches('\x1b').count(), 4); // \x1bP + \x1b\x1b + \x1b\\
-        // The exact wrapped payload.
+                                                  // The exact wrapped payload.
         assert_eq!(p, "\x1bPtmux;\x1b\x1b]52;c;Zm9vYmFy\x07\x1b\\");
     }
 
     #[test]
     fn plan_tiers_is_ssh_first_remote() {
-        let ssh = ClipEnv { ssh: true, tmux: false, wayland: true, x11: true };
+        let ssh = ClipEnv {
+            ssh: true,
+            tmux: false,
+            wayland: true,
+            x11: true,
+        };
         assert_eq!(plan_tiers(&ssh), vec![Tier::Osc52, Tier::File]);
-        let tmux = ClipEnv { ssh: false, tmux: true, wayland: false, x11: false };
+        let tmux = ClipEnv {
+            ssh: false,
+            tmux: true,
+            wayland: false,
+            x11: false,
+        };
         assert_eq!(plan_tiers(&tmux), vec![Tier::Osc52, Tier::File]);
     }
 
     #[test]
     fn plan_tiers_prefers_native_tools_locally() {
-        let wayland = ClipEnv { ssh: false, tmux: false, wayland: true, x11: true };
-        assert_eq!(plan_tiers(&wayland), vec![Tier::WlCopy, Tier::Xclip, Tier::Osc52, Tier::File]);
-        let x11 = ClipEnv { ssh: false, tmux: false, wayland: false, x11: true };
+        let wayland = ClipEnv {
+            ssh: false,
+            tmux: false,
+            wayland: true,
+            x11: true,
+        };
+        assert_eq!(
+            plan_tiers(&wayland),
+            vec![Tier::WlCopy, Tier::Xclip, Tier::Osc52, Tier::File]
+        );
+        let x11 = ClipEnv {
+            ssh: false,
+            tmux: false,
+            wayland: false,
+            x11: true,
+        };
         assert_eq!(plan_tiers(&x11), vec![Tier::Xclip, Tier::Osc52, Tier::File]);
-        let headless = ClipEnv { ssh: false, tmux: false, wayland: false, x11: false };
+        let headless = ClipEnv {
+            ssh: false,
+            tmux: false,
+            wayland: false,
+            x11: false,
+        };
         assert_eq!(plan_tiers(&headless), vec![Tier::Osc52, Tier::File]);
     }
 
@@ -326,7 +373,12 @@ mod tests {
             for tmux in [false, true] {
                 for wayland in [false, true] {
                     for x11 in [false, true] {
-                        let env = ClipEnv { ssh, tmux, wayland, x11 };
+                        let env = ClipEnv {
+                            ssh,
+                            tmux,
+                            wayland,
+                            x11,
+                        };
                         assert_eq!(*plan_tiers(&env).last().unwrap(), Tier::File);
                     }
                 }

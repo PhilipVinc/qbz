@@ -5,7 +5,8 @@ use std::{
 
 use qconnect_core::{
     apply_event, apply_renderer_command, telemetry, PendingCorrelation, PendingQueueAction,
-    QConnectQueueState, QConnectRendererState, QueueEvent, QueueItem, QueueVersion, RendererCommand,
+    QConnectQueueState, QConnectRendererState, QueueEvent, QueueItem, QueueVersion,
+    RendererCommand,
 };
 use qconnect_protocol::{
     build_qconnect_outbound_envelope, build_qconnect_renderer_outbound_envelope,
@@ -1020,16 +1021,13 @@ fn parse_u64(payload: &Value, field: &str) -> Option<u64> {
 /// Parse a JSON byte array (e.g. the server `queue_hash` field #100) into bytes.
 /// Returns `None` when absent/null so an omitted hash does not clobber state.
 fn parse_bytes(payload: &Value, field: &str) -> Option<Vec<u8>> {
-    payload
-        .get(field)
-        .and_then(Value::as_array)
-        .map(|entries| {
-            entries
-                .iter()
-                .filter_map(value_as_u64)
-                .filter_map(|value| u8::try_from(value).ok())
-                .collect()
-        })
+    payload.get(field).and_then(Value::as_array).map(|entries| {
+        entries
+            .iter()
+            .filter_map(value_as_u64)
+            .filter_map(|value| u8::try_from(value).ok())
+            .collect()
+    })
 }
 
 fn parse_bool(payload: &Value, field: &str, default: bool) -> bool {
@@ -1120,9 +1118,7 @@ fn session_management_event_completes_pending_action(
         return true;
     }
 
-    if pending.is_set_volume_action
-        && matches!(event_type, QueueEventType::SrvrCtrlVolumeChanged)
-    {
+    if pending.is_set_volume_action && matches!(event_type, QueueEventType::SrvrCtrlVolumeChanged) {
         // Volume changes come back as session-management events without a
         // stable action_uuid ack. Treat the first volume-changed echo as the
         // completion signal so a rapid volume drag is not blocked behind the
@@ -1404,8 +1400,7 @@ where
                 remote_projection_renderer_id = Some(renderer_id as i32);
                 sync_local_playback = true;
 
-                let is_active_peer = state.session.active_renderer_id
-                    == Some(renderer_id as i32)
+                let is_active_peer = state.session.active_renderer_id == Some(renderer_id as i32)
                     && is_peer_renderer_active(&state.session)
                     && renderer_id != -1;
 
@@ -1612,9 +1607,8 @@ where
         // raw parse would classify -1 as `Some(-1)` and fall into the `Some(_)`
         // peer-active arm — suppressing the idle auto-take. Filtering `>= 0` maps
         // -1 (and any negative sentinel) to None, the genuine "session idle" state.
-        let incoming_active = normalize_active_renderer_id(
-            payload.get("active_renderer_id").and_then(Value::as_i64),
-        );
+        let incoming_active =
+            normalize_active_renderer_id(payload.get("active_renderer_id").and_then(Value::as_i64));
         let server = match incoming_active {
             None => ServerActiveState::None,
             Some(id) if Some(id) == local_id => ServerActiveState::Me,
@@ -1824,8 +1818,10 @@ where
                     let mut takeover_input: Option<SessionStateTakeoverInput> = None;
                     if let TransportEvent::InboundQueueServerEvent(ref evt) = event {
                         if evt.message_type() == "MESSAGE_TYPE_SRVR_CTRL_SESSION_STATE" {
-                            takeover_input =
-                                Some(self.capture_session_state_takeover_input(&evt.payload).await);
+                            takeover_input = Some(
+                                self.capture_session_state_takeover_input(&evt.payload)
+                                    .await,
+                            );
                             if !renderer_joined {
                                 if let Some(session_uuid) =
                                     evt.payload.get("session_uuid").and_then(|v| v.as_str())
@@ -1983,7 +1979,8 @@ where
                             log::info!(
                                 "[QConnect/Transport] Session established — backoff counters reset"
                             );
-                            host.update_lifecycle(QconnectLifecycleState::Connected).await;
+                            host.update_lifecycle(QconnectLifecycleState::Connected)
+                                .await;
                         }
                         TransportEvent::MaxReconnectAttemptsExceeded {
                             attempts,
@@ -2065,8 +2062,7 @@ where
                                     // re-claim, or the idle auto-take when our
                                     // ADD_RENDERER already landed).
                                     auto_take_attempted = true;
-                                    if let Err(err) =
-                                        self.send_set_active_renderer(local_id).await
+                                    if let Err(err) = self.send_set_active_renderer(local_id).await
                                     {
                                         log::warn!(
                                             "[QConnect] takeover set_active_renderer failed: {err}"
@@ -2234,7 +2230,10 @@ mod tests {
         let mut state = handle.lock().await;
         state.session.local_renderer_id = Some(1);
         state.session.active_renderer_id = Some(2);
-        state.session.renderers = vec![renderer_info(1, "local-uuid"), renderer_info(2, "peer-uuid")];
+        state.session.renderers = vec![
+            renderer_info(1, "local-uuid"),
+            renderer_info(2, "peer-uuid"),
+        ];
     }
 
     /// SESSION_STATE writes session topology under the sync lock and reports the

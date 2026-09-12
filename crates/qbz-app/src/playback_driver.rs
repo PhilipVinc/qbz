@@ -301,7 +301,9 @@ pub fn advance_state(
                 | DriverAction::QueueFinished
         )
     });
-    let reported = actions.iter().any(|a| matches!(a, DriverAction::ReportEdge));
+    let reported = actions
+        .iter()
+        .any(|a| matches!(a, DriverAction::ReportEdge));
 
     // save_pos_tick advances every tick — playback.rs:4305 runs before the
     // seamless `continue`.
@@ -444,7 +446,10 @@ pub async fn run_driver<A: FrontendAdapter + Send + Sync + 'static>(
                     // big, and if so write it to the card in one blocking fsync'd
                     // burst and drop the copy: a 195 MB `Arc` clone plus 11-15 s
                     // of a pinned card, which underran ALSA audibly.
-                    match core.fetch_for_gapless_resolved(*id, quality, None, None).await {
+                    match core
+                        .fetch_for_gapless_resolved(*id, quality, None, None)
+                        .await
+                    {
                         Some(qbz_player::TrackAudio::File(path)) => {
                             if let Err(e) = player.play_next_file(path, *id) {
                                 log::warn!("[qbzd] driver: gapless from disk failed: {e}");
@@ -573,7 +578,10 @@ pub async fn advance_and_play<A: FrontendAdapter + Send + Sync + 'static>(
             break Some(track);
         }
         skips += 1;
-        log::info!("[qbzd] driver: skipping unavailable track {} ({skips}/{MAX_OFFLINE_SKIPS})", track.id);
+        log::info!(
+            "[qbzd] driver: skipping unavailable track {} ({skips}/{MAX_OFFLINE_SKIPS})",
+            track.id
+        );
         if skips >= MAX_OFFLINE_SKIPS {
             let _ = core.stop();
             break None;
@@ -649,9 +657,7 @@ async fn queue_snapshot<A: FrontendAdapter + Send + Sync + 'static>(
 /// `None`). Mirrors `crates/qbz/src/session_persist.rs::capture_and_save`, minus
 /// the desktop-only `persist_session` gate (the daemon's store IS its queue
 /// persistence, so it always saves).
-pub async fn save_session_now<A: FrontendAdapter + Send + Sync + 'static>(
-    runtime: &AppRuntime<A>,
-) {
+pub async fn save_session_now<A: FrontendAdapter + Send + Sync + 'static>(runtime: &AppRuntime<A>) {
     let core = runtime.core();
     let (tracks, current_index) = core.get_all_queue_tracks().await;
     let full = core.get_queue_state_full().await;
@@ -826,7 +832,12 @@ mod tests {
     #[test]
     fn end_edge_advances() {
         let s = DriverState::after(&ev(1, true, 580, 581));
-        let a = plan_tick(&s, &ev(1, false, 581, 581), &q(1, &[(2, true)], "off", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(1, false, 581, 581),
+            &q(1, &[(2, true)], "off", None),
+            None,
+        );
         assert!(a.contains(&DriverAction::AdvanceAndPlay));
         assert!(a.contains(&DriverAction::ReportEdge)); // play-state edge
     }
@@ -837,7 +848,12 @@ mod tests {
     #[test]
     fn advance_releases_the_finished_tracks_bytes() {
         let s = DriverState::after(&ev(1, true, 580, 581));
-        let a = plan_tick(&s, &ev(1, false, 581, 581), &q(1, &[(2, true)], "off", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(1, false, 581, 581),
+            &q(1, &[(2, true)], "off", None),
+            None,
+        );
         assert!(a.contains(&DriverAction::AdvanceAndPlay));
         assert!(a.contains(&DriverAction::ReleaseCachedTrack(1)));
     }
@@ -847,7 +863,12 @@ mod tests {
     #[test]
     fn seamless_handoff_releases_the_outgoing_tracks_bytes() {
         let s = DriverState::after(&ev(1, true, 580, 581));
-        let a = plan_tick(&s, &ev(2, true, 0, 400), &q(1, &[(3, true)], "off", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(2, true, 0, 400),
+            &q(1, &[(3, true)], "off", None),
+            None,
+        );
         assert!(a.contains(&DriverAction::SyncCursorTo(2)));
         assert!(a.contains(&DriverAction::ReleaseCachedTrack(1)));
     }
@@ -857,7 +878,12 @@ mod tests {
     #[test]
     fn repeat_one_keeps_the_tracks_bytes() {
         let s = DriverState::after(&ev(1, true, 580, 581));
-        let a = plan_tick(&s, &ev(1, false, 581, 581), &q(1, &[(2, true)], "one", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(1, false, 581, 581),
+            &q(1, &[(2, true)], "one", None),
+            None,
+        );
         assert!(a.contains(&DriverAction::AdvanceAndPlay));
         assert!(!a
             .iter()
@@ -867,7 +893,12 @@ mod tests {
     #[test]
     fn mid_track_pause_does_not_advance() {
         let s = DriverState::after(&ev(1, true, 100, 581));
-        let a = plan_tick(&s, &ev(1, false, 100, 581), &q(1, &[(2, true)], "off", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(1, false, 100, 581),
+            &q(1, &[(2, true)], "off", None),
+            None,
+        );
         assert!(!a.contains(&DriverAction::AdvanceAndPlay));
         assert!(a.contains(&DriverAction::ReportEdge));
     }
@@ -910,13 +941,21 @@ mod tests {
     #[test]
     fn queue_finished_when_nothing_playable() {
         let s = DriverState::after(&ev(1, true, 580, 581));
-        let a = plan_tick(&s, &ev(1, false, 581, 581), &q(1, &[(2, false)], "off", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(1, false, 581, 581),
+            &q(1, &[(2, false)], "off", None),
+            None,
+        );
         assert!(a.contains(&DriverAction::QueueFinished));
     }
 
     #[test]
     fn skip_walk_bounds() {
-        assert_eq!(next_playable(&[(2, false), (3, false), (4, true)], 50), Some((2, 4)));
+        assert_eq!(
+            next_playable(&[(2, false), (3, false), (4, true)], 50),
+            Some((2, 4))
+        );
         let all_bad: Vec<(u64, bool)> = (0..60).map(|i| (i, false)).collect();
         assert_eq!(next_playable(&all_bad, 50), None); // bounded — never walks forever
     }
@@ -939,7 +978,12 @@ mod tests {
     #[test]
     fn seamless_gapless_transition_syncs_cursor() {
         let s = DriverState::after(&ev(1, true, 580, 581));
-        let a = plan_tick(&s, &ev(2, true, 0, 547), &q(1, &[(2, true)], "off", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(2, true, 0, 547),
+            &q(1, &[(2, true)], "off", None),
+            None,
+        );
         assert!(a.contains(&DriverAction::SyncCursorTo(2)));
     }
 
@@ -958,7 +1002,12 @@ mod tests {
     #[test]
     fn duration_zero_never_advances() {
         let s = DriverState::after(&ev(1, true, 580, 581));
-        let a = plan_tick(&s, &ev(1, false, 580, 0), &q(1, &[(2, true)], "off", None), None);
+        let a = plan_tick(
+            &s,
+            &ev(1, false, 580, 0),
+            &q(1, &[(2, true)], "off", None),
+            None,
+        );
         assert!(!a.contains(&DriverAction::AdvanceAndPlay));
         assert!(a.contains(&DriverAction::ReportEdge)); // play-state edge
     }

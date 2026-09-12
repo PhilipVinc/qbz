@@ -49,7 +49,8 @@ fn halfband_taps() -> &'static [f32; HALFBAND_TAPS] {
             } else {
                 (std::f64::consts::PI * 0.5 * x).sin() / (std::f64::consts::PI * x)
             };
-            let w = 0.42 - 0.5 * (2.0 * std::f64::consts::PI * n as f64 / (HALFBAND_TAPS - 1) as f64).cos()
+            let w = 0.42
+                - 0.5 * (2.0 * std::f64::consts::PI * n as f64 / (HALFBAND_TAPS - 1) as f64).cos()
                 + 0.08 * (4.0 * std::f64::consts::PI * n as f64 / (HALFBAND_TAPS - 1) as f64).cos();
             let v = sinc * w;
             *t = v as f32;
@@ -215,10 +216,8 @@ impl DsdPcmConverter {
             6 => (Some(2), Some(4), Some(5)),
             _ => (None, None, None),
         };
-        let norm = 1.0
-            / (1.0
-                + if ci.is_some() { K } else { 0.0 }
-                + if sli.is_some() { K } else { 0.0 });
+        let norm =
+            1.0 / (1.0 + if ci.is_some() { K } else { 0.0 } + if sli.is_some() { K } else { 0.0 });
         let mut out = Vec::with_capacity(frames * 2);
         for f in 0..frames {
             let (l, r) = match self.channels {

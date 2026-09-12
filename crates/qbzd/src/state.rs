@@ -57,7 +57,8 @@ impl DaemonShared {
     /// `Mutex<DaemonShared>` guard as every other field here, not a
     /// synchronization primitive of its own.
     pub fn network_online(&self) -> bool {
-        self.network_online.load(std::sync::atomic::Ordering::Relaxed)
+        self.network_online
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Latch the network-reachability signal. See the field doc for exactly

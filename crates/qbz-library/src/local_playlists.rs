@@ -449,7 +449,15 @@ pub fn add_tracks(
             "INSERT INTO local_playlist_tracks
                 (playlist_id, position, source, qobuz_track_id, local_path, plex_key, added_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![playlist_id, next_pos, source, qobuz_id, local_path, plex_key, ts],
+            params![
+                playlist_id,
+                next_pos,
+                source,
+                qobuz_id,
+                local_path,
+                plex_key,
+                ts
+            ],
         )?;
         next_pos += 1;
         inserted += 1;
@@ -727,10 +735,7 @@ mod tests {
         reorder(&conn, &a, 0, 2).unwrap();
         assert_eq!(qobuz_order(&conn, &a), vec![(0, 2), (1, 3), (2, 1)]);
         // The sibling playlist's rows are untouched.
-        assert_eq!(
-            qobuz_order(&conn, &b),
-            vec![(0, 10), (1, 20), (2, 30)]
-        );
+        assert_eq!(qobuz_order(&conn, &b), vec![(0, 10), (1, 20), (2, 30)]);
     }
 
     #[test]
@@ -798,7 +803,9 @@ mod tests {
         assert!(get_tracks(&conn, &id).unwrap().is_empty());
         // The membership table holds no orphans.
         let orphans: i64 = conn
-            .query_row("SELECT COUNT(*) FROM local_playlist_tracks", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM local_playlist_tracks", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(orphans, 0);
     }

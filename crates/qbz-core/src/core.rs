@@ -6,25 +6,23 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use qbz_models::{
-    ArtistStoryResponse,
-    AssetOrigin, ExternalStreamAsset, StreamQualityInfo,
-    Album, Artist, ArtistAlbums, CoreEvent, DiscoverAlbum, DiscoverData, DiscoverPlaylistsResponse,
-    DiscoverResponse, FrontendAdapter, GenreInfo, LabelExploreResponse, LabelGetListResponse,
-    LabelListPage, LabelPageData, LabelStoryResponse, PageArtistResponse,
-    MostPopularItem, Playlist, PlaylistDuplicateResult, PlaylistTag, Quality, QueueState,
-    QueueTrack, ReleasesGridResponse,
-    RepeatMode, SearchAllResults, SearchResultsPage, StreamUrl, Track, TrackToAnalyse,
-    TracksContainer, UserSession,
-};
 use qbz_integrations::musicbrainz::cache::MusicBrainzCache;
 use qbz_integrations::musicbrainz::genre::{extract_affinity_seeds, genre_summary, is_broad_genre};
 use qbz_integrations::musicbrainz::location::compute_affinity_score;
 use qbz_integrations::musicbrainz::{
-    location, AffinitySeeds, AlbumAppearance, ArtistMetadata, ArtistRelationships,
-    DiscoveryArtist, DiscoveryResponse, LocationCandidate, LocationDiscoveryResponse,
-    MusicBrainzClient, MusicianAppearances, MusicianConfidence, Period, RelatedArtist,
-    ResolvedArtist, ResolvedMusician, Tag,
+    location, AffinitySeeds, AlbumAppearance, ArtistMetadata, ArtistRelationships, DiscoveryArtist,
+    DiscoveryResponse, LocationCandidate, LocationDiscoveryResponse, MusicBrainzClient,
+    MusicianAppearances, MusicianConfidence, Period, RelatedArtist, ResolvedArtist,
+    ResolvedMusician, Tag,
+};
+use qbz_models::{
+    Album, Artist, ArtistAlbums, ArtistStoryResponse, AssetOrigin, CoreEvent, DiscoverAlbum,
+    DiscoverData, DiscoverPlaylistsResponse, DiscoverResponse, ExternalStreamAsset,
+    FrontendAdapter, GenreInfo, LabelExploreResponse, LabelGetListResponse, LabelListPage,
+    LabelPageData, LabelStoryResponse, MostPopularItem, PageArtistResponse, Playlist,
+    PlaylistDuplicateResult, PlaylistTag, Quality, QueueState, QueueTrack, ReleasesGridResponse,
+    RepeatMode, SearchAllResults, SearchResultsPage, StreamQualityInfo, StreamUrl, Track,
+    TrackToAnalyse, TracksContainer, UserSession,
 };
 use qbz_player::{PlaybackState, Player, QueueManager};
 use qbz_qobuz::QobuzClient;
@@ -97,10 +95,7 @@ fn pick_most_popular(
             }
             "tracks" => {
                 if let Ok(t) = serde_json::from_value::<Track>(content.clone()) {
-                    let blocked = t
-                        .album
-                        .as_ref()
-                        .is_some_and(|a| album_bl.contains(&a.id))
+                    let blocked = t.album.as_ref().is_some_and(|a| album_bl.contains(&a.id))
                         || t.performer
                             .as_ref()
                             .map_or(false, |p| blacklist.contains(&p.id));
@@ -124,7 +119,11 @@ fn pick_most_popular(
 ///
 /// Fail-open: an empty filter never blocks; an album with no matching id is
 /// kept.
-pub fn album_blacklisted(album: &Album, bl: &BlacklistFilter, album_bl: &AlbumBlacklistFilter) -> bool {
+pub fn album_blacklisted(
+    album: &Album,
+    bl: &BlacklistFilter,
+    album_bl: &AlbumBlacklistFilter,
+) -> bool {
     if bl.is_empty() && album_bl.is_empty() {
         return false;
     }
@@ -154,7 +153,11 @@ pub fn album_blacklisted(album: &Album, bl: &BlacklistFilter, album_bl: &AlbumBl
 /// performer id* — only `performer`, `composer`, and a free-text `performers`
 /// string. We deliberately do NOT name-match the free-text string; this rule
 /// is strictly id-based.
-pub fn track_blacklisted(track: &Track, bl: &BlacklistFilter, album_bl: &AlbumBlacklistFilter) -> bool {
+pub fn track_blacklisted(
+    track: &Track,
+    bl: &BlacklistFilter,
+    album_bl: &AlbumBlacklistFilter,
+) -> bool {
     if bl.is_empty() && album_bl.is_empty() {
         return false;
     }
@@ -166,14 +169,8 @@ pub fn track_blacklisted(track: &Track, bl: &BlacklistFilter, album_bl: &AlbumBl
     {
         return true;
     }
-    track
-        .performer
-        .as_ref()
-        .is_some_and(|a| bl.contains(&a.id))
-        || track
-            .composer
-            .as_ref()
-            .is_some_and(|a| bl.contains(&a.id))
+    track.performer.as_ref().is_some_and(|a| bl.contains(&a.id))
+        || track.composer.as_ref().is_some_and(|a| bl.contains(&a.id))
 }
 
 /// D-FEAT: returns true if a discover-shaped album should be hidden.
@@ -215,7 +212,9 @@ pub(crate) fn parse_search_all(
         .saturating_sub((before - artists.items.len()) as u32);
 
     let before = albums.items.len();
-    albums.items.retain(|al| !album_blacklisted(al, blacklist, album_bl));
+    albums
+        .items
+        .retain(|al| !album_blacklisted(al, blacklist, album_bl));
     albums.total = albums
         .total
         .saturating_sub((before - albums.items.len()) as u32);
@@ -746,7 +745,9 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
         }
         let guard = self.client.read().await;
         let client = guard.as_ref()?;
-        self.player.fetch_for_gapless(client, track_id, quality).await
+        self.player
+            .fetch_for_gapless(client, track_id, quality)
+            .await
     }
 
     /// Resolve a fully-materialized audio asset (bytes + MIME + quality) for an
@@ -847,7 +848,10 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
     /// return true (the auto-advance driver then halts instead of advancing).
     /// Only the natural end-of-track path may call this — never a manual skip.
     pub async fn consume_stop_after_if(&self, finished_track_id: u64) -> bool {
-        self.queue.write().await.consume_stop_after_if(finished_track_id)
+        self.queue
+            .write()
+            .await
+            .consume_stop_after_if(finished_track_id)
     }
 
     /// Reconcile the queue pointer to the track the audio engine is actually
@@ -1001,7 +1005,10 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
         let client = self.client.read().await;
         let client = client.as_ref().ok_or(CoreError::NotInitialized)?;
 
-        client.get_lyrics(track_id, None).await.map_err(CoreError::Api)
+        client
+            .get_lyrics(track_id, None)
+            .await
+            .map_err(CoreError::Api)
     }
 
     /// Get artist by ID
@@ -1594,10 +1601,7 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
     /// The radio DB uses a `!Send` rusqlite connection, so the pool
     /// build + pull run on blocking threads (mirroring the Tauri
     /// command); the async builder is driven there via `block_on`.
-    pub async fn create_smart_artist_radio(
-        &self,
-        artist_id: u64,
-    ) -> Result<Vec<Track>, CoreError> {
+    pub async fn create_smart_artist_radio(&self, artist_id: u64) -> Result<Vec<Track>, CoreError> {
         let client = {
             let guard = self.client.read().await;
             guard.as_ref().ok_or(CoreError::NotInitialized)?.clone()
@@ -1755,11 +1759,11 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
             .await
             .map_err(CoreError::Api)?;
 
-        artist
-            .albums
-            .ok_or_else(|| CoreError::Api(qbz_qobuz::ApiError::ApiResponse(
+        artist.albums.ok_or_else(|| {
+            CoreError::Api(qbz_qobuz::ApiError::ApiResponse(
                 "No albums in artist response".to_string(),
-            )))
+            ))
+        })
     }
 
     /// Get artist detail with albums, playlists and appears-on tracks.
@@ -2295,9 +2299,8 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
         known_artists: &(dyn Fn() -> (
             std::collections::HashSet<u64>,
             std::collections::HashSet<String>,
-        )
-                       + Send
-                       + Sync),
+        ) + Send
+              + Sync),
     ) -> Result<DiscoveryResponse, CoreError> {
         use std::collections::HashSet;
 
@@ -2335,8 +2338,10 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
         }
 
         let seed_norm = normalize_artist_name(seed_name);
-        let similar_norm: HashSet<String> =
-            similar_names.iter().map(|n| normalize_artist_name(n)).collect();
+        let similar_norm: HashSet<String> = similar_names
+            .iter()
+            .map(|n| normalize_artist_name(n))
+            .collect();
         let dismissed_primary = dismissed_per_tag(&primary_tag.to_lowercase());
         let (known_ids, known_names) = known_artists();
 
@@ -2365,8 +2370,7 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
         if results.len() < min_results && seed_tags.len() > 1 {
             let secondary_tag = seed_tags[1].clone();
             let dismissed_secondary = dismissed_per_tag(&secondary_tag.to_lowercase());
-            let existing_mbids: HashSet<String> =
-                results.iter().map(|r| r.mbid.clone()).collect();
+            let existing_mbids: HashSet<String> = results.iter().map(|r| r.mbid.clone()).collect();
             if let Ok(secondary) = self
                 .musicbrainz
                 .search_artists_by_tag(&secondary_tag, 30)
@@ -2390,11 +2394,7 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
                 shuffle_with_seed(&mut secondary_candidates, seed_mbid, Some(&secondary_tag));
                 let remaining = max_results.saturating_sub(results.len());
                 let mut more = self
-                    .validate_discovery_on_qobuz(
-                        &secondary_candidates,
-                        remaining,
-                        &known_ids,
-                    )
+                    .validate_discovery_on_qobuz(&secondary_candidates, remaining, &known_ids)
                     .await;
                 results.append(&mut more);
             }
@@ -2534,8 +2534,7 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
 
         // Step 2/3: MB tag+area search per genre, dedupe + score.
         // candidate_map: mbid -> (name, score_sum, genre_hits, tags)
-        let mut candidate_map: HashMap<String, (String, i32, usize, Vec<String>)> =
-            HashMap::new();
+        let mut candidate_map: HashMap<String, (String, i32, usize, Vec<String>)> = HashMap::new();
         let per_genre_limit = 200usize;
         for genre in &search_genres {
             let result = self
@@ -2601,7 +2600,12 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
                         .collect::<Vec<_>>(),
                 );
                 let multi_genre_bonus = ((genre_hits as i32) - 1) * 15;
-                (mbid, name, candidate_seeds.genres, score + multi_genre_bonus)
+                (
+                    mbid,
+                    name,
+                    candidate_seeds.genres,
+                    score + multi_genre_bonus,
+                )
             })
             .collect();
         scored.sort_by(|a, b| b.3.cmp(&a.3).then_with(|| a.0.cmp(&b.0)));
@@ -3095,8 +3099,16 @@ mod tests {
         let blocked_album = album_with_id("bad", 1);
         let good_album = album_with_id("good", 1);
         let abl: AlbumBlacklistFilter = ["bad".to_string()].into_iter().collect();
-        assert!(album_blacklisted(&blocked_album, &BlacklistFilter::new(), &abl));
-        assert!(!album_blacklisted(&good_album, &BlacklistFilter::new(), &abl));
+        assert!(album_blacklisted(
+            &blocked_album,
+            &BlacklistFilter::new(),
+            &abl
+        ));
+        assert!(!album_blacklisted(
+            &good_album,
+            &BlacklistFilter::new(),
+            &abl
+        ));
     }
 
     #[test]
@@ -3138,9 +3150,17 @@ mod tests {
             awards: None,
         };
         let abl: AlbumBlacklistFilter = ["blk".to_string()].into_iter().collect();
-        assert!(discover_album_blacklisted(&album, &BlacklistFilter::new(), &abl));
+        assert!(discover_album_blacklisted(
+            &album,
+            &BlacklistFilter::new(),
+            &abl
+        ));
         album.id = "other".to_string();
-        assert!(!discover_album_blacklisted(&album, &BlacklistFilter::new(), &abl));
+        assert!(!discover_album_blacklisted(
+            &album,
+            &BlacklistFilter::new(),
+            &abl
+        ));
     }
 
     #[test]

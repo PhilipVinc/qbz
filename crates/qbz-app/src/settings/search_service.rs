@@ -198,11 +198,21 @@ mod tests {
         svc.store("Pink Floyd", &sample_results());
         let got = svc.cached("Pink Floyd").expect("cached entry");
         assert_eq!(
-            got.albums.items.iter().map(|a| a.id.clone()).collect::<Vec<_>>(),
+            got.albums
+                .items
+                .iter()
+                .map(|a| a.id.clone())
+                .collect::<Vec<_>>(),
             vec!["1"]
         );
-        assert_eq!(got.tracks.items.iter().map(|t| t.id).collect::<Vec<_>>(), vec![10]);
-        assert_eq!(got.artists.items.iter().map(|a| a.id).collect::<Vec<_>>(), vec![100]);
+        assert_eq!(
+            got.tracks.items.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![10]
+        );
+        assert_eq!(
+            got.artists.items.iter().map(|a| a.id).collect::<Vec<_>>(),
+            vec![100]
+        );
 
         // record -> top_for_query returns it.
         svc.record_interaction("Pink Floyd", "artist", "100", InteractionAction::Favorite);

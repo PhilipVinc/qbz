@@ -90,7 +90,10 @@ pub async fn login_listenbrainz(host: Option<String>, token: String, roots: &Pro
         return 1;
     }
     nudge_reload(host).await;
-    println!("ListenBrainz connected as {} — scrobbling enabled", info.user_name);
+    println!(
+        "ListenBrainz connected as {} — scrobbling enabled",
+        info.user_name
+    );
     0
 }
 
@@ -113,14 +116,23 @@ pub fn status(roots: &ProfileRoots) -> i32 {
     );
     println!(
         "listenbrainz  : {}",
-        provider_line(s.listenbrainz_is_authed(), s.listenbrainz_active(), &s.listenbrainz_username)
+        provider_line(
+            s.listenbrainz_is_authed(),
+            s.listenbrainz_active(),
+            &s.listenbrainz_username
+        )
     );
     0
 }
 
 /// `qbzd scrobble enable|disable <lastfm|listenbrainz>` — keep the credentials
 /// but start/stop scrobbling to that provider.
-pub async fn set_enabled(host: Option<String>, provider: String, enabled: bool, roots: &ProfileRoots) -> i32 {
+pub async fn set_enabled(
+    host: Option<String>,
+    provider: String,
+    enabled: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let store = match open_store(roots) {
         Ok(s) => s,
         Err(code) => return code,
@@ -152,7 +164,10 @@ pub async fn set_enabled(host: Option<String>, provider: String, enabled: bool, 
         let _ = store.set_enabled(true);
     }
     nudge_reload(host).await;
-    println!("{provider} scrobbling {}", if enabled { "enabled" } else { "disabled" });
+    println!(
+        "{provider} scrobbling {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
     0
 }
 
@@ -185,5 +200,7 @@ fn provider_line(authed: bool, active: bool, name: &str) -> String {
 async fn nudge_reload(host: Option<String>) {
     let roots = crate::paths::ProfileRoots::resolve(None, None);
     let client = ApiClient::new(host, &roots);
-    let _ = client.post("/api/settings/reload", serde_json::Value::Null).await;
+    let _ = client
+        .post("/api/settings/reload", serde_json::Value::Null)
+        .await;
 }

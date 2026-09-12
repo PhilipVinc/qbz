@@ -34,7 +34,11 @@ const FALLBACK_RATES: [u32; 6] = [44100, 48000, 88200, 96000, 176400, 192000];
 /// clean per-node format capability here, so we report the common set honestly
 /// as nominal (matches the prior Tauri behavior; do not present it as measured).
 fn nominal_formats() -> Vec<String> {
-    vec!["S16LE".to_string(), "S24LE".to_string(), "F32LE".to_string()]
+    vec![
+        "S16LE".to_string(),
+        "S24LE".to_string(),
+        "F32LE".to_string(),
+    ]
 }
 
 /// Pure assembly (testable): combine detected rates + description into the DTO,
@@ -64,16 +68,15 @@ fn assemble(
 /// Read-only — reads `/proc/asound` and runs `pw-dump`; never opens a stream.
 pub fn query_dac_capabilities(node_name: &str) -> DacCapabilities {
     // Pretty description from robust (pw-dump-backed, Slice 0) enumeration.
-    let description = crate::backend::BackendManager::create_backend(
-        crate::backend::AudioBackendType::PipeWire,
-    )
-    .ok()
-    .and_then(|b| b.enumerate_devices().ok())
-    .and_then(|devs| {
-        devs.into_iter()
-            .find(|d| d.id == node_name || d.name == node_name)
-    })
-    .map(|d| d.description.unwrap_or(d.name));
+    let description =
+        crate::backend::BackendManager::create_backend(crate::backend::AudioBackendType::PipeWire)
+            .ok()
+            .and_then(|b| b.enumerate_devices().ok())
+            .and_then(|devs| {
+                devs.into_iter()
+                    .find(|d| d.id == node_name || d.name == node_name)
+            })
+            .map(|d| d.description.unwrap_or(d.name));
 
     // Real sample rates: PipeWire sink -> ALSA card -> /proc/asound, with an
     // ALSA-direct fallback. Hardware-only; non-Linux gets the fallback set.
@@ -92,7 +95,11 @@ mod tests {
 
     #[test]
     fn uses_detected_rates_when_present() {
-        let caps = assemble("alsa_output.usb-x", Some(vec![44100, 96000, 192000]), Some("My DAC".into()));
+        let caps = assemble(
+            "alsa_output.usb-x",
+            Some(vec![44100, 96000, 192000]),
+            Some("My DAC".into()),
+        );
         assert_eq!(caps.sample_rates, vec![44100, 96000, 192000]);
         assert_eq!(caps.description.as_deref(), Some("My DAC"));
         assert_eq!(caps.channels, Some(2));

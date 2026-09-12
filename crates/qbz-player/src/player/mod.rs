@@ -110,14 +110,23 @@ enum AudioCommand {
     /// Play a local DSD file via DoP (DSD over PCM) on ALSA direct (DSD plan
     /// Phase 2). The audio thread opens the demuxer + an S32 stream at the
     /// DoP carrier rate and feeds pre-packed words through the DoP engine.
-    PlayDsdDop { path: std::path::PathBuf, track_id: u64 },
+    PlayDsdDop {
+        path: std::path::PathBuf,
+        track_id: u64,
+    },
     /// Play a local DSD file NATIVELY (ALSA DSD_U32, DSD plan Phase 3) —
     /// requires the kernel to grant the device a DSD format (quirk table).
-    PlayDsdNative { path: std::path::PathBuf, track_id: u64 },
+    PlayDsdNative {
+        path: std::path::PathBuf,
+        track_id: u64,
+    },
     /// Queue the next DSD track on the ACTIVE DoP engine (gapless DSD).
     /// Ignored (with gapless_ready reset) when the engine isn't DoP or the
     /// carrier rate differs — the normal track-end advance then handles it.
-    PlayNextDsdDop { path: std::path::PathBuf, track_id: u64 },
+    PlayNextDsdDop {
+        path: std::path::PathBuf,
+        track_id: u64,
+    },
 }
 
 /// Where a gapless-queued track's audio lives between the prefetch and the
@@ -542,8 +551,7 @@ fn decode_file_with_fallback(
     let file = std::fs::File::open(path)
         .map_err(|e| format!("open cached track {}: {e}", path.display()))?;
 
-    let attempt =
-        panic::catch_unwind(AssertUnwindSafe(|| Decoder::new(BufReader::new(file))));
+    let attempt = panic::catch_unwind(AssertUnwindSafe(|| Decoder::new(BufReader::new(file))));
 
     match attempt {
         Ok(Ok(decoder)) => Ok(Box::new(decoder)),
@@ -560,7 +568,9 @@ fn read_tag_head(path: &std::path::Path) -> Option<TrackBytes> {
 
     let mut file = std::fs::File::open(path).ok()?;
     let mut head = Vec::with_capacity(TAG_HEAD_BYTES.min(1024 * 64));
-    file.take(TAG_HEAD_BYTES as u64).read_to_end(&mut head).ok()?;
+    file.take(TAG_HEAD_BYTES as u64)
+        .read_to_end(&mut head)
+        .ok()?;
     Some(TrackBytes::from(head.as_slice()))
 }
 
@@ -1544,7 +1554,9 @@ impl SharedState {
         let duration_ms = self.duration.load(Ordering::SeqCst).saturating_mul(1000);
 
         // Clamp to duration (same rule as current_position)
-        position_at_start_ms.saturating_add(elapsed_ms).min(duration_ms)
+        position_at_start_ms
+            .saturating_add(elapsed_ms)
+            .min(duration_ms)
     }
 
     /// Mark playback as started/resumed at current position
@@ -2021,10 +2033,7 @@ impl Player {
 
                                         match found {
                                             Some(d) if is_device_valid(&d) => {
-                                                log::info!(
-                                                    "Found and validated device: {}",
-                                                    name
-                                                );
+                                                log::info!("Found and validated device: {}", name);
                                                 Some(d)
                                             }
                                             Some(_) => {
@@ -2045,9 +2054,7 @@ impl Player {
                                     };
 
                                     let Some(device) = device else {
-                                        return Err(
-                                            "No audio output device available".to_string()
-                                        );
+                                        return Err("No audio output device available".to_string());
                                     };
 
                                     // Set current device name
@@ -2256,7 +2263,9 @@ impl Player {
 
                             // Create PlaybackEngine from StreamType
                             let mut engine = match stream {
-                                StreamType::Rodio { sink: mixer_sink, .. } => {
+                                StreamType::Rodio {
+                                    sink: mixer_sink, ..
+                                } => {
                                     match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
                                         Ok(e) => {
                                             *consecutive_sink_failures = 0;
@@ -2367,9 +2376,8 @@ impl Player {
                                     // pull 116 MB off the card to find it.
                                     let rg_gain = match &audio {
                                         TrackAudio::Memory(data) => extract_replaygain(data),
-                                        TrackAudio::File(path) => {
-                                            read_head(path, HEAD_BYTES).and_then(|head| extract_replaygain(&head))
-                                        }
+                                        TrackAudio::File(path) => read_head(path, HEAD_BYTES)
+                                            .and_then(|head| extract_replaygain(&head)),
                                     }
                                     .map(|rg| calculate_gain_factor(&rg, target_lufs));
 
@@ -2704,32 +2712,27 @@ impl Player {
 
                             // Create PlaybackEngine
                             let mut engine = match stream {
-                                StreamType::Rodio { sink: mixer_sink, .. } => {
-                                    match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
-                                        Ok(e) => {
-                                            *consecutive_sink_failures = 0;
-                                            thread_state.set_stream_error(false);
-                                            e
-                                        }
-                                        Err(e) => {
-                                            log::error!(
-                                                "Failed to create engine for streaming: {}",
-                                                e
-                                            );
-                                            *current_streaming_source = None;
-                                            *current_audio_data = None;
-                                            *current_audio_file = None;
-                                            thread_state.set_loaded_audio(false);
-                                            thread_state
-                                                .is_playing
-                                                .store(false, Ordering::SeqCst);
-                                            thread_state.record_stream_error(
-                                                "Failed to create the playback engine for streaming",
-                                            );
-                                            return;
-                                        }
+                                StreamType::Rodio {
+                                    sink: mixer_sink, ..
+                                } => match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
+                                    Ok(e) => {
+                                        *consecutive_sink_failures = 0;
+                                        thread_state.set_stream_error(false);
+                                        e
                                     }
-                                }
+                                    Err(e) => {
+                                        log::error!("Failed to create engine for streaming: {}", e);
+                                        *current_streaming_source = None;
+                                        *current_audio_data = None;
+                                        *current_audio_file = None;
+                                        thread_state.set_loaded_audio(false);
+                                        thread_state.is_playing.store(false, Ordering::SeqCst);
+                                        thread_state.record_stream_error(
+                                            "Failed to create the playback engine for streaming",
+                                        );
+                                        return;
+                                    }
+                                },
                                 #[cfg(target_os = "linux")]
                                 StreamType::AlsaDirect(alsa_stream) => {
                                     let hardware_volume = thread_settings
@@ -2776,13 +2779,12 @@ impl Player {
                             let ranged_resume =
                                 start_position_secs > 0 && source.supports_range_requests();
 
-                            let bytes_per_sec_estimate: u64 = if duration_secs > 0
-                                && content_length > 0
-                            {
-                                content_length / duration_secs
-                            } else {
-                                200_000
-                            };
+                            let bytes_per_sec_estimate: u64 =
+                                if duration_secs > 0 && content_length > 0 {
+                                    content_length / duration_secs
+                                } else {
+                                    200_000
+                                };
                             let resume_buffer_target: u64 =
                                 if start_position_secs > 0 && !ranged_resume {
                                     bytes_per_sec_estimate
@@ -3133,8 +3135,7 @@ impl Player {
                                 };
                                 let carrier = dop.carrier_rate();
                                 let dsd_rate = dop.dsd_rate();
-                                let duration =
-                                    dop.total_frames() / (carrier.max(1) as u64);
+                                let duration = dop.total_frames() / (carrier.max(1) as u64);
 
                                 // DoP always needs a fresh S32 stream at the
                                 // carrier rate — tear down whatever is open.
@@ -3359,9 +3360,7 @@ impl Player {
                                                         st,
                                                         thread_state.clone(),
                                                     ))
-                                                        as Box<
-                                                            dyn Iterator<Item = i32> + Send,
-                                                        >,
+                                                        as Box<dyn Iterator<Item = i32> + Send>,
                                                     rate,
                                                     frames,
                                                 )
@@ -3376,9 +3375,7 @@ impl Player {
                                                         st,
                                                         thread_state.clone(),
                                                     ))
-                                                        as Box<
-                                                            dyn Iterator<Item = i32> + Send,
-                                                        >,
+                                                        as Box<dyn Iterator<Item = i32> + Send>,
                                                     rate,
                                                     frames,
                                                 )
@@ -3554,18 +3551,18 @@ impl Player {
                                 };
 
                                 let mut engine = match stream {
-                                    StreamType::Rodio { sink: mixer_sink, .. } => {
-                                        match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
-                                            Ok(e) => e,
-                                            Err(e) => {
-                                                log::error!(
-                                                    "Failed to create engine for resume: {}",
-                                                    e
-                                                );
-                                                return;
-                                            }
+                                    StreamType::Rodio {
+                                        sink: mixer_sink, ..
+                                    } => match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
+                                        Ok(e) => e,
+                                        Err(e) => {
+                                            log::error!(
+                                                "Failed to create engine for resume: {}",
+                                                e
+                                            );
+                                            return;
                                         }
-                                    }
+                                    },
                                     #[cfg(target_os = "linux")]
                                     StreamType::AlsaDirect(alsa_stream) => {
                                         let hardware_volume = thread_settings
@@ -3953,18 +3950,18 @@ impl Player {
                             };
 
                             let mut engine = match stream {
-                                StreamType::Rodio { sink: mixer_sink, .. } => {
-                                    match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
-                                        Ok(e) => e,
-                                        Err(e) => {
-                                            seek_abort(
-                                                &thread_state,
-                                                &format!("rodio engine create failed: {e}"),
-                                            );
-                                            return;
-                                        }
+                                StreamType::Rodio {
+                                    sink: mixer_sink, ..
+                                } => match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
+                                    Ok(e) => e,
+                                    Err(e) => {
+                                        seek_abort(
+                                            &thread_state,
+                                            &format!("rodio engine create failed: {e}"),
+                                        );
+                                        return;
                                     }
-                                }
+                                },
                                 #[cfg(target_os = "linux")]
                                 StreamType::AlsaDirect(alsa_stream) => {
                                     let hardware_volume = thread_settings
@@ -4038,9 +4035,9 @@ impl Player {
                                 // Symphonia bisects the file instead.
                                 let native = match InMemorySource::from_file(path) {
                                     Ok(mut s) => match s.seek_to(skip_duration) {
-                                        Ok(()) => Some(
-                                            Box::new(s) as Box<dyn Source<Item = f32> + Send>
-                                        ),
+                                        Ok(()) => {
+                                            Some(Box::new(s) as Box<dyn Source<Item = f32> + Send>)
+                                        }
                                         Err(e) => {
                                             log::warn!(
                                                 "Native seek on cached file failed ({e}); falling back to a decoding seek"
@@ -4077,7 +4074,9 @@ impl Player {
                                         Err(e) => {
                                             seek_abort(
                                                 &thread_state,
-                                                &format!("open of cached file for seek failed: {e}"),
+                                                &format!(
+                                                    "open of cached file for seek failed: {e}"
+                                                ),
                                             );
                                             return;
                                         }
@@ -4100,9 +4099,7 @@ impl Player {
                                                 Err(e) => {
                                                     seek_abort(
                                                         &thread_state,
-                                                        &format!(
-                                                            "decode for seek failed: {e}"
-                                                        ),
+                                                        &format!("decode for seek failed: {e}"),
                                                     );
                                                     return;
                                                 }
@@ -4119,9 +4116,7 @@ impl Player {
                                             Err(e) => {
                                                 seek_abort(
                                                     &thread_state,
-                                                    &format!(
-                                                        "decode for seek failed: {e}"
-                                                    ),
+                                                    &format!("decode for seek failed: {e}"),
                                                 );
                                                 return;
                                             }
@@ -4250,7 +4245,8 @@ impl Player {
                             #[cfg(target_os = "linux")]
                             {
                                 qbz_audio::alsa_backend::resume_suspended_sink();
-                                qbz_audio::pipewire_backend::PipeWireBackend::reset_pipewire_clock();
+                                qbz_audio::pipewire_backend::PipeWireBackend::reset_pipewire_clock(
+                                );
                             }
                             thread_state.pause_playback_timer();
                             thread_state.is_playing.store(false, Ordering::SeqCst);
@@ -4406,9 +4402,7 @@ impl Player {
                                 thread_state.set_gapless_ready(false);
                                 return;
                             }
-                            if engine_was_empty
-                                && !thread_state.is_playing.load(Ordering::SeqCst)
-                            {
+                            if engine_was_empty && !thread_state.is_playing.load(Ordering::SeqCst) {
                                 log::info!(
                                     "Gapless: PlayNext landed after track finished — resuming playback-state tracking"
                                 );
@@ -4755,10 +4749,8 @@ impl Player {
                         // DoP streams are NEVER suspended on pause: the writer
                         // keeps the DAC locked in DSD mode with 0x69 silence,
                         // and there is no current_audio_data to resume from.
-                        let dop_active = current_engine
-                            .as_ref()
-                            .map(|e| e.is_dop())
-                            .unwrap_or(false);
+                        let dop_active =
+                            current_engine.as_ref().map(|e| e.is_dop()).unwrap_or(false);
                         if stream_opt.is_some() && !dop_active {
                             let now = Instant::now();
                             if now >= deadline {
@@ -4772,7 +4764,8 @@ impl Player {
                                 // previous pw_force_bitperfect gate leaked a forced rate
                                 // for plain (no-passthrough) PipeWire users (#263).
                                 #[cfg(target_os = "linux")]
-                                qbz_audio::pipewire_backend::PipeWireBackend::reset_pipewire_clock();
+                                qbz_audio::pipewire_backend::PipeWireBackend::reset_pipewire_clock(
+                                );
                                 // The exclusive device is now released (stream dropped
                                 // above), so resume any PipeWire sink we suspended for
                                 // exclusive access — self-gating no-op otherwise (#263).
@@ -5107,9 +5100,7 @@ impl Player {
         match qbz_qobuz::cmaf::setup_streaming(client, track_id, quality).await {
             Ok(cmaf_info) => {
                 if !self.is_current_play(gen) {
-                    log::info!(
-                        "Player: CMAF setup for track {track_id} superseded (gen {gen})"
-                    );
+                    log::info!("Player: CMAF setup for track {track_id} superseded (gen {gen})");
                     return Ok(());
                 }
                 // Derive stream parameters from init segment metadata.
@@ -5143,8 +5134,7 @@ impl Player {
                 // assume ~10 MB/s if init was too fast to measure reliably).
                 let speed_mbps = if cmaf_info.init_fetch_ms > 0 {
                     let init_bytes = cmaf_info.flac_header.len() as f64 + 4096.0; // rough init size
-                    (init_bytes / (cmaf_info.init_fetch_ms as f64 / 1000.0))
-                        / (1024.0 * 1024.0)
+                    (init_bytes / (cmaf_info.init_fetch_ms as f64 / 1000.0)) / (1024.0 * 1024.0)
                 } else {
                     10.0
                 };
@@ -5195,15 +5185,8 @@ impl Player {
                     )
                     .await
                     {
-                        Ok(()) => log::info!(
-                            "[CMAF-STREAM COMPLETE] Track {}",
-                            track_id
-                        ),
-                        Err(e) => log::error!(
-                            "[CMAF-STREAM ERROR] Track {}: {}",
-                            track_id,
-                            e
-                        ),
+                        Ok(()) => log::info!("[CMAF-STREAM COMPLETE] Track {}", track_id),
+                        Err(e) => log::error!("[CMAF-STREAM ERROR] Track {}: {}", track_id, e),
                     }
                 });
 
@@ -5342,9 +5325,7 @@ impl Player {
         let result = match qbz_qobuz::cmaf::download_full(client, track_id, quality).await {
             Ok(data) => Ok(data),
             Err(e) => {
-                log::warn!(
-                    "[PREFETCH] CMAF failed for track {track_id}: {e}, trying legacy"
-                );
+                log::warn!("[PREFETCH] CMAF failed for track {track_id}: {e}, trying legacy");
                 match client.get_stream_url_with_fallback(track_id, quality).await {
                     Ok(stream_url) => self.download_audio(&stream_url.url).await,
                     Err(e) => Err(format!("Failed to get stream URL: {e}")),
@@ -5426,11 +5407,7 @@ impl Player {
     ///
     /// Returns `None` when there is no L2 cache configured, or the write did not
     /// produce a readable file; the caller then keeps the in-memory path.
-    pub fn stage_track_on_disk(
-        &self,
-        track_id: u64,
-        bytes: &[u8],
-    ) -> Option<std::path::PathBuf> {
+    pub fn stage_track_on_disk(&self, track_id: u64, bytes: &[u8]) -> Option<std::path::PathBuf> {
         let cache = self.audio_cache.get_playback_cache()?;
         if let Some(existing) = cache.path_if_present(track_id) {
             return Some(existing);
@@ -5444,9 +5421,7 @@ impl Player {
                 bytes.len(),
                 p.display()
             ),
-            None => log::warn!(
-                "Could not stage track {track_id} on disk; keeping it in memory"
-            ),
+            None => log::warn!("Could not stage track {track_id} on disk; keeping it in memory"),
         }
         path
     }
@@ -6094,15 +6069,12 @@ impl Player {
                         return self
                             .tx
                             .send(AudioCommand::PlayDsdNative { path, track_id })
-                            .map_err(|e| {
-                                format!("Failed to send native DSD play command: {}", e)
-                            });
+                            .map_err(|e| format!("Failed to send native DSD play command: {}", e));
                     }
                     let carrier = qbz_dsd::dop_carrier_rate(info.dsd_rate);
-                    let rate_ok =
-                        qbz_audio::alsa_backend::get_device_supported_rates(&device)
-                            .map(|r| r.contains(&carrier))
-                            .unwrap_or(true);
+                    let rate_ok = qbz_audio::alsa_backend::get_device_supported_rates(&device)
+                        .map(|r| r.contains(&carrier))
+                        .unwrap_or(true);
                     if rate_ok {
                         log::info!(
                             "Player: DSD track {} — {} via DoP ({} Hz carrier)",
@@ -6394,9 +6366,7 @@ impl Player {
         let bps = content_length / duration_secs.max(1);
         let floor = (user_secs as u64).saturating_mul(bps) as usize;
         let ladder_bytes = config.initial_buffer_bytes;
-        config.initial_buffer_bytes = ladder_bytes
-            .max(floor)
-            .clamp(256 * 1024, 8 * 1024 * 1024);
+        config.initial_buffer_bytes = ladder_bytes.max(floor).clamp(256 * 1024, 8 * 1024 * 1024);
         if config.initial_buffer_bytes != ladder_bytes {
             log::info!(
                 "Dynamic buffer: user floor {}s x {} B/s → {}KB initial buffer (ladder gave {}KB)",
@@ -6411,9 +6381,7 @@ impl Player {
             StreamSeekMode::RangeRequests => {
                 BufferedMediaSource::new_seekable(config, Some(content_length))
             }
-            StreamSeekMode::Sequential => {
-                BufferedMediaSource::new(config, Some(content_length))
-            }
+            StreamSeekMode::Sequential => BufferedMediaSource::new(config, Some(content_length)),
         };
         let source = Arc::new(source);
 
@@ -6938,10 +6906,16 @@ mod spill_rule_tests {
     /// one does not.
     #[test]
     fn the_rule_is_whether_two_of_them_fit() {
-        assert!(!spill_to_disk(22_400_000, PI_1GB), "22 MB CD track stays in RAM");
+        assert!(
+            !spill_to_disk(22_400_000, PI_1GB),
+            "22 MB CD track stays in RAM"
+        );
         assert!(!spill_to_disk(68_348_026, PI_1GB), "68 MB fits twice, just");
         assert!(spill_to_disk(100_589_129, PI_1GB), "100 MB does not");
-        assert!(spill_to_disk(204_683_730, PI_1GB), "a 195 MB Hi-Res movement does not");
+        assert!(
+            spill_to_disk(204_683_730, PI_1GB),
+            "a 195 MB Hi-Res movement does not"
+        );
     }
 
     /// The same tracks on a roomier board: the ones that had to spill no longer
@@ -6950,14 +6924,20 @@ mod spill_rule_tests {
     #[test]
     fn a_bigger_budget_keeps_more_in_memory() {
         assert!(!spill_to_disk(100_589_129, PI_4GB));
-        assert!(!spill_to_disk(204_683_730, PI_4GB), "195 MB fits twice in 512 MB");
+        assert!(
+            !spill_to_disk(204_683_730, PI_4GB),
+            "195 MB fits twice in 512 MB"
+        );
         assert!(spill_to_disk(300_000_000, PI_4GB), "but 286 MB does not");
     }
 
     /// Exactly at the line: two must FIT, so equal-to-budget stays in memory.
     #[test]
     fn the_boundary_is_inclusive() {
-        assert!(!spill_to_disk(50, 100), "two of these are exactly the budget");
+        assert!(
+            !spill_to_disk(50, 100),
+            "two of these are exactly the budget"
+        );
         assert!(spill_to_disk(51, 100), "one byte over and it spills");
     }
 
@@ -6970,7 +6950,7 @@ mod spill_rule_tests {
 
 #[cfg(test)]
 mod new_track_and_prefetch_tests {
-    use super::{begin_new_track, should_arm_prefetch, TrackAudio, GaplessPending, SharedState};
+    use super::{begin_new_track, should_arm_prefetch, GaplessPending, SharedState, TrackAudio};
     use qbz_cache::TrackBytes;
 
     fn a_pending(track_id: u64) -> GaplessPending {
@@ -7003,8 +6983,14 @@ mod new_track_and_prefetch_tests {
 
         begin_new_track(&state, &mut pending, &mut armed, &mut deadline);
 
-        assert!(pending.is_none(), "a successor from the previous track must not survive");
-        assert!(!armed, "a stale armed flag blocks the new track's prefetch forever");
+        assert!(
+            pending.is_none(),
+            "a successor from the previous track must not survive"
+        );
+        assert!(
+            !armed,
+            "a stale armed flag blocks the new track's prefetch forever"
+        );
         assert!(!state.is_gapless_ready());
         assert_eq!(state.get_gapless_next_track_id(), 0);
         assert!(deadline.is_none());
@@ -7030,7 +7016,9 @@ mod new_track_and_prefetch_tests {
     /// The happy path: buffered, nothing prepared, nothing outstanding.
     #[test]
     fn prefetch_arms_once_the_current_track_is_buffered() {
-        assert!(should_arm_prefetch(true, false, 300, false, false, false, 0, true));
+        assert!(should_arm_prefetch(
+            true, false, 300, false, false, false, 0, true
+        ));
     }
 
     /// Each gate refuses on its own. The `request_armed` line is the one that
@@ -7038,14 +7026,38 @@ mod new_track_and_prefetch_tests {
     #[test]
     fn every_gate_can_refuse_alone() {
         let cases: [(&str, bool); 8] = [
-            ("disabled", should_arm_prefetch(false, false, 300, false, false, false, 0, true)),
-            ("transition just fired", should_arm_prefetch(true, true, 300, false, false, false, 0, true)),
-            ("duration unknown", should_arm_prefetch(true, false, 0, false, false, false, 0, true)),
-            ("already prepared", should_arm_prefetch(true, false, 300, true, false, false, 0, true)),
-            ("request outstanding", should_arm_prefetch(true, false, 300, false, true, false, 0, true)),
-            ("driver already told", should_arm_prefetch(true, false, 300, false, false, true, 0, true)),
-            ("successor queued", should_arm_prefetch(true, false, 300, false, false, false, 7, true)),
-            ("still downloading", should_arm_prefetch(true, false, 300, false, false, false, 0, false)),
+            (
+                "disabled",
+                should_arm_prefetch(false, false, 300, false, false, false, 0, true),
+            ),
+            (
+                "transition just fired",
+                should_arm_prefetch(true, true, 300, false, false, false, 0, true),
+            ),
+            (
+                "duration unknown",
+                should_arm_prefetch(true, false, 0, false, false, false, 0, true),
+            ),
+            (
+                "already prepared",
+                should_arm_prefetch(true, false, 300, true, false, false, 0, true),
+            ),
+            (
+                "request outstanding",
+                should_arm_prefetch(true, false, 300, false, true, false, 0, true),
+            ),
+            (
+                "driver already told",
+                should_arm_prefetch(true, false, 300, false, false, true, 0, true),
+            ),
+            (
+                "successor queued",
+                should_arm_prefetch(true, false, 300, false, false, false, 7, true),
+            ),
+            (
+                "still downloading",
+                should_arm_prefetch(true, false, 300, false, false, false, 0, false),
+            ),
         ];
         for (why, armed) in cases {
             assert!(!armed, "should not arm: {why}");
@@ -7065,15 +7077,27 @@ mod new_track_and_prefetch_tests {
 
         // While the stale state stands, nothing can arm.
         assert!(!should_arm_prefetch(
-            true, false, 774, pending.is_some(), armed,
-            state.is_gapless_ready(), state.get_gapless_next_track_id(), true
+            true,
+            false,
+            774,
+            pending.is_some(),
+            armed,
+            state.is_gapless_ready(),
+            state.get_gapless_next_track_id(),
+            true
         ));
 
         begin_new_track(&state, &mut pending, &mut armed, &mut deadline);
 
         assert!(should_arm_prefetch(
-            true, false, 774, pending.is_some(), armed,
-            state.is_gapless_ready(), state.get_gapless_next_track_id(), true
+            true,
+            false,
+            774,
+            pending.is_some(),
+            armed,
+            state.is_gapless_ready(),
+            state.get_gapless_next_track_id(),
+            true
         ));
     }
 }

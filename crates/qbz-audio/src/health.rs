@@ -258,9 +258,15 @@ fn parse_distro(os_release: &str) -> Distro {
         // os-release values may be bare, double-quoted, or single-quoted
         // (Gentoo uses single quotes), so strip both quote styles.
         if let Some(v) = line.strip_prefix("ID=") {
-            id = v.trim().trim_matches(|c| c == '"' || c == '\'').to_lowercase();
+            id = v
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_lowercase();
         } else if let Some(v) = line.strip_prefix("ID_LIKE=") {
-            id_like = v.trim().trim_matches(|c| c == '"' || c == '\'').to_lowercase();
+            id_like = v
+                .trim()
+                .trim_matches(|c| c == '"' || c == '\'')
+                .to_lowercase();
         }
     }
     let hay = format!("{} {}", id, id_like);
@@ -315,7 +321,10 @@ mod tests {
     fn classifies_fedora_arch_suse_gentoo_void_other() {
         assert_eq!(parse_distro("ID=fedora\n"), Distro::Fedora);
         assert_eq!(parse_distro("ID=arch\n"), Distro::Arch);
-        assert_eq!(parse_distro("ID=opensuse-tumbleweed\nID_LIKE=\"suse opensuse\"\n"), Distro::OpenSuse);
+        assert_eq!(
+            parse_distro("ID=opensuse-tumbleweed\nID_LIKE=\"suse opensuse\"\n"),
+            Distro::OpenSuse
+        );
         assert_eq!(parse_distro("ID=gentoo\n"), Distro::Gentoo);
         // Gentoo's real os-release single-quotes the value.
         assert_eq!(parse_distro("ID='gentoo'\n"), Distro::Gentoo);

@@ -13,8 +13,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
-use super::theme;
 use super::strings;
+use super::theme;
 
 /// Focused-row emphasis: accent reversed (§1.2 — reverse is terminal-theme
 /// agnostic, so the selection reads even on monochrome/serial).
@@ -122,11 +122,7 @@ pub struct Field<'a> {
 /// still has room. Pure so each screen derives an identical column for its own
 /// label set.
 pub fn control_column(labels: &[&str], width: u16) -> u16 {
-    let max_label = labels
-        .iter()
-        .map(|l| l.chars().count())
-        .max()
-        .unwrap_or(0) as u16;
+    let max_label = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0) as u16;
     let ceiling = width.saturating_sub(12).max(14);
     (2 + max_label + 2).clamp(14, ceiling)
 }
@@ -162,7 +158,11 @@ pub fn field_block(field: &Field, ctrl_col: u16, width: u16) -> Vec<Line<'static
             Span::styled(widget_piece, sel),
         ])
     } else {
-        let label_style = if field.enabled { Style::default() } else { theme::dim() };
+        let label_style = if field.enabled {
+            Style::default()
+        } else {
+            theme::dim()
+        };
         let value_style = if !field.enabled {
             theme::dim()
         } else if field.widget == "[toggle]" {
@@ -269,7 +269,11 @@ pub struct Section {
 
 impl Section {
     pub fn new(title: impl Into<String>, active: bool, lines: Vec<Line<'static>>) -> Self {
-        Self { title: title.into(), active, lines }
+        Self {
+            title: title.into(),
+            active,
+            lines,
+        }
     }
 }
 
@@ -298,7 +302,10 @@ pub fn sections(f: &mut Frame, area: Rect, secs: &[Section]) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(border_style)
-            .title(Line::from(Span::styled(format!(" {} ", sec.title), title_style)));
+            .title(Line::from(Span::styled(
+                format!(" {} ", sec.title),
+                title_style,
+            )));
         let inner = block.inner(chunks[i]);
         f.render_widget(block, chunks[i]);
         f.render_widget(Paragraph::new(sec.lines.clone()), inner);
@@ -350,7 +357,11 @@ pub fn push_section(
     within: Option<(u16, u16)>,
 ) {
     if let Some((inner_line, height)) = within {
-        *anchor = Some(FocusAnchor { section: secs.len(), inner_line, height });
+        *anchor = Some(FocusAnchor {
+            section: secs.len(),
+            inner_line,
+            height,
+        });
     }
     secs.push(Section::new(title, active, lines));
 }
@@ -389,11 +400,21 @@ pub fn sections_scroll(f: &mut Frame, area: Rect, secs: &[Section], focus: Optio
     };
 
     // Render the stacked boxes into a full-height off-screen buffer.
-    let mut buf = Buffer::empty(Rect { x: 0, y: 0, width: area.width, height: total });
+    let mut buf = Buffer::empty(Rect {
+        x: 0,
+        y: 0,
+        width: area.width,
+        height: total,
+    });
     let mut y = 0u16;
     for sec in secs {
         let h = sec.lines.len() as u16 + 2;
-        let rect = Rect { x: 0, y, width: area.width, height: h };
+        let rect = Rect {
+            x: 0,
+            y,
+            width: area.width,
+            height: h,
+        };
         let (border_style, title_style) = if sec.active {
             (theme::accent(), theme::accent_bold())
         } else {
@@ -402,7 +423,10 @@ pub fn sections_scroll(f: &mut Frame, area: Rect, secs: &[Section], focus: Optio
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(border_style)
-            .title(Line::from(Span::styled(format!(" {} ", sec.title), title_style)));
+            .title(Line::from(Span::styled(
+                format!(" {} ", sec.title),
+                title_style,
+            )));
         let inner = block.inner(rect);
         Widget::render(block, rect, &mut buf);
         Widget::render(Paragraph::new(sec.lines.clone()), inner, &mut buf);
@@ -503,7 +527,12 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let h = height.min(area.height);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
-    Rect { x, y, width: w, height: h }
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
 }
 
 /// A centered, bordered modal with a title, wrapped body and a hint footer.
@@ -536,18 +565,27 @@ fn titled_block(title: &str) -> Block<'static> {
     Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(theme::accent())
-        .title(Line::from(Span::styled(format!(" {title} "), theme::accent_bold())))
+        .title(Line::from(Span::styled(
+            format!(" {title} "),
+            theme::accent_bold(),
+        )))
 }
 
 /// A centered scrollable panel (help overlay, import summary, result panel).
 pub fn panel(f: &mut Frame, area: Rect, title: &str, lines: Vec<Line<'static>>, scroll: u16) {
-    let rect = centered_rect(area.width.saturating_sub(6).max(40), area.height.saturating_sub(4).max(10), area);
+    let rect = centered_rect(
+        area.width.saturating_sub(6).max(40),
+        area.height.saturating_sub(4).max(10),
+        area,
+    );
     f.render_widget(Clear, rect);
     let block = titled_block(title);
     let inner = block.inner(rect);
     f.render_widget(block, rect);
     f.render_widget(
-        Paragraph::new(lines).scroll((scroll, 0)).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .scroll((scroll, 0))
+            .wrap(Wrap { trim: false }),
         inner,
     );
 }
@@ -575,10 +613,7 @@ pub fn busy_overlay(f: &mut Frame, area: Rect, label: &str, tick: u64) {
         Span::styled(format!("{} ", spinner_frame(tick)), theme::accent()),
         Span::raw(label.to_string()),
     ]);
-    f.render_widget(
-        Paragraph::new(line).alignment(Alignment::Center),
-        inner,
-    );
+    f.render_widget(Paragraph::new(line).alignment(Alignment::Center), inner);
 }
 
 // ============================ select popup ============================
@@ -738,7 +773,11 @@ impl SelectPopup {
             format!(
                 "{}   [{}]",
                 strings::HELP_FILTER,
-                if self.filter.is_empty() { "type to filter".into() } else { self.filter.clone() }
+                if self.filter.is_empty() {
+                    "type to filter".into()
+                } else {
+                    self.filter.clone()
+                }
             )
         } else {
             strings::HELP_SELECT.to_string()
@@ -756,7 +795,11 @@ impl SelectPopup {
             .max()
             .unwrap_or(20) as u16
             + 8;
-        let rect = centered_rect(width.min(area.width.saturating_sub(2)).max(24), height, area);
+        let rect = centered_rect(
+            width.min(area.width.saturating_sub(2)).max(24),
+            height,
+            area,
+        );
         f.render_widget(Clear, rect);
         let block = titled_block(&self.title);
         let inner = block.inner(rect);
@@ -790,7 +833,10 @@ pub enum InputOutcome {
 
 impl TextInput {
     pub fn new(initial: &str, masked: bool) -> Self {
-        Self { buf: initial.to_string(), masked }
+        Self {
+            buf: initial.to_string(),
+            masked,
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> InputOutcome {
@@ -826,9 +872,21 @@ mod tests {
 
     #[test]
     fn sidebar_width_doubles_only_at_and_above_100_cols() {
-        assert_eq!(sidebar_width(80), 14, "the 80x24 floor keeps the compact sidebar");
-        assert_eq!(sidebar_width(99), 14, "just below the boundary stays compact");
-        assert_eq!(sidebar_width(100), 28, "at 100 the sidebar at least doubles");
+        assert_eq!(
+            sidebar_width(80),
+            14,
+            "the 80x24 floor keeps the compact sidebar"
+        );
+        assert_eq!(
+            sidebar_width(99),
+            14,
+            "just below the boundary stays compact"
+        );
+        assert_eq!(
+            sidebar_width(100),
+            28,
+            "at 100 the sidebar at least doubles"
+        );
         assert_eq!(sidebar_width(120), 28);
         assert!(sidebar_is_wide(120) && !sidebar_is_wide(80));
         // The wide sidebar is at least double the compact one (owner's ask).
@@ -855,10 +913,16 @@ mod tests {
     fn wrap_breaks_on_word_boundaries_not_mid_word() {
         // "anyone on your network" at width 12 wraps between words.
         let out = wrap("anyone on your network can control playback", 12);
-        assert!(out.iter().all(|l| l.chars().count() <= 12), "no line exceeds width: {out:?}");
+        assert!(
+            out.iter().all(|l| l.chars().count() <= 12),
+            "no line exceeds width: {out:?}"
+        );
         // No word is split (every input word survives intact somewhere).
         for word in "anyone on your network can control playback".split(' ') {
-            assert!(out.iter().any(|l| l.split(' ').any(|w| w == word)), "word {word:?} intact");
+            assert!(
+                out.iter().any(|l| l.split(' ').any(|w| w == word)),
+                "word {word:?} intact"
+            );
         }
     }
 
@@ -868,7 +932,11 @@ mod tests {
         let out = wrap("supercalifragilistic", 8);
         assert!(out.len() >= 3);
         assert!(out.iter().all(|l| l.chars().count() <= 8));
-        assert_eq!(out.concat(), "supercalifragilistic", "no characters are lost");
+        assert_eq!(
+            out.concat(),
+            "supercalifragilistic",
+            "no characters are lost"
+        );
     }
 
     #[test]
@@ -887,7 +955,10 @@ mod tests {
         assert_eq!(control_column(&["Port"], 62), 14);
         // A pathological label is clamped so the control keeps room.
         let ceiling = 30u16.saturating_sub(12).max(14);
-        assert_eq!(control_column(&["a very very very long label here"], 30), ceiling);
+        assert_eq!(
+            control_column(&["a very very very long label here"], 30),
+            ceiling
+        );
     }
 
     // ---- follow_scroll: keep the focused block visible, minimally ----
@@ -919,11 +990,19 @@ mod tests {
         use ratatui::Terminal;
         // Four 4-line boxes = 4 * (4 + 2) = 24 rows into a 12-row area → overflow.
         let mk = |t: &str| {
-            Section::new(t, false, (0..4).map(|i| Line::from(format!("{t}-{i}"))).collect())
+            Section::new(
+                t,
+                false,
+                (0..4).map(|i| Line::from(format!("{t}-{i}"))).collect(),
+            )
         };
         let secs = vec![mk("A"), mk("B"), mk("C"), mk("D")];
         // Focus the LAST box's first line — it starts well below the fold.
-        let anchor = Some(FocusAnchor { section: 3, inner_line: 0, height: 1 });
+        let anchor = Some(FocusAnchor {
+            section: 3,
+            inner_line: 0,
+            height: 1,
+        });
         let mut term = Terminal::new(TestBackend::new(30, 12)).unwrap();
         term.draw(|f| sections_scroll(f, Rect::new(0, 0, 30, 12), &secs, anchor))
             .unwrap();
@@ -935,9 +1014,15 @@ mod tests {
             }
             out.push('\n');
         }
-        assert!(out.contains('▲'), "content hidden above → up indicator: \n{out}");
+        assert!(
+            out.contains('▲'),
+            "content hidden above → up indicator: \n{out}"
+        );
         assert!(out.contains('▼'), "content hidden below → down indicator");
-        assert!(out.contains("D-0"), "the focused block is scrolled into view");
+        assert!(
+            out.contains("D-0"),
+            "the focused block is scrolled into view"
+        );
         assert!(!out.contains("A-0"), "the top box scrolled out of view");
     }
 
@@ -964,8 +1049,15 @@ mod tests {
         assert_eq!(row.chars().count(), 62, "the row spans the full width");
         // Label indented by 2, value starts at the control column.
         assert!(row.starts_with("  Backend"));
-        assert_eq!(&row[21..29], "PipeWire", "value begins exactly at the control column");
-        assert!(row.trim_end().ends_with("[select]"), "widget marker right-aligned");
+        assert_eq!(
+            &row[21..29],
+            "PipeWire",
+            "value begins exactly at the control column"
+        );
+        assert!(
+            row.trim_end().ends_with("[select]"),
+            "widget marker right-aligned"
+        );
     }
 
     #[test]
@@ -982,7 +1074,10 @@ mod tests {
         let block = field_block(&f, 21, 40); // narrow → must truncate
         let row = cells(&block[0]);
         assert_eq!(row.chars().count(), 40);
-        assert!(row.contains('…'), "the overflowing value is truncated with an ellipsis");
+        assert!(
+            row.contains('…'),
+            "the overflowing value is truncated with an ellipsis"
+        );
     }
 
     #[test]
@@ -1001,7 +1096,10 @@ mod tests {
         // Every description row is indented and within the width.
         for row in &block[1..] {
             let t = cells(row);
-            assert!(t.starts_with("    "), "description indented under the label");
+            assert!(
+                t.starts_with("    "),
+                "description indented under the label"
+            );
             assert!(t.chars().count() <= 40);
         }
     }

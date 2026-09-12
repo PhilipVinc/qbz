@@ -131,7 +131,10 @@ mod tests {
     fn literal_registry_scrubs_unlabeled_value() {
         register_secret("LIVE_TOKEN_xyz".into());
         let r = redact("blah LIVE_TOKEN_xyz blah");
-        assert!(!r.contains("LIVE_TOKEN_xyz"), "literal secret survived: {r}");
+        assert!(
+            !r.contains("LIVE_TOKEN_xyz"),
+            "literal secret survived: {r}"
+        );
         assert!(r.contains(REPLACEMENT), "no redaction marker: {r}");
     }
 

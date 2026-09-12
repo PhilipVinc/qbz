@@ -48,7 +48,11 @@ impl ProfileRoots {
 
         ensure_config_dir(&config);
 
-        Self { config, data, cache }
+        Self {
+            config,
+            data,
+            cache,
+        }
     }
 }
 

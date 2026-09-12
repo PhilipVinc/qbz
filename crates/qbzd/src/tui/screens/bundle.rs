@@ -123,7 +123,14 @@ impl BundleState {
     /// The data the App's apply worker needs; None when nothing is pending.
     pub fn apply_context(
         &self,
-    ) -> Option<(Bundle, ProfilePaths, LiveSystem, ImportOptions, Option<DeviceChoice>, bool)> {
+    ) -> Option<(
+        Bundle,
+        ProfilePaths,
+        LiveSystem,
+        ImportOptions,
+        Option<DeviceChoice>,
+        bool,
+    )> {
         self.pending.as_ref().map(|p| {
             (
                 p.bundle.clone(),
@@ -162,7 +169,11 @@ impl BundleState {
 
         match key.code {
             KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
-                self.focus = if self.focus == 0 { FIELDS.len() - 1 } else { self.focus - 1 };
+                self.focus = if self.focus == 0 {
+                    FIELDS.len() - 1
+                } else {
+                    self.focus - 1
+                };
                 ScreenAction::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
@@ -196,12 +207,10 @@ impl BundleState {
                 self.include_auth ^= true;
                 ScreenAction::Consumed
             }
-            BField::Export => {
-                ScreenAction::Export {
-                    dest: self.export_dest.clone(),
-                    include_auth: self.include_auth,
-                }
-            }
+            BField::Export => ScreenAction::Export {
+                dest: self.export_dest.clone(),
+                include_auth: self.include_auth,
+            },
         }
     }
 
@@ -296,9 +305,19 @@ impl BundleState {
         let options: Vec<String> = self
             .picker_entries
             .iter()
-            .map(|d| if d.bp { format!("{} {}", d.label, s::BP_BADGE) } else { d.label.clone() })
+            .map(|d| {
+                if d.bp {
+                    format!("{} {}", d.label, s::BP_BADGE)
+                } else {
+                    d.label.clone()
+                }
+            })
             .collect();
-        let headers: Vec<Option<String>> = self.picker_entries.iter().map(|d| d.header.clone()).collect();
+        let headers: Vec<Option<String>> = self
+            .picker_entries
+            .iter()
+            .map(|d| d.header.clone())
+            .collect();
         self.device_picker =
             Some(SelectPopup::new(s::DEVICE_PICKER_TITLE, options, 0, true).with_headers(headers));
     }
@@ -311,7 +330,10 @@ impl BundleState {
                     let choice = if entry.id.is_empty() {
                         DeviceChoice::SystemDefault
                     } else {
-                        DeviceChoice::Device { id: entry.id, label: entry.label }
+                        DeviceChoice::Device {
+                            id: entry.id,
+                            label: entry.label,
+                        }
                     };
                     self.replan_with(choice);
                 }
@@ -328,7 +350,9 @@ impl BundleState {
     /// Re-run the plan with the operator's device choice (pure — no I/O; the
     /// `live` snapshot was captured at plan time).
     fn replan_with(&mut self, choice: DeviceChoice) {
-        let Some(pending) = self.pending.as_mut() else { return };
+        let Some(pending) = self.pending.as_mut() else {
+            return;
+        };
         match bundle::replan_with_device(
             &pending.bundle,
             &pending.target,
@@ -373,26 +397,98 @@ impl BundleState {
         };
         let mut import_lines: Vec<Line> = Vec::new();
         let mut import_within: Option<(u16, u16)> = None;
-        self.push_field(&mut import_lines, &mut import_within, cur, ed, BField::ImportPath, s::B_IMPORT_PATH, path_val, "[input]", ctrl_col, width);
-        self.push_action(&mut import_lines, &mut import_within, cur, ed, BField::Review, s::B_IMPORT_ACTION);
+        self.push_field(
+            &mut import_lines,
+            &mut import_within,
+            cur,
+            ed,
+            BField::ImportPath,
+            s::B_IMPORT_PATH,
+            path_val,
+            "[input]",
+            ctrl_col,
+            width,
+        );
+        self.push_action(
+            &mut import_lines,
+            &mut import_within,
+            cur,
+            ed,
+            BField::Review,
+            s::B_IMPORT_ACTION,
+        );
         let import_active = matches!(cur, BField::ImportPath | BField::Review);
-        widgets::push_section(&mut secs, &mut anchor, s::BUNDLE_IMPORT_HEADER, import_active, import_lines, import_within);
+        widgets::push_section(
+            &mut secs,
+            &mut anchor,
+            s::BUNDLE_IMPORT_HEADER,
+            import_active,
+            import_lines,
+            import_within,
+        );
 
         // EXPORT box.
         let mut export_lines: Vec<Line> = Vec::new();
         let mut export_within: Option<(u16, u16)> = None;
-        self.push_field(&mut export_lines, &mut export_within, cur, ed, BField::ExportDest, s::B_EXPORT_DEST, self.export_dest.clone(), "[input]", ctrl_col, width);
-        self.push_field(&mut export_lines, &mut export_within, cur, ed, BField::IncludeAuth, s::B_EXPORT_INCLUDE_AUTH, if self.include_auth { "on" } else { "off" }.to_string(), "[toggle]", ctrl_col, width);
+        self.push_field(
+            &mut export_lines,
+            &mut export_within,
+            cur,
+            ed,
+            BField::ExportDest,
+            s::B_EXPORT_DEST,
+            self.export_dest.clone(),
+            "[input]",
+            ctrl_col,
+            width,
+        );
+        self.push_field(
+            &mut export_lines,
+            &mut export_within,
+            cur,
+            ed,
+            BField::IncludeAuth,
+            s::B_EXPORT_INCLUDE_AUTH,
+            if self.include_auth { "on" } else { "off" }.to_string(),
+            "[toggle]",
+            ctrl_col,
+            width,
+        );
         if self.include_auth {
-            export_lines.extend(widgets::wrapped_note(s::B_EXPORT_AUTH_WARNING, width, theme::warn()));
+            export_lines.extend(widgets::wrapped_note(
+                s::B_EXPORT_AUTH_WARNING,
+                width,
+                theme::warn(),
+            ));
         }
-        self.push_action(&mut export_lines, &mut export_within, cur, ed, BField::Export, s::B_EXPORT_ACTION);
+        self.push_action(
+            &mut export_lines,
+            &mut export_within,
+            cur,
+            ed,
+            BField::Export,
+            s::B_EXPORT_ACTION,
+        );
         if self.has_desktop {
             export_lines.push(widgets::blank());
-            export_lines.extend(widgets::wrapped_note(s::B_DESKTOP_HINT, width, theme::dim()));
+            export_lines.extend(widgets::wrapped_note(
+                s::B_DESKTOP_HINT,
+                width,
+                theme::dim(),
+            ));
         }
-        let export_active = matches!(cur, BField::ExportDest | BField::IncludeAuth | BField::Export);
-        widgets::push_section(&mut secs, &mut anchor, s::BUNDLE_EXPORT_HEADER, export_active, export_lines, export_within);
+        let export_active = matches!(
+            cur,
+            BField::ExportDest | BField::IncludeAuth | BField::Export
+        );
+        widgets::push_section(
+            &mut secs,
+            &mut anchor,
+            s::BUNDLE_EXPORT_HEADER,
+            export_active,
+            export_lines,
+            export_within,
+        );
 
         widgets::sections_scroll(f, area, &secs, anchor);
 
@@ -425,7 +521,15 @@ impl BundleState {
         let focused = cur == field && ed;
         let start = lines.len() as u16;
         let block = widgets::field_block(
-            &widgets::Field { label, value, widget, focused, enabled: true, reason: None, description: None },
+            &widgets::Field {
+                label,
+                value,
+                widget,
+                focused,
+                enabled: true,
+                reason: None,
+                description: None,
+            },
             ctrl_col,
             width,
         );
@@ -457,14 +561,31 @@ impl BundleState {
         let Some(p) = &self.pending else { return };
         let mut lines: Vec<Line> = Vec::new();
 
-        bucket(&mut lines, s::B_BUCKET_APPLIED, &p.plan.applied, BucketKind::Applied);
+        bucket(
+            &mut lines,
+            s::B_BUCKET_APPLIED,
+            &p.plan.applied,
+            BucketKind::Applied,
+        );
         lines.push(widgets::blank());
-        bucket(&mut lines, s::B_BUCKET_ADAPTED, &p.plan.adapted, BucketKind::Adapted);
+        bucket(
+            &mut lines,
+            s::B_BUCKET_ADAPTED,
+            &p.plan.adapted,
+            BucketKind::Adapted,
+        );
         if p.plan.device_pick.is_some() {
-            lines.push(widgets::note_line("press p to pick a local device for the missing one"));
+            lines.push(widgets::note_line(
+                "press p to pick a local device for the missing one",
+            ));
         }
         lines.push(widgets::blank());
-        bucket(&mut lines, s::B_BUCKET_SKIPPED, &p.plan.skipped, BucketKind::Skipped);
+        bucket(
+            &mut lines,
+            s::B_BUCKET_SKIPPED,
+            &p.plan.skipped,
+            BucketKind::Skipped,
+        );
 
         widgets::panel(f, area, s::BUNDLE_TITLE, lines, self.scroll);
 

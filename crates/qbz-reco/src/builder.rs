@@ -15,7 +15,9 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
 use qbz_integrations::musicbrainz::cache::MusicBrainzCache;
-use qbz_integrations::musicbrainz::{ArtistFullResponse, ArtistRelationships, Period, RelatedArtist};
+use qbz_integrations::musicbrainz::{
+    ArtistFullResponse, ArtistRelationships, Period, RelatedArtist,
+};
 use qbz_integrations::MusicBrainzClient;
 use qbz_qobuz::QobuzClient;
 

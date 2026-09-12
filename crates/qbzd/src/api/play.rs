@@ -49,7 +49,12 @@ pub fn play(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    start_resolved(state, tracks, context, body.get("index").and_then(|v| v.as_u64()))
+    start_resolved(
+        state,
+        tracks,
+        context,
+        body.get("index").and_then(|v| v.as_u64()),
+    )
 }
 
 /// Materialize resolved catalog `tracks` into the queue and cold-start the
@@ -66,7 +71,12 @@ pub(crate) fn start_resolved(
     start_index: Option<u64>,
 ) -> Response<Cursor<Vec<u8>>> {
     if tracks.is_empty() {
-        return err_json(404, "not_found", "nothing to play", "check the id: qbzd search <QUERY>");
+        return err_json(
+            404,
+            "not_found",
+            "nothing to play",
+            "check the id: qbzd search <QUERY>",
+        );
     }
 
     let mut queue_tracks: Vec<QueueTrack> = tracks.iter().map(track_to_queue_track).collect();
@@ -172,7 +182,10 @@ fn fetch_tracks(
     selector: &Selector,
 ) -> Result<(Vec<Track>, Option<(&'static str, String)>), Response<Cursor<Vec<u8>>>> {
     match selector {
-        Selector::Track(id) => match state.rt.block_on(state.runtime.core().get_tracks_batch(&[*id])) {
+        Selector::Track(id) => match state
+            .rt
+            .block_on(state.runtime.core().get_tracks_batch(&[*id]))
+        {
             Ok(tracks) => Ok((tracks, None)),
             Err(_) => Err(not_found("track", &id.to_string())),
         },
@@ -191,7 +204,11 @@ fn fetch_tracks(
             Err(_) => Err(not_found("playlist", &id.to_string())),
         },
         Selector::Artist(id) => {
-            match state.rt.block_on(state.runtime.core().get_artist_tracks(*id, ARTIST_TOP_LIMIT, 0)) {
+            match state.rt.block_on(state.runtime.core().get_artist_tracks(
+                *id,
+                ARTIST_TOP_LIMIT,
+                0,
+            )) {
                 Ok(tc) => Ok((tc.items, Some(("artist", id.to_string())))),
                 Err(_) => Err(not_found("artist", &id.to_string())),
             }
@@ -237,7 +254,12 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
         .map(|s| s.auth == AuthState::NeedsAuth)
         .unwrap_or(false);
     if needs_auth {
-        Some(err_json(409, "needs_auth", "not logged in to Qobuz", "run: qbzd login"))
+        Some(err_json(
+            409,
+            "needs_auth",
+            "not logged in to Qobuz",
+            "run: qbzd login",
+        ))
     } else {
         None
     }

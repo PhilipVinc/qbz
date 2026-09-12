@@ -89,10 +89,12 @@ fn map_status(s: PlaybackStatus) -> MprisStatus {
 
 fn build_metadata(meta: &TrackMeta) -> Metadata {
     let seq = TRACK_SEQ.fetch_add(1, Ordering::Relaxed);
-    let trackid = TrackId::try_from(format!("/com/blitzfc/qbz/track/{seq}"))
-        .unwrap_or(TrackId::NO_TRACK);
+    let trackid =
+        TrackId::try_from(format!("/com/blitzfc/qbz/track/{seq}")).unwrap_or(TrackId::NO_TRACK);
 
-    let mut b = Metadata::builder().trackid(trackid).title(meta.title.clone());
+    let mut b = Metadata::builder()
+        .trackid(trackid)
+        .title(meta.title.clone());
     if !meta.artist.is_empty() {
         b = b.artist([meta.artist.clone()]);
     }

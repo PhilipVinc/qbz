@@ -61,7 +61,9 @@ impl std::fmt::Display for CliError {
                 }
             }
             CliError::NotFound(m) => write!(f, "error: {m}"),
-            CliError::ApiSkew { daemon, cli } => write!(f, "{}", copy::api_version_skew(*daemon, *cli)),
+            CliError::ApiSkew { daemon, cli } => {
+                write!(f, "{}", copy::api_version_skew(*daemon, *cli))
+            }
             CliError::Runtime(m) => write!(f, "error: {m}"),
         }
     }
@@ -80,14 +82,23 @@ pub struct Target {
 /// default reads the local token / runs the linger check.
 pub fn resolve_host(flag: Option<String>) -> Target {
     if let Some(h) = flag.filter(|h| !h.is_empty()) {
-        return Target { addr: normalize_hostport(&h), is_local: false };
+        return Target {
+            addr: normalize_hostport(&h),
+            is_local: false,
+        };
     }
     if let Ok(h) = std::env::var("QBZD_HOST") {
         if !h.is_empty() {
-            return Target { addr: normalize_hostport(&h), is_local: false };
+            return Target {
+                addr: normalize_hostport(&h),
+                is_local: false,
+            };
         }
     }
-    Target { addr: "127.0.0.1:8182".into(), is_local: true }
+    Target {
+        addr: "127.0.0.1:8182".into(),
+        is_local: true,
+    }
 }
 
 /// Append the default port when the operator gave a bare host.
@@ -161,7 +172,11 @@ impl ApiClient {
     /// P0 mutation transport — consumed by the T7 transport verbs
     /// (play/pause/toggle/stop/next/prev/seek/volume/mute).
     pub async fn post(&self, path: &str, body: Value) -> Result<Value, CliError> {
-        let req = self.bearer(self.client.post(format!("{}{}", self.base, path)).json(&body));
+        let req = self.bearer(
+            self.client
+                .post(format!("{}{}", self.base, path))
+                .json(&body),
+        );
         self.send(req).await
     }
 
@@ -217,7 +232,9 @@ impl ApiClient {
         let req = self.bearer(self.client.get(format!("{}/api/info", self.base)));
         let resp = req.send().await.ok()?;
         let v: Value = resp.json().await.ok()?;
-        v.get("api_version").and_then(|a| a.as_u64()).map(|a| a as u32)
+        v.get("api_version")
+            .and_then(|a| a.as_u64())
+            .map(|a| a as u32)
     }
 }
 
@@ -243,9 +260,7 @@ fn error_from_envelope(v: &Value) -> CliError {
         // `volume`/`mute` print the exact documented multi-line text.
         "volume_fixed_dsd" => CliError::Device(crate::cli::copy::volume_fixed_dsd()),
         "seek_unsupported_dsd" => CliError::Device(crate::cli::copy::seek_unsupported_dsd()),
-        "audio_unavailable" | "device_error" => {
-            CliError::Device(message)
-        }
+        "audio_unavailable" | "device_error" => CliError::Device(message),
         _ => CliError::Runtime(message),
     }
 }

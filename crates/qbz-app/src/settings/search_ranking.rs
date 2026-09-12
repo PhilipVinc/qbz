@@ -283,7 +283,9 @@ impl SearchRanking {
         }
         self.touch(&key);
         let bucket = self.ranking.entry(key.clone()).or_default();
-        let slot = bucket.entry((kind.to_string(), id.to_string())).or_insert(0);
+        let slot = bucket
+            .entry((kind.to_string(), id.to_string()))
+            .or_insert(0);
         *slot = (*slot + action.weight()).min(MAX_SCORE);
         self.enforce_query_cap();
         self.persist();

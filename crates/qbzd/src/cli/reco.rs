@@ -8,7 +8,14 @@ use crate::cli::client::ApiClient;
 use crate::paths::ProfileRoots;
 
 /// `qbzd reco playlist <ID> [--limit N] [--ids] [--json]`.
-pub async fn playlist(host: Option<String>, id: u64, limit: Option<u32>, ids: bool, json: bool, roots: &ProfileRoots) -> i32 {
+pub async fn playlist(
+    host: Option<String>,
+    id: u64,
+    limit: Option<u32>,
+    ids: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let mut body = serde_json::json!({ "playlist_id": id });
     if let Some(n) = limit {
         body["limit"] = serde_json::json!(n);
@@ -42,7 +49,11 @@ fn track_ids(v: &Value) -> Vec<String> {
         .and_then(|t| t.as_array())
         .map(|a| {
             a.iter()
-                .filter_map(|t| t.get("track_id").and_then(|x| x.as_u64()).map(|n| n.to_string()))
+                .filter_map(|t| {
+                    t.get("track_id")
+                        .and_then(|x| x.as_u64())
+                        .map(|n| n.to_string())
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -59,8 +70,14 @@ fn render(v: &Value) -> String {
                 let artist = t.get("artist_name").and_then(|x| x.as_str()).unwrap_or("");
                 out.push_str(&format!("{id}  {artist} — {title}\n"));
             }
-            let similar = v.get("similar_artists_count").and_then(|x| x.as_u64()).unwrap_or(0);
-            out.push_str(&format!("{} suggestions from {similar} similar artists\n", a.len()));
+            let similar = v
+                .get("similar_artists_count")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
+            out.push_str(&format!(
+                "{} suggestions from {similar} similar artists\n",
+                a.len()
+            ));
             out
         }
         _ => "no suggestions (try a playlist with more resolvable artists)\n".to_string(),
@@ -85,7 +102,13 @@ mod tests {
         let v = serde_json::json!({"tracks": [{"track_id": 5, "title": "So What", "artist_name": "Miles Davis"}], "similar_artists_count": 3});
         let out = render(&v);
         assert!(out.contains("5  Miles Davis — So What"), "{out}");
-        assert!(out.contains("1 suggestions from 3 similar artists"), "{out}");
-        assert_eq!(render(&serde_json::json!({"tracks": []})), "no suggestions (try a playlist with more resolvable artists)\n");
+        assert!(
+            out.contains("1 suggestions from 3 similar artists"),
+            "{out}"
+        );
+        assert_eq!(
+            render(&serde_json::json!({"tracks": []})),
+            "no suggestions (try a playlist with more resolvable artists)\n"
+        );
     }
 }

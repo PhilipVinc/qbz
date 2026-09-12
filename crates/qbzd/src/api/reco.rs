@@ -53,7 +53,12 @@ pub fn playlist(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
     };
 
     if artists.is_empty() {
-        return err_json(400, "bad_request", "no seed artists", "the playlist has no resolvable artists");
+        return err_json(
+            400,
+            "bad_request",
+            "no seed artists",
+            "the playlist has no resolvable artists",
+        );
     }
 
     let mut config = qbz_reco::SuggestionConfig::default();
@@ -61,9 +66,21 @@ pub fn playlist(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
         config.max_pool_size = (n as usize).clamp(1, 200);
     }
 
-    match state.rt.block_on(state.runtime.core().generate_playlist_suggestions(artists, exclude, true, Some(config))) {
+    match state
+        .rt
+        .block_on(state.runtime.core().generate_playlist_suggestions(
+            artists,
+            exclude,
+            true,
+            Some(config),
+        )) {
         Ok(res) => json(200, serde_json::to_value(res).unwrap_or(Value::Null)),
-        Err(_) => err_json(502, "reco_failed", "suggestion engine failed", "try again in a moment; check: qbzd status"),
+        Err(_) => err_json(
+            502,
+            "reco_failed",
+            "suggestion engine failed",
+            "try again in a moment; check: qbzd status",
+        ),
     }
 }
 
@@ -79,7 +96,14 @@ fn seed_from_playlist(
 ) -> Result<(Vec<(Option<u64>, String)>, Vec<u64>), Response<Cursor<Vec<u8>>>> {
     let pl = match state.rt.block_on(state.runtime.core().get_playlist(pid)) {
         Ok(p) => p,
-        Err(_) => return Err(err_json(404, "not_found", &format!("playlist {pid} not found"), "check: qbzd playlist list")),
+        Err(_) => {
+            return Err(err_json(
+                404,
+                "not_found",
+                &format!("playlist {pid} not found"),
+                "check: qbzd playlist list",
+            ))
+        }
     };
     let items = pl.tracks.map(|t| t.items).unwrap_or_default();
     let mut artists: Vec<(Option<u64>, String)> = Vec::new();
@@ -99,7 +123,11 @@ fn seed_from_playlist(
 fn parse_artists(arr: &[Value]) -> Vec<(Option<u64>, String)> {
     arr.iter()
         .filter_map(|a| {
-            let name = a.get("name").and_then(|v| v.as_str()).filter(|n| !n.is_empty())?.to_string();
+            let name = a
+                .get("name")
+                .and_then(|v| v.as_str())
+                .filter(|n| !n.is_empty())?
+                .to_string();
             let id = a.get("id").and_then(|v| v.as_u64());
             Some((id, name))
         })
@@ -113,7 +141,12 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
         .map(|s| s.auth == AuthState::NeedsAuth)
         .unwrap_or(false);
     if needs_auth {
-        Some(err_json(409, "needs_auth", "not logged in to Qobuz", "run: qbzd login"))
+        Some(err_json(
+            409,
+            "needs_auth",
+            "not logged in to Qobuz",
+            "run: qbzd login",
+        ))
     } else {
         None
     }

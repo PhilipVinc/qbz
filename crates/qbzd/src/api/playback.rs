@@ -74,7 +74,10 @@ pub fn now_playing(state: &ApiState) -> Response<Cursor<Vec<u8>>> {
         .map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
         .unwrap_or(Value::Null);
 
-    json(200, serde_json::json!({"playback": playback, "track": track}))
+    json(
+        200,
+        serde_json::json!({"playback": playback, "track": track}),
+    )
 }
 
 /// `POST /api/playback/play` (02 §3.3.5). Resume if paused; cold-start the
@@ -182,11 +185,18 @@ pub fn seek(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
             "body: {\"position\": 90} or {\"delta\": -10}",
         );
     };
-    let clamped = if ev.duration > 0 { target.min(ev.duration) } else { target };
+    let clamped = if ev.duration > 0 {
+        target.min(ev.duration)
+    } else {
+        target
+    };
     if let Err(e) = state.runtime.core().seek(clamped) {
         return runtime_error(&e.to_string());
     }
-    json(200, serde_json::json!({"position": clamped, "duration": ev.duration}))
+    json(
+        200,
+        serde_json::json!({"position": clamped, "duration": ev.duration}),
+    )
 }
 
 /// `POST /api/playback/volume` (02 §3.3.12). One of three body forms:
@@ -236,7 +246,10 @@ pub fn volume(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
     if let Err(e) = state.runtime.core().set_volume(target) {
         return runtime_error(&e.to_string());
     }
-    json(200, serde_json::json!({"volume": canon_volume(target), "muted": muted_after}))
+    json(
+        200,
+        serde_json::json!({"volume": canon_volume(target), "muted": muted_after}),
+    )
 }
 
 /// `POST /api/playback/shuffle` (CONSOLE). Body `{"mode": "on"|"off"|"toggle"}`
@@ -244,7 +257,10 @@ pub fn volume(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
 /// queue-mode toggle touches no Qobuz session; state also surfaces in
 /// `/api/status` and `/api/now-playing`.
 pub fn shuffle(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
-    let mode = body.get("mode").and_then(|v| v.as_str()).unwrap_or("toggle");
+    let mode = body
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("toggle");
     let enabled = match mode {
         "on" => {
             state.rt.block_on(state.runtime.core().set_shuffle(true));
@@ -256,7 +272,12 @@ pub fn shuffle(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
         }
         "toggle" => state.rt.block_on(state.runtime.core().toggle_shuffle()),
         other => {
-            return err_json(400, "bad_request", &format!("invalid mode '{other}'"), "mode: on | off | toggle")
+            return err_json(
+                400,
+                "bad_request",
+                &format!("invalid mode '{other}'"),
+                "mode: on | off | toggle",
+            )
         }
     };
     json(200, serde_json::json!({"shuffle": enabled}))
@@ -271,7 +292,12 @@ pub fn repeat(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
         "all" => qbz_models::RepeatMode::All,
         "one" => qbz_models::RepeatMode::One,
         other => {
-            return err_json(400, "bad_request", &format!("invalid repeat mode '{other}'"), "mode: off | all | one")
+            return err_json(
+                400,
+                "bad_request",
+                &format!("invalid repeat mode '{other}'"),
+                "mode: off | all | one",
+            )
         }
     };
     state.rt.block_on(state.runtime.core().set_repeat_mode(rm));
@@ -302,7 +328,12 @@ fn apply_mute(state: &ApiState, live: f32, arg: &str) -> Response<Cursor<Vec<u8>
     let mut guard = match state.shared.lock() {
         Ok(g) => g,
         Err(_) => {
-            return err_json(500, "internal", "daemon state lock poisoned", "restart qbzd")
+            return err_json(
+                500,
+                "internal",
+                "daemon state lock poisoned",
+                "restart qbzd",
+            )
         }
     };
 
@@ -315,13 +346,21 @@ fn apply_mute(state: &ApiState, live: f32, arg: &str) -> Response<Cursor<Vec<u8>
         guard.muted = true;
         (stash, state.runtime.core().set_volume(0.0))
     } else if !mute_on && guard.muted {
-        let restored = if guard.premute_volume > 0.0 { guard.premute_volume } else { 0.7 };
+        let restored = if guard.premute_volume > 0.0 {
+            guard.premute_volume
+        } else {
+            0.7
+        };
         guard.muted = false;
         (restored, state.runtime.core().set_volume(restored))
     } else {
         // Already in the requested state — a no-op that still reports the
         // current nominal level.
-        let nominal = if guard.muted { guard.premute_volume } else { live };
+        let nominal = if guard.muted {
+            guard.premute_volume
+        } else {
+            live
+        };
         (nominal, Ok(()))
     };
     let muted_now = guard.muted;
@@ -330,7 +369,10 @@ fn apply_mute(state: &ApiState, live: f32, arg: &str) -> Response<Cursor<Vec<u8>
     if let Err(e) = set_result {
         return runtime_error(&e.to_string());
     }
-    json(200, serde_json::json!({"volume": canon_volume(nominal), "muted": muted_now}))
+    json(
+        200,
+        serde_json::json!({"volume": canon_volume(nominal), "muted": muted_now}),
+    )
 }
 
 /// `next`/`previous` (02 §3.3.9-10): gate on NeedsAuth BEFORE running the
@@ -435,7 +477,12 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
         .map(|s| s.auth == AuthState::NeedsAuth)
         .unwrap_or(false);
     if needs_auth {
-        Some(err_json(409, "needs_auth", "not logged in to Qobuz", "run: qbzd login"))
+        Some(err_json(
+            409,
+            "needs_auth",
+            "not logged in to Qobuz",
+            "run: qbzd login",
+        ))
     } else {
         None
     }

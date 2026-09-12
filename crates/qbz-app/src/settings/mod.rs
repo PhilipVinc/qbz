@@ -1,3 +1,4 @@
+pub mod album_play_history;
 pub mod artist_blacklist;
 pub mod bundle;
 pub mod daemon_prefs;
@@ -10,7 +11,6 @@ pub mod local_favorites;
 pub mod pinned_items;
 pub mod playback;
 pub mod plex;
-pub mod album_play_history;
 pub mod reco_store;
 pub mod remote_control;
 pub mod scrobblers;

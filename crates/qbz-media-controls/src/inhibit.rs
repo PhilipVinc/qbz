@@ -31,7 +31,10 @@ pub struct SleepInhibitor {
 
 impl SleepInhibitor {
     pub fn new() -> Self {
-        Self { conn: None, fd: None }
+        Self {
+            conn: None,
+            fd: None,
+        }
     }
 
     /// Drive the inhibitor from a playback transition: acquire on Playing,

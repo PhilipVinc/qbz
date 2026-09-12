@@ -12,7 +12,10 @@ fn bare_qbzd_prints_help_and_exits_2() {
 #[test]
 fn version_answers_locally() {
     // 02-cli-and-api.md §2.2: `qbzd version` needs no daemon, no network.
-    let out = Command::new(env!("CARGO_BIN_EXE_qbzd")).arg("version").output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_qbzd"))
+        .arg("version")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("api v1"));
 }

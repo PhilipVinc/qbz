@@ -206,7 +206,9 @@ fn render_alsa_plugin(v: Option<AlsaPlugin>) -> String {
 /// must work with no device attached to check against).
 fn parse_output_device(v: &str) -> Option<String> {
     let trimmed = v.trim();
-    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("system") || trimmed.eq_ignore_ascii_case("default")
+    if trimmed.is_empty()
+        || trimmed.eq_ignore_ascii_case("system")
+        || trimmed.eq_ignore_ascii_case("default")
     {
         None
     } else {
@@ -242,13 +244,13 @@ fn parse_opt_u32(v: &str) -> Result<Option<u32>, String> {
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
         return Ok(None);
     }
-    trimmed
-        .parse::<u32>()
-        .map(Some)
-        .map_err(|_| format!("invalid sample rate '{trimmed}' — expected a Hz integer (e.g. 192000) or none"))
+    trimmed.parse::<u32>().map(Some).map_err(|_| {
+        format!("invalid sample rate '{trimmed}' — expected a Hz integer (e.g. 192000) or none")
+    })
 }
 fn render_opt_u32(v: Option<u32>) -> String {
-    v.map(|r| r.to_string()).unwrap_or_else(|| "none".to_string())
+    v.map(|r| r.to_string())
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn parse_dsd_mode(v: &str) -> Result<String, String> {
@@ -553,14 +555,21 @@ impl std::fmt::Display for SetError {
 /// setup TUI persists every screen through this SAME validated writer (03 §6 —
 /// the TUI adds no persistence of its own). Every arm parses (`Usage` on
 /// failure) BEFORE it opens/writes a store (`Io` on failure) — see [`SetError`].
-pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<ApplyClass, SetError> {
+pub(crate) fn write_one(
+    roots: &ProfileRoots,
+    key: &str,
+    raw: &str,
+) -> Result<ApplyClass, SetError> {
     let Some(class) = classify(key) else {
         return Err(SetError::Usage(unknown_key_error(key)));
     };
     match key {
         "audio.backend" => {
             let v = parse_backend(raw).map_err(SetError::Usage)?;
-            open_audio(roots).map_err(SetError::Io)?.set_backend_type(v).map_err(SetError::Io)?
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_backend_type(v)
+                .map_err(SetError::Io)?
         }
         "audio.device" => {
             let v = parse_output_device(raw);
@@ -571,7 +580,10 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         }
         "audio.alsa_plugin" => {
             let v = parse_alsa_plugin(raw).map_err(SetError::Usage)?;
-            open_audio(roots).map_err(SetError::Io)?.set_alsa_plugin(v).map_err(SetError::Io)?
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_alsa_plugin(v)
+                .map_err(SetError::Io)?
         }
         "audio.alsa_hardware_volume" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
@@ -589,11 +601,17 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         }
         "audio.exclusive_mode" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
-            open_audio(roots).map_err(SetError::Io)?.set_exclusive_mode(v).map_err(SetError::Io)?
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_exclusive_mode(v)
+                .map_err(SetError::Io)?
         }
         "audio.dac_passthrough" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
-            open_audio(roots).map_err(SetError::Io)?.set_dac_passthrough(v).map_err(SetError::Io)?
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_dac_passthrough(v)
+                .map_err(SetError::Io)?
         }
         "audio.skip_sink_switch" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
@@ -604,7 +622,10 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         }
         "audio.dsd_mode" => {
             let v = parse_dsd_mode(raw).map_err(SetError::Usage)?;
-            open_audio(roots).map_err(SetError::Io)?.set_dsd_mode(&v).map_err(SetError::Io)?
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_dsd_mode(&v)
+                .map_err(SetError::Io)?
         }
         "audio.device_max_sample_rate" => {
             let v = parse_opt_u32(raw).map_err(SetError::Usage)?;
@@ -629,7 +650,10 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         }
         "audio.streaming_only" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
-            open_audio(roots).map_err(SetError::Io)?.set_streaming_only(v).map_err(SetError::Io)?
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_streaming_only(v)
+                .map_err(SetError::Io)?
         }
         "audio.memory_cache_mb" => {
             let v = parse_memory_cache_mb(raw).map_err(SetError::Usage)?;
@@ -689,7 +713,10 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         }
         "audio.gapless_enabled" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
-            open_audio(roots).map_err(SetError::Io)?.set_gapless_enabled(v).map_err(SetError::Io)?
+            open_audio(roots)
+                .map_err(SetError::Io)?
+                .set_gapless_enabled(v)
+                .map_err(SetError::Io)?
         }
         "audio.normalization_enabled" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
@@ -740,7 +767,10 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
         }
         "playback.autoplay" => {
             let v = parse_autoplay(raw).map_err(SetError::Usage)?;
-            open_playback(roots).map_err(SetError::Io)?.set_autoplay_mode(v).map_err(SetError::Io)?
+            open_playback(roots)
+                .map_err(SetError::Io)?
+                .set_autoplay_mode(v)
+                .map_err(SetError::Io)?
         }
         "playback.persist_session" => {
             let v = parse_bool(raw).map_err(SetError::Usage)?;
@@ -763,9 +793,10 @@ pub(crate) fn write_one(roots: &ProfileRoots, key: &str, raw: &str) -> Result<Ap
                 .set_show_context_icon(v)
                 .map_err(SetError::Io)?
         }
-        "qconnect.device_name" => {
-            qconnect_kv::persist_device_name_at(&qconnect_db(roots), parse_output_device(raw).as_deref())
-        }
+        "qconnect.device_name" => qconnect_kv::persist_device_name_at(
+            &qconnect_db(roots),
+            parse_output_device(raw).as_deref(),
+        ),
         "qconnect.startup_mode" => {
             let mode = match raw.to_ascii_lowercase().as_str() {
                 "on" => qconnect_app::QconnectStartupMode::On,
@@ -861,7 +892,10 @@ pub fn show(json: bool, roots: &ProfileRoots) -> i32 {
         for (k, v) in &values {
             map.insert((*k).to_string(), serde_json::Value::String(v.clone()));
         }
-        println!("{}", serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_default()
+        );
     } else {
         let width = values.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
         for (k, v) in &values {
@@ -910,7 +944,9 @@ pub fn qconnect_enable(roots: &ProfileRoots) -> i32 {
     let db = qconnect_db(roots);
     qconnect_kv::save_startup_mode_at(&db, qconnect_app::QconnectStartupMode::On);
     nudge(roots);
-    let name = qconnect_kv::resolve_qconnect_friendly_name(qconnect_kv::load_device_name_at(&db).as_deref());
+    let name = qconnect_kv::resolve_qconnect_friendly_name(
+        qconnect_kv::load_device_name_at(&db).as_deref(),
+    );
     println!("qconnect enabled — device \"{name}\" will appear in the Qobuz app once logged in");
     0
 }
@@ -933,7 +969,8 @@ pub fn qconnect_name(roots: &ProfileRoots, name: &str) -> i32 {
     let db = qconnect_db(roots);
     qconnect_kv::persist_device_name_at(&db, parse_output_device(name).as_deref());
     nudge(roots);
-    let effective = qconnect_kv::resolve_qconnect_friendly_name(parse_output_device(name).as_deref());
+    let effective =
+        qconnect_kv::resolve_qconnect_friendly_name(parse_output_device(name).as_deref());
     println!("qconnect device name set to \"{effective}\" — applies on the next connection");
     0
 }
@@ -945,7 +982,10 @@ pub fn config_path(roots: &ProfileRoots) -> i32 {
     println!("config : {}", roots.config.display());
     println!("data   : {}", roots.data.display());
     println!("cache  : {}", roots.cache.display());
-    println!("cred   : {}", roots.config.join(".qbz-oauth-token").display());
+    println!(
+        "cred   : {}",
+        roots.config.join(".qbz-oauth-token").display()
+    );
     println!("unit   : {}", unit_path().display());
     0
 }
@@ -974,14 +1014,24 @@ pub fn config_show(json: bool, roots: &ProfileRoots) -> i32 {
     }
     let present = present_keys(&path);
     let line = |label: &str, dotted: &str, value: String| {
-        let marker = if present.contains(dotted) { "" } else { " (default)" };
+        let marker = if present.contains(dotted) {
+            ""
+        } else {
+            " (default)"
+        };
         println!("{label:<24}= {value}{marker}");
     };
-    line("config_version", "config_version", cfg.config_version.to_string());
+    line(
+        "config_version",
+        "config_version",
+        cfg.config_version.to_string(),
+    );
     line(
         "data_root",
         "data_root",
-        cfg.data_root.clone().unwrap_or_else(|| "(auto)".to_string()),
+        cfg.data_root
+            .clone()
+            .unwrap_or_else(|| "(auto)".to_string()),
     );
     line("server.bind", "server.bind", cfg.server.bind.clone());
     line("server.port", "server.port", cfg.server.port.to_string());
@@ -994,7 +1044,11 @@ pub fn config_show(json: bool, roots: &ProfileRoots) -> i32 {
         },
     );
     line("log.level", "log.level", cfg.log.level.clone());
-    line("mpris.enabled", "mpris.enabled", cfg.mpris.enabled.to_string());
+    line(
+        "mpris.enabled",
+        "mpris.enabled",
+        cfg.mpris.enabled.to_string(),
+    );
     0
 }
 
@@ -1134,7 +1188,10 @@ pub async fn import(
     // Steps 2–4: plan.
     let mut plan = match bundle::plan(&bundle, &target, &opts, &live) {
         Ok(p) => p,
-        Err(bundle::BundleError::VersionTooNew { bundle: b, supported }) => {
+        Err(bundle::BundleError::VersionTooNew {
+            bundle: b,
+            supported,
+        }) => {
             eprintln!("{}", crate::cli::copy::bundle_version_too_new(b, supported));
             return 1;
         }
@@ -1167,8 +1224,10 @@ pub async fn import(
         match crate::login::validate_token(&token).await {
             Ok(session) => {
                 validated_uid = Some(session.user_id);
-                let mut note =
-                    format!("Qobuz token validated — logged in as user {}", session.user_id);
+                let mut note = format!(
+                    "Qobuz token validated — logged in as user {}",
+                    session.user_id
+                );
                 if let Some(bid) = plan.bundle_user_id {
                     if bid != session.user_id {
                         note.push_str(&format!(
@@ -1205,8 +1264,7 @@ pub async fn import(
     // Step 7: reload-nudge a running daemon. Three states (04 §5.3 step 7):
     // reloaded / not running (fine) / up-but-refused (exit 1, restart hint).
     let outcome = nudge_outcome(roots);
-    let (done_line, stderr_msg, exit) =
-        reload_disposition(outcome, plan.routing_critical_changed);
+    let (done_line, stderr_msg, exit) = reload_disposition(outcome, plan.routing_critical_changed);
 
     print_buckets(&plan, &bundle, auth_note.as_deref(), Some(&done_line));
     if let Some(msg) = stderr_msg {
@@ -1255,7 +1313,11 @@ fn reload_disposition(
 fn build_live_system(bundle: &Bundle) -> LiveSystem {
     let backends: Vec<String> = BackendManager::available_backends()
         .into_iter()
-        .filter_map(|b| serde_json::to_value(b).ok().and_then(|v| v.as_str().map(str::to_string)))
+        .filter_map(|b| {
+            serde_json::to_value(b)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+        })
         .collect();
 
     let wanted: Option<AudioBackendType> = bundle
@@ -1365,7 +1427,11 @@ fn print_buckets(
 
     // Shared-device-name advisory: only for a desktop-sourced bundle (§2.4/§5.4).
     if bundle.source.profile == "desktop" {
-        if let Some(dn) = plan.applied.iter().find(|l| l.key == "qconnect.device_name") {
+        if let Some(dn) = plan
+            .applied
+            .iter()
+            .find(|l| l.key == "qconnect.device_name")
+        {
             println!("\nadvisory");
             println!(
                 "  qconnect.device_name \"{}\" is also the exporting desktop's Connect name — two nodes with",
@@ -1425,9 +1491,15 @@ mod tests {
         let err = write_one(&roots, "audio.bogus", "x").unwrap_err();
         // 02 §1.3: an unknown key is a USAGE mistake (exit 2), never Io.
         assert!(matches!(err, SetError::Usage(_)), "{err:?}");
-        assert!(err.message().contains("unknown setting key 'audio.bogus'"), "{err}");
+        assert!(
+            err.message().contains("unknown setting key 'audio.bogus'"),
+            "{err}"
+        );
         for (k, _) in KEY_TABLE {
-            assert!(err.message().contains(k), "missing '{k}' from the listed keys:\n{err}");
+            assert!(
+                err.message().contains(k),
+                "missing '{k}' from the listed keys:\n{err}"
+            );
         }
         cleanup(&roots);
     }
@@ -1483,7 +1555,10 @@ mod tests {
         let err = write_one(&roots, "hooks.script", "relative.sh").unwrap_err();
         assert!(matches!(err, SetError::Usage(_)), "{err:?}");
         write_one(&roots, "hooks.script", "/opt/hook.sh").expect("absolute path writes");
-        assert_eq!(daemon_prefs::load_at(&roots.data).hook_script, "/opt/hook.sh");
+        assert_eq!(
+            daemon_prefs::load_at(&roots.data).hook_script,
+            "/opt/hook.sh"
+        );
         write_one(&roots, "hooks.script", "").expect("empty clears");
         assert_eq!(daemon_prefs::load_at(&roots.data).hook_script, "");
         cleanup(&roots);
@@ -1497,7 +1572,11 @@ mod tests {
         // round-trip against temp on-disk stores, not just "same key names").
         let roots = scratch_roots("roundtrip");
         let values = read_all(&roots).expect("read_all opens fresh stores with defaults");
-        assert_eq!(values.len(), KEY_TABLE.len(), "read_all must cover every canonical key");
+        assert_eq!(
+            values.len(),
+            KEY_TABLE.len(),
+            "read_all must cover every canonical key"
+        );
         for (key, value) in &values {
             // The one documented exception (03-setup-tui.md §3.3.2): a fresh
             // (or desktop-imported) store's `quality_fallback_behavior`
@@ -1508,8 +1587,9 @@ mod tests {
             if *key == "audio.quality_fallback_behavior" && value == "ask" {
                 continue;
             }
-            write_one(&roots, key, value)
-                .unwrap_or_else(|e| panic!("show's own value for '{key}' ('{value}') was rejected by set: {e}"));
+            write_one(&roots, key, value).unwrap_or_else(|e| {
+                panic!("show's own value for '{key}' ('{value}') was rejected by set: {e}")
+            });
         }
         cleanup(&roots);
     }
@@ -1524,7 +1604,8 @@ mod tests {
         write_one(&roots, "qconnect.device_name", "Kitchen").expect("set device name");
         write_one(&roots, "qconnect.startup_mode", "on").expect("set startup mode");
 
-        let values: std::collections::HashMap<_, _> = read_all(&roots).unwrap().into_iter().collect();
+        let values: std::collections::HashMap<_, _> =
+            read_all(&roots).unwrap().into_iter().collect();
         assert_eq!(values["audio.backend"], "alsa");
         assert_eq!(values["audio.exclusive_mode"], "true");
         assert_eq!(values["playback.quality"], "cd");
@@ -1565,7 +1646,8 @@ mod tests {
         let roots = scratch_roots("qc-clear");
         write_one(&roots, "qconnect.device_name", "Studio").expect("set name");
         write_one(&roots, "qconnect.device_name", "").expect("clear name");
-        let values: std::collections::HashMap<_, _> = read_all(&roots).unwrap().into_iter().collect();
+        let values: std::collections::HashMap<_, _> =
+            read_all(&roots).unwrap().into_iter().collect();
         assert_eq!(values["qconnect.device_name"], "system");
         cleanup(&roots);
     }
@@ -1585,16 +1667,31 @@ mod tests {
     #[test]
     fn parse_backend_accepts_the_five_concrete_backends_only() {
         assert_eq!(parse_backend("alsa"), Ok(Some(AudioBackendType::Alsa)));
-        assert_eq!(parse_backend("PipeWire"), Ok(Some(AudioBackendType::PipeWire)));
-        assert_eq!(parse_backend("system"), Ok(Some(AudioBackendType::SystemDefault)));
-        assert!(parse_backend("auto").is_err(), "Auto is omitted in v1 (03-setup-tui.md §3.2.1)");
+        assert_eq!(
+            parse_backend("PipeWire"),
+            Ok(Some(AudioBackendType::PipeWire))
+        );
+        assert_eq!(
+            parse_backend("system"),
+            Ok(Some(AudioBackendType::SystemDefault))
+        );
+        assert!(
+            parse_backend("auto").is_err(),
+            "Auto is omitted in v1 (03-setup-tui.md §3.2.1)"
+        );
         assert!(parse_backend("bogus").is_err());
     }
 
     #[test]
     fn parse_quality_fallback_behavior_rejects_ask() {
-        assert_eq!(parse_quality_fallback_behavior("always_fallback"), Ok("always_fallback".into()));
-        assert_eq!(parse_quality_fallback_behavior("always_skip"), Ok("always_skip".into()));
+        assert_eq!(
+            parse_quality_fallback_behavior("always_fallback"),
+            Ok("always_fallback".into())
+        );
+        assert_eq!(
+            parse_quality_fallback_behavior("always_skip"),
+            Ok("always_skip".into())
+        );
         let err = parse_quality_fallback_behavior("ask").unwrap_err();
         assert!(err.contains("needs a UI"), "{err}");
     }
@@ -1604,14 +1701,26 @@ mod tests {
         for ok in ["mp3", "cd", "hires", "hires_plus"] {
             assert!(parse_streaming_quality(ok).is_ok(), "{ok}");
         }
-        assert!(parse_streaming_quality("hires192").is_err(), "not a real key — see report");
+        assert!(
+            parse_streaming_quality("hires192").is_err(),
+            "not a real key — see report"
+        );
     }
 
     #[test]
     fn parse_autoplay_matches_the_playback_preferences_wire_values() {
-        assert_eq!(parse_autoplay("continue").unwrap(), AutoplayMode::ContinueWithinSource);
-        assert_eq!(parse_autoplay("track_only").unwrap(), AutoplayMode::PlayTrackOnly);
-        assert_eq!(parse_autoplay("infinite").unwrap(), AutoplayMode::InfiniteRadio);
+        assert_eq!(
+            parse_autoplay("continue").unwrap(),
+            AutoplayMode::ContinueWithinSource
+        );
+        assert_eq!(
+            parse_autoplay("track_only").unwrap(),
+            AutoplayMode::PlayTrackOnly
+        );
+        assert_eq!(
+            parse_autoplay("infinite").unwrap(),
+            AutoplayMode::InfiniteRadio
+        );
         assert!(parse_autoplay("bogus").is_err());
     }
 

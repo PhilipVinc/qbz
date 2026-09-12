@@ -232,9 +232,8 @@ pub struct AudioParams {
 /// path can measure the bytes it actually serves (#638 fix 1).
 pub fn probe_streaminfo(bytes: &[u8]) -> Option<AudioParams> {
     if bytes.len() >= 26 && bytes.starts_with(b"fLaC") {
-        let sample_rate = ((bytes[18] as u32) << 12)
-            | ((bytes[19] as u32) << 4)
-            | ((bytes[20] as u32) >> 4);
+        let sample_rate =
+            ((bytes[18] as u32) << 12) | ((bytes[19] as u32) << 4) | ((bytes[20] as u32) >> 4);
         let channels = ((bytes[20] >> 1) & 0x07) + 1;
         let bit_depth = ((bytes[20] & 0x01) << 4) | ((bytes[21] >> 4) & 0x0F);
         Some(AudioParams {
@@ -967,7 +966,10 @@ pub struct PurchaseAlbum {
 /// used for disc-grouping. `purchased_at` is unix epoch seconds.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PurchaseTrack {
-    #[serde(default, deserialize_with = "crate::purchase_serde::deserialize_u64_id")]
+    #[serde(
+        default,
+        deserialize_with = "crate::purchase_serde::deserialize_u64_id"
+    )]
     pub id: u64,
     #[serde(default)]
     pub title: String,
@@ -1025,7 +1027,10 @@ pub struct RadioResponse {
     pub radio_type: Option<String>,
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default, deserialize_with = "crate::purchase_serde::lenient_page_flexible")]
+    #[serde(
+        default,
+        deserialize_with = "crate::purchase_serde::lenient_page_flexible"
+    )]
     pub tracks: SearchResultsPage<Track>,
 }
 

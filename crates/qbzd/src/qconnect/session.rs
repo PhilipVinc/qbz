@@ -32,8 +32,6 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::adapter::DaemonAdapter;
-use crate::state::DaemonShared;
 use super::engine::VolumeMode; // T10 (OD4): join-time volume report honors the mode
 use super::sink::{DaemonEventSink, DaemonQconnectApp};
 use super::transport::{
@@ -41,6 +39,8 @@ use super::transport::{
     QconnectJoinSessionRequest, AUDIO_QUALITY_HIRES_LEVEL2, BUFFER_STATE_OK,
 };
 use super::{update_lifecycle_state_if_running, DaemonQconnectInner};
+use crate::adapter::DaemonAdapter;
+use crate::state::DaemonShared;
 
 type Runtime = Arc<AppRuntime<DaemonAdapter>>;
 
@@ -223,7 +223,7 @@ pub async fn deferred_renderer_join(
     app: &Arc<DaemonQconnectApp>,
     sync_state: &Arc<Mutex<QconnectRemoteSyncState>>,
     runtime: &Runtime,
-    volume_mode: VolumeMode, // T10 (OD4): join-time volume report policy
+    volume_mode: VolumeMode,    // T10 (OD4): join-time volume report policy
     initial_volume: Option<u8>, // join-time volume safety (qconnect.initial_volume)
     session_uuid: &str,
     join_reason: i32,

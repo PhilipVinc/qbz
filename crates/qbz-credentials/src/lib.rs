@@ -910,7 +910,8 @@ fn read_oauth_token_file(root: &Path, portal: PortalKey) -> Result<Option<String
             // reachable both keys are identical, so this retry simply fails
             // again and we fall through to the warning.
             if portal == PortalKey::Never {
-                if let Ok(placeholder) = decrypt_credentials_at(root, PortalKey::Session, &content) {
+                if let Ok(placeholder) = decrypt_credentials_at(root, PortalKey::Session, &content)
+                {
                     log::info!(
                         "[Credentials] Migrating the OAuth token to a session-independent key"
                     );
@@ -944,8 +945,7 @@ pub fn oauth_token_file_present_at(root: &Path) -> bool {
 fn remove_oauth_token_file(root: &Path) -> Result<(), String> {
     let path = oauth_token_path_at(root);
     if path.exists() {
-        fs::remove_file(&path)
-            .map_err(|e| format!("Failed to remove OAuth token file: {}", e))?;
+        fs::remove_file(&path).map_err(|e| format!("Failed to remove OAuth token file: {}", e))?;
     }
     Ok(())
 }
@@ -1006,7 +1006,9 @@ pub fn load_oauth_token() -> Result<Option<String>, String> {
             // the keyring. Accept it for this one read; the next successful
             // `save_oauth_token` call will rewrite it encrypted to both the
             // keyring and the file.
-            log::debug!("[Credentials] Keyring held legacy plaintext token; will re-encrypt on next save");
+            log::debug!(
+                "[Credentials] Keyring held legacy plaintext token; will re-encrypt on next save"
+            );
             return Ok(Some(encrypted));
         }
     }

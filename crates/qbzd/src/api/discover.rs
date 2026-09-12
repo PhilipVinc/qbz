@@ -84,10 +84,17 @@ pub fn discover(state: &ApiState, query: &str) -> Response<Cursor<Vec<u8>>> {
 // ============================ internals ============================
 
 /// Serialize an already-awaited core result, or map an upstream error to 502.
-fn serialize<T: serde::Serialize>(r: Result<T, qbz_core::CoreError>) -> Result<Value, Response<Cursor<Vec<u8>>>> {
+fn serialize<T: serde::Serialize>(
+    r: Result<T, qbz_core::CoreError>,
+) -> Result<Value, Response<Cursor<Vec<u8>>>> {
     match r {
         Ok(v) => Ok(serde_json::to_value(v).unwrap_or(Value::Null)),
-        Err(_) => Err(err_json(502, "discover_failed", "discover request to Qobuz failed", "try again in a moment")),
+        Err(_) => Err(err_json(
+            502,
+            "discover_failed",
+            "discover request to Qobuz failed",
+            "try again in a moment",
+        )),
     }
 }
 
@@ -98,7 +105,12 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
         .map(|s| s.auth == AuthState::NeedsAuth)
         .unwrap_or(false);
     if needs_auth {
-        Some(err_json(409, "needs_auth", "not logged in to Qobuz", "run: qbzd login"))
+        Some(err_json(
+            409,
+            "needs_auth",
+            "not logged in to Qobuz",
+            "run: qbzd login",
+        ))
     } else {
         None
     }
@@ -112,18 +124,26 @@ fn pairs(query: &str) -> Vec<(String, String)> {
             let mut kv = p.splitn(2, '=');
             let k = kv.next().unwrap_or("").to_string();
             let raw = kv.next().unwrap_or("");
-            let v = urlencoding::decode(raw).map(|c| c.into_owned()).unwrap_or_else(|_| raw.to_string());
+            let v = urlencoding::decode(raw)
+                .map(|c| c.into_owned())
+                .unwrap_or_else(|_| raw.to_string());
             (k, v)
         })
         .collect()
 }
 
 fn get<'a>(p: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    p.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str()).filter(|v| !v.is_empty())
+    p.iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
+        .filter(|v| !v.is_empty())
 }
 
 fn parse_genre(v: Option<&str>) -> Option<Vec<u64>> {
-    let ids: Vec<u64> = v?.split(',').filter_map(|s| s.trim().parse::<u64>().ok()).collect();
+    let ids: Vec<u64> = v?
+        .split(',')
+        .filter_map(|s| s.trim().parse::<u64>().ok())
+        .collect();
     if ids.is_empty() {
         None
     } else {
@@ -132,8 +152,13 @@ fn parse_genre(v: Option<&str>) -> Option<Vec<u64>> {
 }
 
 fn limit_offset(p: &[(String, String)]) -> (u32, u32) {
-    let limit = get(p, "limit").and_then(|v| v.parse::<u32>().ok()).map(|n| n.clamp(1, MAX_LIMIT)).unwrap_or(DEFAULT_LIMIT);
-    let offset = get(p, "offset").and_then(|v| v.parse::<u32>().ok()).unwrap_or(0);
+    let limit = get(p, "limit")
+        .and_then(|v| v.parse::<u32>().ok())
+        .map(|n| n.clamp(1, MAX_LIMIT))
+        .unwrap_or(DEFAULT_LIMIT);
+    let offset = get(p, "offset")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
     (limit, offset)
 }
 

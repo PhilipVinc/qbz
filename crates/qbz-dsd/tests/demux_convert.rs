@@ -9,19 +9,31 @@ fn tmp(name: &str) -> PathBuf {
 }
 
 /// Minimal valid DSF: `groups` block-groups of 0x69 silence.
-fn write_dsf(name: &str, channels: u32, rate: u32, groups: usize, metadata: Option<&[u8]>) -> PathBuf {
+fn write_dsf(
+    name: &str,
+    channels: u32,
+    rate: u32,
+    groups: usize,
+    metadata: Option<&[u8]>,
+) -> PathBuf {
     let block_size = 4096u32;
     let bytes_per_ch = groups * block_size as usize;
     let sample_count = (bytes_per_ch as u64) * 8;
     let data_len = (bytes_per_ch * channels as usize) as u64;
     // DSD chunk (28) + fmt chunk (52, header included) + data header (12).
     let file_len_without_meta = 28 + 52 + 12 + data_len;
-    let metadata_ptr = if metadata.is_some() { file_len_without_meta } else { 0 };
+    let metadata_ptr = if metadata.is_some() {
+        file_len_without_meta
+    } else {
+        0
+    };
 
     let mut f = Vec::new();
     f.extend_from_slice(b"DSD ");
     f.extend_from_slice(&28u64.to_le_bytes());
-    f.extend_from_slice(&(file_len_without_meta + metadata.map_or(0, |m| m.len() as u64)).to_le_bytes());
+    f.extend_from_slice(
+        &(file_len_without_meta + metadata.map_or(0, |m| m.len() as u64)).to_le_bytes(),
+    );
     f.extend_from_slice(&metadata_ptr.to_le_bytes());
     f.extend_from_slice(b"fmt ");
     f.extend_from_slice(&52u64.to_le_bytes());
@@ -50,7 +62,13 @@ fn write_dsf(name: &str, channels: u32, rate: u32, groups: usize, metadata: Opti
 }
 
 /// Minimal DFF: FRM8 { FVER, PROP(SND){ FS, CHNL, CMPR }, DSD data }.
-fn write_dff(name: &str, channels: u16, rate: u32, data_bytes_total: usize, cmpr: &[u8; 4]) -> PathBuf {
+fn write_dff(
+    name: &str,
+    channels: u16,
+    rate: u32,
+    data_bytes_total: usize,
+    cmpr: &[u8; 4],
+) -> PathBuf {
     let mut prop = Vec::new();
     prop.extend_from_slice(b"SND ");
     prop.extend_from_slice(b"FS  ");

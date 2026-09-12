@@ -182,7 +182,6 @@ impl BufferingLatch {
         }
         Some((b.track_id, b.start_position_secs, b.duration_secs))
     }
-
 }
 
 impl DaemonRendererEngine {
@@ -283,7 +282,9 @@ impl QconnectRendererEngine for DaemonRendererEngine {
                 .begin(state.track_id, position_secs, state.duration);
             self.report_notify.notify_one();
         }
-        self.core().seek(position_secs).map_err(|err| err.to_string())
+        self.core()
+            .seek(position_secs)
+            .map_err(|err| err.to_string())
     }
     fn set_volume(&self, fraction: f32) -> Result<(), String> {
         // T10 (OD4, §7.4): volume-mode gate. In `Locked` mode the player stays
@@ -297,7 +298,9 @@ impl QconnectRendererEngine for DaemonRendererEngine {
             );
             return Ok(());
         }
-        self.core().set_volume(fraction).map_err(|err| err.to_string())
+        self.core()
+            .set_volume(fraction)
+            .map_err(|err| err.to_string())
     }
     fn get_playback_state(&self) -> PlaybackState {
         self.core().get_playback_state()
@@ -488,13 +491,9 @@ impl QconnectRendererEngine for DaemonRendererEngine {
 
     fn current_output_format(&self) -> Option<(u32, u32)> {
         let player = self.core().player();
-        Some((
-            player.state.get_sample_rate(),
-            player.state.get_bit_depth(),
-        ))
+        Some((player.state.get_sample_rate(), player.state.get_bit_depth()))
     }
 }
-
 
 async fn download_remote_audio(url: &str) -> Result<Vec<u8>, String> {
     let response = reqwest::Client::new()
@@ -612,7 +611,8 @@ mod tests {
         // must not report BUFFERING forever.
         if let Ok(mut guard) = latch.0.lock() {
             if let Some(b) = guard.as_mut() {
-                b.since = std::time::Instant::now() - (BUFFERING_MAX + std::time::Duration::from_secs(1));
+                b.since =
+                    std::time::Instant::now() - (BUFFERING_MAX + std::time::Duration::from_secs(1));
             }
         }
         assert!(latch.in_flight(9, 0).is_none());

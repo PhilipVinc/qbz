@@ -39,7 +39,11 @@ const FALLBACK_POLL: Duration = Duration::from_secs(2);
 /// * `PositionUpdated` on every wake while playing (~2 s cadence, the
 ///   scrobbler's timing source and the MPRIS progress feed),
 /// * `VolumeChanged` on a volume change.
-pub fn spawn(runtime: &Runtime, bus: broadcast::Sender<CoreEvent>, edge: Arc<Notify>) -> JoinHandle<()> {
+pub fn spawn(
+    runtime: &Runtime,
+    bus: broadcast::Sender<CoreEvent>,
+    edge: Arc<Notify>,
+) -> JoinHandle<()> {
     let weak: Weak<AppRuntime<DaemonAdapter>> = Arc::downgrade(runtime);
     tokio::spawn(async move {
         let mut last_track_id: u64 = 0;

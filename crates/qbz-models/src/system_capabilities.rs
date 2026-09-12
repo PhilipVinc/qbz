@@ -224,7 +224,10 @@ pub fn read_memory_pressure() -> Option<MemoryPressure> {
     let content = std::fs::read_to_string("/proc/meminfo").ok()?;
     let mem_available_kb = parse_meminfo_available_kb(&content)?;
     let profile = memory_profile();
-    Some(pressure_from_figures(mem_available_kb, profile.mem_total_kb))
+    Some(pressure_from_figures(
+        mem_available_kb,
+        profile.mem_total_kb,
+    ))
 }
 
 /// Pure detection given `/proc/meminfo` content. Falls back to Normal

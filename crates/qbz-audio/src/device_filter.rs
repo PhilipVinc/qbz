@@ -40,7 +40,11 @@ pub fn is_discard_sink(display: &str) -> bool {
 /// description collapses the wrappers and keeps the genuinely distinct
 /// outputs.
 fn dedup_key(display: &str) -> String {
-    display.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase()
+    display
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 /// Preference within a display group (lower = kept). When several PCM ids
@@ -147,8 +151,14 @@ mod tests {
         ));
         // null appears FIRST in the raw list but must be emitted last.
         let out = run(&[
-            ("null", "Discard all samples (playback) or generate zero samples (capture)"),
-            ("default", "Default ALSA Output (currently PipeWire Media Server)"),
+            (
+                "null",
+                "Discard all samples (playback) or generate zero samples (capture)",
+            ),
+            (
+                "default",
+                "Default ALSA Output (currently PipeWire Media Server)",
+            ),
             ("front:CARD=PCH,DEV=0", "HDA Intel PCH, ALC3254 Analog"),
         ]);
         let ids: Vec<&str> = out.iter().map(|r| r.0.as_str()).collect();
@@ -173,12 +183,21 @@ mod tests {
     #[test]
     fn keeps_genuinely_distinct_outputs() {
         let out = run(&[
-            ("default", "Default ALSA Output (currently PipeWire Media Server)"),
+            (
+                "default",
+                "Default ALSA Output (currently PipeWire Media Server)",
+            ),
             ("front:CARD=PCH,DEV=0", "HDA Intel PCH, ALC3254 Analog"),
             ("iec958:CARD=PCH,DEV=1", "HDA Intel PCH, ALC3254 Digital"),
             ("hdmi:CARD=PCH,DEV=3", "HDA Intel PCH, HDMI 0"),
-            ("front:CARD=C20,DEV=0", "Cambridge Audio USB Audio 2.0, USB Audio"),
-            ("surround40:CARD=C20,DEV=0", "Cambridge Audio USB Audio 2.0, USB Audio"),
+            (
+                "front:CARD=C20,DEV=0",
+                "Cambridge Audio USB Audio 2.0, USB Audio",
+            ),
+            (
+                "surround40:CARD=C20,DEV=0",
+                "Cambridge Audio USB Audio 2.0, USB Audio",
+            ),
         ]);
         let ids: Vec<&str> = out.iter().map(|r| r.0.as_str()).collect();
         assert_eq!(
@@ -197,7 +216,10 @@ mod tests {
     fn passes_pipewire_node_names_through() {
         let out = run(&[
             ("alsa_output.usb-Cambridge", "alsa_output.usb-Cambridge"),
-            ("alsa_output.pci-0000_00_1f.3", "alsa_output.pci-0000_00_1f.3"),
+            (
+                "alsa_output.pci-0000_00_1f.3",
+                "alsa_output.pci-0000_00_1f.3",
+            ),
         ]);
         assert_eq!(out.len(), 2);
     }
@@ -205,11 +227,17 @@ mod tests {
     #[test]
     fn first_seen_order_is_preserved() {
         let out = run(&[
-            ("hw:CARD=C20,DEV=0", "Cambridge Audio USB Audio 2.0, USB Audio"),
+            (
+                "hw:CARD=C20,DEV=0",
+                "Cambridge Audio USB Audio 2.0, USB Audio",
+            ),
             ("default", "Default ALSA Output"),
             // Better-ranked id for Cambridge appears later; it wins the group
             // but the group keeps its first-seen position (before Default).
-            ("front:CARD=C20,DEV=0", "Cambridge Audio USB Audio 2.0, USB Audio"),
+            (
+                "front:CARD=C20,DEV=0",
+                "Cambridge Audio USB Audio 2.0, USB Audio",
+            ),
         ]);
         let ids: Vec<&str> = out.iter().map(|r| r.0.as_str()).collect();
         assert_eq!(ids, vec!["front:CARD=C20,DEV=0", "default"]);

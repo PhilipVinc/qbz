@@ -22,7 +22,11 @@ pub(crate) fn wrap_with_key(
         .encrypt(nonce, plaintext)
         .map_err(|e| SecretError::Cipher(e.to_string()))?;
 
-    Ok(WrappedSecret::build(backend_marker, &nonce_bytes, &ciphertext))
+    Ok(WrappedSecret::build(
+        backend_marker,
+        &nonce_bytes,
+        &ciphertext,
+    ))
 }
 
 pub(crate) fn unwrap_with_key(

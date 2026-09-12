@@ -432,11 +432,7 @@ impl BlacklistService {
             set.insert(album_id.to_string());
         }
 
-        log::info!(
-            "[Blacklist] Added album: {} (id={})",
-            album_title,
-            album_id
-        );
+        log::info!("[Blacklist] Added album: {} (id={})", album_title, album_id);
         Ok(())
     }
 

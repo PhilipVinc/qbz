@@ -579,11 +579,7 @@ async fn run_native_transport_loop(
         // ~2.5× the ping interval: a healthy peer answers within one interval,
         // so two unanswered pings plus 2.5× silence is a confident half-open
         // signal without being trigger-happy.
-        let keepalive_deadline_ms = config
-            .keepalive_interval_ms
-            .max(1_000)
-            .saturating_mul(5)
-            / 2;
+        let keepalive_deadline_ms = config.keepalive_interval_ms.max(1_000).saturating_mul(5) / 2;
         let mut last_pong_at_ms = now_ms();
         let mut outstanding_pings: u32 = 0;
 

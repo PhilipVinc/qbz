@@ -88,15 +88,15 @@ impl QbzdConfig {
         let value: toml::Value = toml::from_str(text).map_err(|e| e.to_string())?;
         let mut warns = Vec::new();
         sweep(&value, "", &mut warns);
-        let cfg: QbzdConfig = value.try_into().map_err(|e: toml::de::Error| e.to_string())?;
+        let cfg: QbzdConfig = value
+            .try_into()
+            .map_err(|e: toml::de::Error| e.to_string())?;
         Ok((cfg, warns))
     }
     pub fn load(path: &std::path::Path) -> Result<(Self, Vec<String>), String> {
         match std::fs::read_to_string(path) {
             Ok(t) => Self::from_str(&t),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok((Self::default(), Vec::new()))
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok((Self::default(), Vec::new())),
             Err(e) => Err(format!("cannot read {}: {e}", path.display())),
         }
     }
@@ -150,8 +150,7 @@ mod tests {
         assert_eq!(open.server.token, None);
         assert!(warns.is_empty());
 
-        let (secured, warns) =
-            QbzdConfig::from_str("[server]\ntoken = \"s3cret\"\n").unwrap();
+        let (secured, warns) = QbzdConfig::from_str("[server]\ntoken = \"s3cret\"\n").unwrap();
         assert_eq!(secured.server.token.as_deref(), Some("s3cret"));
         assert!(warns.is_empty(), "known key must not warn: {warns:?}");
     }
@@ -164,8 +163,7 @@ mod tests {
         assert_eq!(cfg.server.token, Some("".to_string()));
         assert!(warns.is_empty());
 
-        let (cfg_ws, warns) =
-            QbzdConfig::from_str("[server]\ntoken = \"   \"\n").unwrap();
+        let (cfg_ws, warns) = QbzdConfig::from_str("[server]\ntoken = \"   \"\n").unwrap();
         assert_eq!(cfg_ws.server.token, Some("   ".to_string()));
         assert!(warns.is_empty());
     }

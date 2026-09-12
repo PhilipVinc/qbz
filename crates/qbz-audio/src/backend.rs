@@ -408,7 +408,10 @@ impl BackendManager {
         // (e.g. a non-default socket name, or Flatpak where the socket path
         // differs but the pulse shim is bridged).
         if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-            if std::path::Path::new(&runtime_dir).join("pipewire-0").exists() {
+            if std::path::Path::new(&runtime_dir)
+                .join("pipewire-0")
+                .exists()
+            {
                 return true;
             }
         }

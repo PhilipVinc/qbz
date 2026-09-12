@@ -336,7 +336,9 @@ mod tests {
         let dir = unique_test_dir("offline-store-netfolders");
         let store = OfflineModeStore::new_at(&dir).unwrap();
 
-        store.set_show_network_folders_in_manual_offline(true).unwrap();
+        store
+            .set_show_network_folders_in_manual_offline(true)
+            .unwrap();
         assert!(
             store
                 .get_settings()
@@ -355,7 +357,9 @@ mod tests {
         let id1 = store
             .queue_scrobble("Artist A", "Track 1", Some("Album X"), 1000)
             .unwrap();
-        let id2 = store.queue_scrobble("Artist B", "Track 2", None, 2000).unwrap();
+        let id2 = store
+            .queue_scrobble("Artist B", "Track 2", None, 2000)
+            .unwrap();
         assert_ne!(id1, id2);
         assert_eq!(store.queued_scrobble_count().unwrap(), 2);
 
@@ -387,8 +391,13 @@ mod tests {
         let dir = unique_test_dir("offline-store-snapshot");
         let store = OfflineModeStore::new_at(&dir).unwrap();
 
-        store.set_pre_offline_stream_first_track(Some(true)).unwrap();
-        assert_eq!(store.get_pre_offline_stream_first_track().unwrap(), Some(true));
+        store
+            .set_pre_offline_stream_first_track(Some(true))
+            .unwrap();
+        assert_eq!(
+            store.get_pre_offline_stream_first_track().unwrap(),
+            Some(true)
+        );
         store.set_pre_offline_stream_first_track(None).unwrap();
         assert_eq!(store.get_pre_offline_stream_first_track().unwrap(), None);
 

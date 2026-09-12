@@ -140,14 +140,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(track) => println!(
                 "[meta] \"{}\" - {} (album: {})",
                 track.title,
-                track.performer.as_ref().map(|p| p.name.as_str()).unwrap_or("?"),
-                track.album.as_ref().map(|a| a.title.as_str()).unwrap_or("?"),
+                track
+                    .performer
+                    .as_ref()
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("?"),
+                track
+                    .album
+                    .as_ref()
+                    .map(|a| a.title.as_str())
+                    .unwrap_or("?"),
             ),
             Err(e) => println!("[meta] get_track failed: {}", e),
         }
 
         // Step 1 raw: signed GET /track/lyricsUrl
-        let (status, body) = match client.get_lyrics_url_raw(track_id, language.as_deref()).await {
+        let (status, body) = match client
+            .get_lyrics_url_raw(track_id, language.as_deref())
+            .await
+        {
             Ok(pair) => pair,
             Err(e) => {
                 println!("[lyricsUrl] transport error: {}", e);
@@ -193,10 +204,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Typed full chain
         match client.get_lyrics(track_id, language.as_deref()).await {
             Ok(Some(doc)) => {
-                let content = doc.original.as_ref().expect("get_lyrics guarantees original");
+                let content = doc
+                    .original
+                    .as_ref()
+                    .expect("get_lyrics guarantees original");
                 println!(
                     "[get_lyrics] typed: {} with {} lines (translations: {:?}, writers: {:?})",
-                    if content.is_synced() { "SYNCED (wsync)" } else { "PLAIN" },
+                    if content.is_synced() {
+                        "SYNCED (wsync)"
+                    } else {
+                        "PLAIN"
+                    },
                     content.line_count(),
                     doc.translation_langs,
                     doc.writers
@@ -204,7 +222,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match doc.translation.as_ref() {
                     Some(translation) => println!(
                         "[get_lyrics] embedded translation: {} with {} lines (lang: {:?})",
-                        if translation.is_synced() { "SYNCED" } else { "PLAIN" },
+                        if translation.is_synced() {
+                            "SYNCED"
+                        } else {
+                            "PLAIN"
+                        },
                         translation.line_count(),
                         translation.lang()
                     ),

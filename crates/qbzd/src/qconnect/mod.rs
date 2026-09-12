@@ -236,8 +236,9 @@ impl DaemonQconnectService {
         // T10 (OD4, §7.4): resolve the volume policy from the daemon-root KV at
         // connect, so a later `qbzd settings reload` (T11) is picked up on the
         // next connect. Unset/unknown -> Software (the OD4 default).
-        let volume_mode =
-            engine::VolumeMode::from_kv(transport::load_volume_mode_at(&self.settings_db).as_deref());
+        let volume_mode = engine::VolumeMode::from_kv(
+            transport::load_volume_mode_at(&self.settings_db).as_deref(),
+        );
         let engine = DaemonRendererEngine::new(
             Arc::clone(&self.runtime),
             volume_mode,
@@ -474,7 +475,10 @@ impl DaemonQconnectService {
                     return;
                 }
                 Err(err) => {
-                    log::warn!("[QConnect] auto-connect attempt {} failed: {err}", attempt + 1);
+                    log::warn!(
+                        "[QConnect] auto-connect attempt {} failed: {err}",
+                        attempt + 1
+                    );
                 }
             }
             match schedule.get(attempt) {

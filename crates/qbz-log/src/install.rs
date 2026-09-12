@@ -29,9 +29,10 @@ pub fn install(default_level: &str) {
     // in #555 logs) — and each suppressed record now costs nothing, since
     // `log!` checks the filter before formatting. An explicit RUST_LOG still
     // replaces the whole default, so full zbus tracing stays one env var away.
-    let inner = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
-        format!("{default_level},zbus=warn,tracing=warn"),
-    ))
+    let inner = env_logger::Builder::from_env(
+        env_logger::Env::default()
+            .default_filter_or(format!("{default_level},zbus=warn,tracing=warn")),
+    )
     .build();
     let level = inner.filter();
     let file = open_log_file();

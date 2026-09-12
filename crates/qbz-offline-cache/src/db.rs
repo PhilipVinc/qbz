@@ -656,8 +656,7 @@ impl OfflineCacheDb {
         tx.execute("DELETE FROM cached_tracks WHERE album_id = ?1", [album_id])
             .map_err(|e| format!("Delete failed: {}", e))?;
 
-        tx.commit()
-            .map_err(|e| format!("Commit failed: {}", e))?;
+        tx.commit().map_err(|e| format!("Commit failed: {}", e))?;
 
         Ok((ids, bytes as u64))
     }
@@ -708,9 +707,12 @@ mod maintenance_tests {
     #[test]
     fn delete_album_tracks_returns_deleted_ids_and_freed_bytes() {
         let (_tmp, db) = fresh_db();
-        db.insert_track(&sample_track(1, Some("alb1")), "/p/1").unwrap();
-        db.insert_track(&sample_track(2, Some("alb1")), "/p/2").unwrap();
-        db.insert_track(&sample_track(3, Some("alb2")), "/p/3").unwrap();
+        db.insert_track(&sample_track(1, Some("alb1")), "/p/1")
+            .unwrap();
+        db.insert_track(&sample_track(2, Some("alb1")), "/p/2")
+            .unwrap();
+        db.insert_track(&sample_track(3, Some("alb2")), "/p/3")
+            .unwrap();
         db.mark_complete(1, 1000).unwrap();
         db.mark_complete(2, 2000).unwrap();
         db.mark_complete(3, 9999).unwrap();
@@ -729,8 +731,10 @@ mod maintenance_tests {
     #[test]
     fn get_album_tracks_returns_only_matching_album() {
         let (_tmp, db) = fresh_db();
-        db.insert_track(&sample_track(1, Some("alb1")), "/p/1").unwrap();
-        db.insert_track(&sample_track(2, Some("alb2")), "/p/2").unwrap();
+        db.insert_track(&sample_track(1, Some("alb1")), "/p/1")
+            .unwrap();
+        db.insert_track(&sample_track(2, Some("alb2")), "/p/2")
+            .unwrap();
 
         let alb1 = db.get_album_tracks("alb1").unwrap();
         assert_eq!(alb1.len(), 1);
@@ -740,8 +744,10 @@ mod maintenance_tests {
     #[test]
     fn reset_track_for_redownload_clears_progress_and_error() {
         let (_tmp, db) = fresh_db();
-        db.insert_track(&sample_track(1, Some("alb1")), "/p/1").unwrap();
-        db.update_status(1, OfflineCacheStatus::Failed, Some("boom")).unwrap();
+        db.insert_track(&sample_track(1, Some("alb1")), "/p/1")
+            .unwrap();
+        db.update_status(1, OfflineCacheStatus::Failed, Some("boom"))
+            .unwrap();
 
         db.reset_track_for_redownload(1).unwrap();
 

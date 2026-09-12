@@ -33,8 +33,8 @@ use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::adapter::DaemonAdapter;
 use super::DaemonQconnectInner;
+use crate::adapter::DaemonAdapter;
 
 /// Push the local core queue to the Connect session when it differs from the
 /// cloud's. No-op under any of the gates listed in the module docs. Echo-safe
@@ -81,8 +81,11 @@ pub async fn publish_local_queue_if_changed(
     {
         let state = sync_state.lock().await;
         if let Some(applied) = &state.last_applied_queue_state {
-            let applied_ids: Vec<u64> =
-                applied.queue_items.iter().map(|item| item.track_id).collect();
+            let applied_ids: Vec<u64> = applied
+                .queue_items
+                .iter()
+                .map(|item| item.track_id)
+                .collect();
             if applied_ids == ordered_ids {
                 return;
             }

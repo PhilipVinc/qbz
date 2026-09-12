@@ -21,7 +21,11 @@ pub fn set_offline(offline: bool) {
     if was != offline {
         log::info!(
             "[OfflineGate] Qobuz API gate {}",
-            if offline { "CLOSED (offline mode)" } else { "OPEN" }
+            if offline {
+                "CLOSED (offline mode)"
+            } else {
+                "OPEN"
+            }
         );
     }
 }

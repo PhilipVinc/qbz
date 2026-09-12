@@ -120,7 +120,12 @@ pub async fn probe_remote_stream_info(url: &str) -> Result<RemoteStreamInfo, Str
         .header("User-Agent", "Mozilla/5.0")
         .send()
         .await
-        .map_err(|err| format!("probe HEAD request failed: {}", describe_reqwest_error(&err)))?;
+        .map_err(|err| {
+            format!(
+                "probe HEAD request failed: {}",
+                describe_reqwest_error(&err)
+            )
+        })?;
 
     if !head_response.status().is_success() {
         return Err(format!(
@@ -143,7 +148,12 @@ pub async fn probe_remote_stream_info(url: &str) -> Result<RemoteStreamInfo, Str
         .header("Range", "bytes=0-65535")
         .send()
         .await
-        .map_err(|err| format!("probe range request failed: {}", describe_reqwest_error(&err)))?;
+        .map_err(|err| {
+            format!(
+                "probe range request failed: {}",
+                describe_reqwest_error(&err)
+            )
+        })?;
 
     if !range_response.status().is_success() {
         return Err(format!(

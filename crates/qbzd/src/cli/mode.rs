@@ -8,7 +8,10 @@ use crate::paths::ProfileRoots;
 pub async fn shuffle(host: Option<String>, mode: Option<String>, roots: &ProfileRoots) -> i32 {
     let m = mode.unwrap_or_else(|| "toggle".to_string());
     let client = ApiClient::new(host, roots);
-    match client.post("/api/playback/shuffle", serde_json::json!({ "mode": m })).await {
+    match client
+        .post("/api/playback/shuffle", serde_json::json!({ "mode": m }))
+        .await
+    {
         Ok(v) => {
             let on = v.get("shuffle").and_then(|x| x.as_bool()).unwrap_or(false);
             println!("shuffle {}", if on { "on" } else { "off" });
@@ -24,7 +27,10 @@ pub async fn shuffle(host: Option<String>, mode: Option<String>, roots: &Profile
 /// `qbzd repeat <off|all|one>`.
 pub async fn repeat(host: Option<String>, mode: String, roots: &ProfileRoots) -> i32 {
     let client = ApiClient::new(host, roots);
-    match client.post("/api/playback/repeat", serde_json::json!({ "mode": mode })).await {
+    match client
+        .post("/api/playback/repeat", serde_json::json!({ "mode": mode }))
+        .await
+    {
         Ok(v) => {
             let m = v.get("repeat").and_then(|x| x.as_str()).unwrap_or("off");
             println!("repeat {m}");

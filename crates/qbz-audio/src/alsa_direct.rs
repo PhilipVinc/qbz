@@ -301,7 +301,11 @@ static RING_FILL_LOGGED_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 fn process_millis() -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     // 1 ms floor so a stamp taken immediately is never mistaken for "never".
-    START.get_or_init(std::time::Instant::now).elapsed().as_millis().max(1) as u64
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis()
+        .max(1) as u64
 }
 
 /// Whether a fill of `pct` should be logged now, given `last_logged_ms` (a
@@ -312,7 +316,8 @@ fn process_millis() -> u64 {
 /// and the log becomes the disk contention it is trying to measure.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn should_log_ring_fill(pct: u8, last_logged_ms: u64, now_ms: u64, every_ms: u64) -> bool {
-    pct < RING_FILL_WARN_PCT && (last_logged_ms == 0 || now_ms.saturating_sub(last_logged_ms) >= every_ms)
+    pct < RING_FILL_WARN_PCT
+        && (last_logged_ms == 0 || now_ms.saturating_sub(last_logged_ms) >= every_ms)
 }
 
 /// Milliseconds of digital silence written before the PCM is halted or drained.
@@ -530,13 +535,8 @@ impl AlsaDirectStream {
         // immediately before a real `PCM::new()` and held for as long as that
         // PCM is open.
         // TODO(Task 5): replace second arg with user-facing DAC name from settings.
-        let reservation =
-            crate::DeviceReservation::acquire(device_id, device_id).map_err(|e| {
-                format!(
-                    "Cannot acquire exclusive device '{}': {}",
-                    device_id, e
-                )
-            })?;
+        let reservation = crate::DeviceReservation::acquire(device_id, device_id)
+            .map_err(|e| format!("Cannot acquire exclusive device '{}': {}", device_id, e))?;
 
         // Defensive margin only matters when the reservation actually displaced
         // a holder (or could have). On the degraded D-Bus path the bus name is
@@ -756,9 +756,7 @@ impl AlsaDirectStream {
                 }
             }
             let Some((format, le)) = selected else {
-                return Err(
-                    "Device has no native DSD format (kernel quirk missing?)".to_string()
-                );
+                return Err("Device has no native DSD format (kernel quirk missing?)".to_string());
             };
             hwp.set_channels(channels as u32)
                 .map_err(|e| format!("Failed to set channels: {}", e))?;
@@ -793,7 +791,7 @@ impl AlsaDirectStream {
                 channels,
                 format: selected.0,
                 device_id: device_id.to_string(),
-            mixer_device: None,
+                mixer_device: None,
                 // Last field: drops after `pcm` (see field-order note).
                 _reservation: reservation,
             },
@@ -819,7 +817,11 @@ impl AlsaDirectStream {
         match io.writei(samples) {
             Ok(written) => {
                 if written != frames {
-                    log::warn!("[ALSA Direct] Partial DoP write: {} / {} frames", written, frames);
+                    log::warn!(
+                        "[ALSA Direct] Partial DoP write: {} / {} frames",
+                        written,
+                        frames
+                    );
                 }
                 Ok(())
             }
@@ -1082,8 +1084,8 @@ impl AlsaDirectStream {
             // rather than from the setting that asked for it.
             let ring_ms = ((buffer_frames as u64 * 1000) / u64::from(self.sample_rate)) as u32;
             let depth_ms = resolve_keepalive_depth_ms(target_ms, ring_ms);
-            let target = ((self.sample_rate as usize * depth_ms as usize) / 1000)
-                .min(buffer_frames);
+            let target =
+                ((self.sample_rate as usize * depth_ms as usize) / 1000).min(buffer_frames);
             (frame_bytes as usize, held, target)
         };
 
@@ -1115,11 +1117,7 @@ impl AlsaDirectStream {
     /// says it has (so `writei` cannot block), and when there is no space it
     /// waits at most `WAIT_MS` before letting go of the lock and re-checking
     /// `cancel`. The worst a stop can wait for the mutex is one `WAIT_MS`.
-    fn write_bytes_interruptible(
-        &self,
-        data: &[u8],
-        cancel: &AtomicBool,
-    ) -> Result<(), String> {
+    fn write_bytes_interruptible(&self, data: &[u8], cancel: &AtomicBool) -> Result<(), String> {
         /// Long enough not to spin, short enough that a stop is never stuck
         /// behind it. The ALSA buffer is hundreds of ms, so this is well inside
         /// one refill.
@@ -1153,7 +1151,10 @@ impl AlsaDirectStream {
             // Checked before every step, and the step is bounded, so a stop
             // takes effect promptly however wedged the device is.
             if cancel.load(Ordering::SeqCst) {
-                log::debug!("[ALSA Direct] write cancelled with {} bytes left", data.len() - offset);
+                log::debug!(
+                    "[ALSA Direct] write cancelled with {} bytes left",
+                    data.len() - offset
+                );
                 return Ok(());
             }
 
@@ -1299,7 +1300,8 @@ impl AlsaDirectStream {
         if pad_ms == 0 {
             return;
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(u64::from(pad_ms) * 2);
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(u64::from(pad_ms) * 2);
         let (frame_bytes, frames) = {
             let pcm = self.pcm.lock().unwrap();
             // Nothing to settle unless the clock is actually running.
@@ -1368,7 +1370,10 @@ impl AlsaDirectStream {
             // libc::EBADFD — the PCM was not in a running-ish state.
             const EBADFD: i32 = 77;
             if e.errno() as i32 != EBADFD {
-                log::warn!("[ALSA Direct] drop on stop failed (continuing to prepare): {}", e);
+                log::warn!(
+                    "[ALSA Direct] drop on stop failed (continuing to prepare): {}",
+                    e
+                );
             }
         }
         pcm.prepare()
@@ -1507,9 +1512,7 @@ impl AlsaDirectStream {
         if Self::is_hw_device(device_id) {
             return true;
         }
-        !device_id.is_empty()
-            && !device_id.contains(':')
-            && !GENERIC_ALIASES.contains(&device_id)
+        !device_id.is_empty() && !device_id.contains(':') && !GENERIC_ALIASES.contains(&device_id)
     }
 }
 
@@ -1573,7 +1576,12 @@ mod tests {
 
     #[test]
     fn hardware_ids_open_directly() {
-        for id in ["hw:0,0", "hw:CARD=Modius,DEV=0", "plughw:1,0", "front:CARD=X"] {
+        for id in [
+            "hw:0,0",
+            "hw:CARD=Modius,DEV=0",
+            "plughw:1,0",
+            "front:CARD=X",
+        ] {
             assert!(AlsaDirectStream::supports_direct_open(id), "{id}");
         }
     }
@@ -1711,9 +1719,19 @@ mod ring_fill_tests {
         // First dip, nothing logged yet.
         assert!(should_log_ring_fill(10, 0, 5_000, RING_FILL_LOG_EVERY_MS));
         // The same dip, one writer chunk later: suppressed.
-        assert!(!should_log_ring_fill(10, 5_000, 5_050, RING_FILL_LOG_EVERY_MS));
+        assert!(!should_log_ring_fill(
+            10,
+            5_000,
+            5_050,
+            RING_FILL_LOG_EVERY_MS
+        ));
         // Still dipping a window later: logged again.
-        assert!(should_log_ring_fill(10, 5_000, 7_000, RING_FILL_LOG_EVERY_MS));
+        assert!(should_log_ring_fill(
+            10,
+            5_000,
+            7_000,
+            RING_FILL_LOG_EVERY_MS
+        ));
     }
 
     #[test]
@@ -1818,11 +1836,19 @@ mod mixer_name_tests {
 
         out.clear();
         encode_into(SampleLayout::S24Le3, &[half], &mut out);
-        assert_eq!(out, [0x00, 0x00, 0x40], "S24_3LE: 0x400000 in three LE bytes");
+        assert_eq!(
+            out,
+            [0x00, 0x00, 0x40],
+            "S24_3LE: 0x400000 in three LE bytes"
+        );
 
         out.clear();
         encode_into(SampleLayout::S24Le, &[half], &mut out);
-        assert_eq!(out, (4_194_304i32).to_le_bytes(), "S24 in a 32-bit container");
+        assert_eq!(
+            out,
+            (4_194_304i32).to_le_bytes(),
+            "S24 in a 32-bit container"
+        );
 
         out.clear();
         encode_into(SampleLayout::S32Le, &[half], &mut out);

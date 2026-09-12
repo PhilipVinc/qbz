@@ -220,7 +220,9 @@ impl DsfReader {
             }
         };
         if block_size == 0 || block_size > (1 << 20) {
-            return Err(DsdError::Corrupt(format!("bad DSF block size {block_size}")));
+            return Err(DsdError::Corrupt(format!(
+                "bad DSF block size {block_size}"
+            )));
         }
 
         // "data" chunk header; sample data starts right after.

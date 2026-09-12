@@ -21,7 +21,11 @@ pub async fn discover(
     roots: &ProfileRoots,
 ) -> i32 {
     let sec = section.unwrap_or_else(|| "index".to_string());
-    let mut path = format!("/api/discover?section={}&limit={}", urlencoding::encode(&sec), limit);
+    let mut path = format!(
+        "/api/discover?section={}&limit={}",
+        urlencoding::encode(&sec),
+        limit
+    );
     if let Some(g) = genre.filter(|s| !s.is_empty()) {
         path.push_str(&format!("&genre={}", urlencoding::encode(&g)));
     }

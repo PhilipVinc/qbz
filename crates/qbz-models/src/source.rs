@@ -278,16 +278,28 @@ mod tests {
 
     #[test]
     fn source_str_roundtrip_and_default() {
-        assert_eq!(PlaybackSource::from_source_str(Some("local")), PlaybackSource::Local);
-        assert_eq!(PlaybackSource::from_source_str(Some("plex")), PlaybackSource::Plex);
+        assert_eq!(
+            PlaybackSource::from_source_str(Some("local")),
+            PlaybackSource::Local
+        );
+        assert_eq!(
+            PlaybackSource::from_source_str(Some("plex")),
+            PlaybackSource::Plex
+        );
         assert_eq!(
             PlaybackSource::from_source_str(Some("qobuz_download")),
             PlaybackSource::OfflineCache
         );
-        assert_eq!(PlaybackSource::from_source_str(Some("qobuz")), PlaybackSource::Qobuz);
+        assert_eq!(
+            PlaybackSource::from_source_str(Some("qobuz")),
+            PlaybackSource::Qobuz
+        );
         // Unknown / absent -> Qobuz (historical default).
         assert_eq!(PlaybackSource::from_source_str(None), PlaybackSource::Qobuz);
-        assert_eq!(PlaybackSource::from_source_str(Some("???")), PlaybackSource::Qobuz);
+        assert_eq!(
+            PlaybackSource::from_source_str(Some("???")),
+            PlaybackSource::Qobuz
+        );
         for s in [
             PlaybackSource::Qobuz,
             PlaybackSource::OfflineCache,
@@ -310,9 +322,18 @@ mod tests {
         assert_eq!(PlaybackSource::from_source_str_strict(Some("qobuz")), Qobuz);
         assert_eq!(PlaybackSource::from_source_str_strict(Some("local")), Local);
         assert_eq!(PlaybackSource::from_source_str_strict(Some("plex")), Plex);
-        assert_eq!(PlaybackSource::from_source_str_strict(Some("qobuz_download")), OfflineCache);
-        assert_eq!(PlaybackSource::from_source_str_strict(None), ExternalUnknown);
-        assert_eq!(PlaybackSource::from_source_str_strict(Some("???")), ExternalUnknown);
+        assert_eq!(
+            PlaybackSource::from_source_str_strict(Some("qobuz_download")),
+            OfflineCache
+        );
+        assert_eq!(
+            PlaybackSource::from_source_str_strict(None),
+            ExternalUnknown
+        );
+        assert_eq!(
+            PlaybackSource::from_source_str_strict(Some("???")),
+            ExternalUnknown
+        );
         // Lenient parser still defaults to Qobuz (playback compatibility).
         assert_eq!(PlaybackSource::from_source_str(None), PlaybackSource::Qobuz);
     }
@@ -377,8 +398,11 @@ mod tests {
     fn artwork_ref_with_plex_resolves_library_path() {
         // Plex thumb path + creds → PlexThumb (the now-playing/queue/MPRIS path).
         assert_eq!(
-            track_with(Some("plex"), Some("/library/metadata/42/thumb/1"))
-                .artwork_ref_with_plex("http://plex.local:32400", "tok", None),
+            track_with(Some("plex"), Some("/library/metadata/42/thumb/1")).artwork_ref_with_plex(
+                "http://plex.local:32400",
+                "tok",
+                None
+            ),
             ArtworkRef::PlexThumb {
                 base_url: "http://plex.local:32400".into(),
                 token: "tok".into(),
@@ -388,8 +412,11 @@ mod tests {
         );
         // `/photo/...` transcode paths classify the same way.
         assert_eq!(
-            track_with(Some("plex"), Some("/photo/:/transcode?url=x"))
-                .artwork_ref_with_plex("http://plex.local:32400", "tok", None),
+            track_with(Some("plex"), Some("/photo/:/transcode?url=x")).artwork_ref_with_plex(
+                "http://plex.local:32400",
+                "tok",
+                None
+            ),
             ArtworkRef::PlexThumb {
                 base_url: "http://plex.local:32400".into(),
                 token: "tok".into(),
@@ -399,8 +426,11 @@ mod tests {
         );
         // A size is threaded straight into the ref (URL form decided later).
         assert_eq!(
-            track_with(Some("plex"), Some("/library/metadata/42/thumb/1"))
-                .artwork_ref_with_plex("http://plex.local:32400", "tok", Some(264)),
+            track_with(Some("plex"), Some("/library/metadata/42/thumb/1")).artwork_ref_with_plex(
+                "http://plex.local:32400",
+                "tok",
+                Some(264)
+            ),
             ArtworkRef::PlexThumb {
                 base_url: "http://plex.local:32400".into(),
                 token: "tok".into(),
@@ -414,20 +444,29 @@ mod tests {
     fn artwork_ref_with_plex_falls_back_without_creds_or_non_plex() {
         // Missing creds → no PlexThumb; falls back to LocalFile (the raw path).
         assert_eq!(
-            track_with(Some("plex"), Some("/library/metadata/42/thumb/1"))
-                .artwork_ref_with_plex("", "", Some(264)),
+            track_with(Some("plex"), Some("/library/metadata/42/thumb/1")).artwork_ref_with_plex(
+                "",
+                "",
+                Some(264)
+            ),
             ArtworkRef::LocalFile("/library/metadata/42/thumb/1".into())
         );
         // Non-Plex value is untouched: http stays Remote even with creds.
         assert_eq!(
-            track_with(Some("qobuz"), Some("https://x/cover.jpg"))
-                .artwork_ref_with_plex("http://plex.local:32400", "tok", Some(264)),
+            track_with(Some("qobuz"), Some("https://x/cover.jpg")).artwork_ref_with_plex(
+                "http://plex.local:32400",
+                "tok",
+                Some(264)
+            ),
             ArtworkRef::Remote("https://x/cover.jpg".into())
         );
         // A local file:// path stays LocalFile, never mistaken for Plex.
         assert_eq!(
-            track_with(Some("local"), Some("file:///home/u/cover.jpg"))
-                .artwork_ref_with_plex("http://plex.local:32400", "tok", Some(264)),
+            track_with(Some("local"), Some("file:///home/u/cover.jpg")).artwork_ref_with_plex(
+                "http://plex.local:32400",
+                "tok",
+                Some(264)
+            ),
             ArtworkRef::LocalFile("/home/u/cover.jpg".into())
         );
     }
@@ -483,11 +522,21 @@ mod tests {
         );
         // None / Some(0) → raw tokenized path (no transcode).
         assert_eq!(
-            plex_thumb_url("http://plex.local:32400", "tok", "/library/metadata/42/thumb/1", None),
+            plex_thumb_url(
+                "http://plex.local:32400",
+                "tok",
+                "/library/metadata/42/thumb/1",
+                None
+            ),
             "http://plex.local:32400/library/metadata/42/thumb/1?X-Plex-Token=tok"
         );
         assert_eq!(
-            plex_thumb_url("http://plex.local:32400", "tok", "/library/metadata/42/thumb/1", Some(0)),
+            plex_thumb_url(
+                "http://plex.local:32400",
+                "tok",
+                "/library/metadata/42/thumb/1",
+                Some(0)
+            ),
             "http://plex.local:32400/library/metadata/42/thumb/1?X-Plex-Token=tok"
         );
     }

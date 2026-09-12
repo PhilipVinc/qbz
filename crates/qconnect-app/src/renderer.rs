@@ -369,12 +369,8 @@ pub async fn apply_renderer_command(
                 let _ = projected_track; // retained for shuffle projection above
                 if let Some(command_track) = current_track.as_ref() {
                     if !projection_applied {
-                        if let Err(err) =
-                            align_queue_cursor(engine, command_track.track_id).await
-                        {
-                            log::warn!(
-                                "[QConnect] Failed to align CoreBridge queue cursor: {err}"
-                            );
+                        if let Err(err) = align_queue_cursor(engine, command_track.track_id).await {
+                            log::warn!("[QConnect] Failed to align CoreBridge queue cursor: {err}");
                         }
                     }
 
@@ -448,8 +444,7 @@ pub async fn apply_renderer_command(
                         .map(|(_, ts)| ts.elapsed() < HANDOFF_ECHO_WINDOW)
                         .unwrap_or(false)
                 };
-                just_loaded
-                    && (*current_position_ms).map(|ms| ms <= 1_000).unwrap_or(true)
+                just_loaded && (*current_position_ms).map(|ms| ms <= 1_000).unwrap_or(true)
             };
 
             if let Some(value) = resolved_playing_state {
@@ -658,7 +653,9 @@ pub async fn apply_renderer_command(
                         "[QConnect] SetActive(false) within the load window — join replay, not a handoff"
                     );
                 } else {
-                    log::info!("[QConnect] SetActive(false): stopping, the session renders elsewhere");
+                    log::info!(
+                        "[QConnect] SetActive(false): stopping, the session renders elsewhere"
+                    );
                     // Recorded only on the branch that actually stands down, so
                     // the published role never contradicts the engine.
                     sync_state.lock().await.local_render_active = Some(false);
@@ -1122,7 +1119,9 @@ mod tests {
     use tokio::sync::Mutex;
 
     use crate::renderer_engine::QconnectRendererEngine;
-    use crate::{QConnectQueueState, QConnectRendererState, QconnectRemoteSyncState, RendererCommand};
+    use crate::{
+        QConnectQueueState, QConnectRendererState, QconnectRemoteSyncState, RendererCommand,
+    };
 
     #[derive(Default)]
     struct MockCalls {
@@ -1703,7 +1702,11 @@ mod tests {
             .await
             .unwrap();
         let calls = engine.calls();
-        assert_eq!(calls.start_track_streams, vec![410251969], "the peer's track");
+        assert_eq!(
+            calls.start_track_streams,
+            vec![410251969],
+            "the peer's track"
+        );
         assert_eq!(calls.start_positions, vec![79], "at the peer's position");
     }
 
@@ -1800,7 +1803,11 @@ mod tests {
         apply_renderer_command(&engine, &sync, &cmd, &QConnectRendererState::default())
             .await
             .unwrap();
-        assert_eq!(engine.calls().pauses, 1, "a real pause must reach the engine");
+        assert_eq!(
+            engine.calls().pauses,
+            1,
+            "a real pause must reach the engine"
+        );
     }
 
     /// A stop for a track we did NOT just load is a real stop.
@@ -1898,7 +1905,11 @@ mod tests {
     #[tokio::test]
     async fn apply_renderer_command_setshufflemode_is_flag_only() {
         let mut engine = MockEngine::new();
-        engine.queue_tracks = vec![mock_queue_track(1), mock_queue_track(2), mock_queue_track(3)];
+        engine.queue_tracks = vec![
+            mock_queue_track(1),
+            mock_queue_track(2),
+            mock_queue_track(3),
+        ];
         engine.queue_index = Some(0);
         let sync = sync();
         let cmd = RendererCommand::SetShuffleMode { shuffle_mode: true };
@@ -2015,7 +2026,9 @@ mod tests {
         let items: Vec<QueueItem> = (0..13).map(|i| qi(410609157 + i, i)).collect();
         let pushed = pushed_queue_state(QueueVersion::new(4, 1), items, 12);
 
-        materialize_remote_queue(&engine, &sync, &pushed).await.unwrap();
+        materialize_remote_queue(&engine, &sync, &pushed)
+            .await
+            .unwrap();
 
         assert_eq!(
             sync.lock().await.last_materialized_start_index,
@@ -2049,7 +2062,9 @@ mod tests {
         let items: Vec<QueueItem> = (0..13).map(|i| qi(410609157 + i, i)).collect();
         let pushed = pushed_queue_state(QueueVersion::new(4, 1), items, 12);
 
-        materialize_remote_queue(&engine, &sync, &pushed).await.unwrap();
+        materialize_remote_queue(&engine, &sync, &pushed)
+            .await
+            .unwrap();
 
         assert_eq!(sync.lock().await.last_materialized_start_index, Some(12));
         assert!(
@@ -2115,7 +2130,9 @@ mod tests {
             None,
         );
 
-        materialize_remote_queue(&engine, &sync, &handoff).await.unwrap();
+        materialize_remote_queue(&engine, &sync, &handoff)
+            .await
+            .unwrap();
 
         assert!(
             engine.calls().start_track_streams.is_empty(),
@@ -2143,7 +2160,9 @@ mod tests {
             1, // the position the peer was playing
         );
 
-        materialize_remote_queue(&engine, &sync, &cast).await.unwrap();
+        materialize_remote_queue(&engine, &sync, &cast)
+            .await
+            .unwrap();
 
         assert!(
             engine.calls().start_track_streams.is_empty(),
@@ -2171,7 +2190,9 @@ mod tests {
         let items: Vec<QueueItem> = (0..13).map(|i| qi(410609157 + i, i)).collect();
         let plain = queue_state(QueueVersion::new(4, 1), items, false, None);
 
-        materialize_remote_queue(&engine, &sync, &plain).await.unwrap();
+        materialize_remote_queue(&engine, &sync, &plain)
+            .await
+            .unwrap();
 
         assert_eq!(sync.lock().await.last_materialized_start_index, Some(1));
         assert!(engine.calls().start_track_streams.is_empty());

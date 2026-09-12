@@ -270,7 +270,10 @@ impl WizardState {
     pub fn set_configs(&mut self, data: Vec<DacConfigData>) {
         self.configs = data
             .into_iter()
-            .map(|d| ConfigBlock { data: d, flash: None })
+            .map(|d| ConfigBlock {
+                data: d,
+                flash: None,
+            })
             .collect();
         self.review_focus = 0;
         self.review_scroll = 0;
@@ -427,7 +430,10 @@ impl WizardState {
                 SelectPopup::new(s::WIZ_DISTRO, opts, self.distro_index, false),
             ));
         } else {
-            let opts: Vec<String> = InitSystem::ALL.iter().map(|i| i.label().to_string()).collect();
+            let opts: Vec<String> = InitSystem::ALL
+                .iter()
+                .map(|i| i.label().to_string())
+                .collect();
             self.check_editor = Some((
                 CheckField::Init,
                 SelectPopup::new(s::WIZ_INIT, opts, self.init_index, false),
@@ -508,7 +514,10 @@ impl WizardState {
             }
             KeyCode::PageUp => self.review_scroll = self.review_scroll.saturating_sub(8),
             KeyCode::PageDown => {
-                self.review_scroll = self.review_scroll.saturating_add(8).min(self.max_review_scroll());
+                self.review_scroll = self
+                    .review_scroll
+                    .saturating_add(8)
+                    .min(self.max_review_scroll());
             }
             KeyCode::Char('c') => self.copy_focused_block(),
             KeyCode::Char('C') => self.copy_all_blocks(),
@@ -566,7 +575,10 @@ impl WizardState {
         }
         // Prepend the backup command — "copy all" gives the operator a back-up +
         // every DAC's config in one paste.
-        let mut parts = vec![format!("# ── back up first ──\n{}", wizard_core::BACKUP_CMD)];
+        let mut parts = vec![format!(
+            "# ── back up first ──\n{}",
+            wizard_core::BACKUP_CMD
+        )];
         parts.extend(
             self.configs
                 .iter()
@@ -595,11 +607,14 @@ impl WizardState {
             match clipboard::write_wizard_file(&block.data.short(), &text) {
                 Ok(path) => {
                     block.flash = Some((clipboard::Tier::File, Instant::now()));
-                    self.status_flash =
-                        Some((format!("{} {}", s::WIZ_SAVED_TO, path.display()), Instant::now()));
+                    self.status_flash = Some((
+                        format!("{} {}", s::WIZ_SAVED_TO, path.display()),
+                        Instant::now(),
+                    ));
                 }
                 Err(e) => {
-                    self.status_flash = Some((format!("{}: {e}", s::WIZ_SAVE_FAILED), Instant::now()));
+                    self.status_flash =
+                        Some((format!("{}: {e}", s::WIZ_SAVE_FAILED), Instant::now()));
                 }
             }
         }
@@ -670,22 +685,38 @@ impl WizardState {
     }
 
     fn draw_check(&self, f: &mut Frame, area: Rect) {
-        let distro = Distro::ALL.get(self.distro_index).copied().unwrap_or(Distro::Other);
-        let init = InitSystem::ALL.get(self.init_index).copied().unwrap_or(InitSystem::Unknown);
+        let distro = Distro::ALL
+            .get(self.distro_index)
+            .copied()
+            .unwrap_or(Distro::Other);
+        let init = InitSystem::ALL
+            .get(self.init_index)
+            .copied()
+            .unwrap_or(InitSystem::Unknown);
         let width = area.width;
         let mut lines: Vec<Line> = Vec::new();
 
         // Health verdict (blind inside a sandbox — show reference commands only).
         if self.sandbox != Sandbox::None {
-            lines.extend(widgets::wrapped_note(&s::wiz_sandbox_note(sandbox_name(self.sandbox)), width, theme::warn()));
+            lines.extend(widgets::wrapped_note(
+                &s::wiz_sandbox_note(sandbox_name(self.sandbox)),
+                width,
+                theme::warn(),
+            ));
         } else if let Some(h) = &self.health {
             if h.is_ready() {
                 lines.push(Line::from(Span::styled(s::WIZ_HEALTH_READY, theme::ok())));
             } else {
-                lines.push(Line::from(Span::styled(s::WIZ_HEALTH_ATTENTION, theme::warn())));
+                lines.push(Line::from(Span::styled(
+                    s::WIZ_HEALTH_ATTENTION,
+                    theme::warn(),
+                )));
             }
         } else {
-            lines.push(Line::from(Span::styled(s::WIZ_HEALTH_CHECKING, theme::dim())));
+            lines.push(Line::from(Span::styled(
+                s::WIZ_HEALTH_CHECKING,
+                theme::dim(),
+            )));
         }
         lines.push(widgets::blank());
 
@@ -704,21 +735,38 @@ impl WizardState {
             Vec::new()
         };
         if rows.is_empty() && self.sandbox == Sandbox::None && self.health.is_some() {
-            lines.extend(widgets::wrapped_note(s::WIZ_NO_REMEDIATION, width, theme::dim()));
+            lines.extend(widgets::wrapped_note(
+                s::WIZ_NO_REMEDIATION,
+                width,
+                theme::dim(),
+            ));
         }
         for (caption, command) in &rows {
             // Captions are prose → wrap; commands are copy-paste → never wrap.
             for cl in widgets::wrap(caption, width.saturating_sub(4).max(1) as usize) {
-                lines.push(Line::from(Span::styled(format!("  • {cl}"), Style::default())));
+                lines.push(Line::from(Span::styled(
+                    format!("  • {cl}"),
+                    Style::default(),
+                )));
             }
             for cmd_line in command.lines() {
-                lines.push(Line::from(Span::styled(format!("      {cmd_line}"), theme::dim())));
+                lines.push(Line::from(Span::styled(
+                    format!("      {cmd_line}"),
+                    theme::dim(),
+                )));
             }
         }
         f.render_widget(Paragraph::new(lines), area);
     }
 
-    fn check_block(&self, idx: usize, label: &'static str, value: &str, ctrl_col: u16, width: u16) -> Vec<Line<'static>> {
+    fn check_block(
+        &self,
+        idx: usize,
+        label: &'static str,
+        value: &str,
+        ctrl_col: u16,
+        width: u16,
+    ) -> Vec<Line<'static>> {
         let focused = self.check_focus == idx && self.check_editor.is_none();
         widgets::field_block(
             &widgets::Field {
@@ -740,18 +788,42 @@ impl WizardState {
         if self.detecting {
             lines.push(Line::from(Span::styled(s::WIZ_DETECTING, theme::dim())));
         } else if self.candidates.is_empty() {
-            lines.extend(widgets::wrapped_note(s::WIZ_NO_DACS, area.width, theme::warn()));
+            lines.extend(widgets::wrapped_note(
+                s::WIZ_NO_DACS,
+                area.width,
+                theme::warn(),
+            ));
         } else {
-            lines.extend(widgets::wrapped_note(s::WIZ_SELECT_INTRO, area.width, theme::dim()));
+            lines.extend(widgets::wrapped_note(
+                s::WIZ_SELECT_INTRO,
+                area.width,
+                theme::dim(),
+            ));
             lines.push(widgets::blank());
             for (i, c) in self.candidates.iter().enumerate() {
                 let mark = if c.checked { "[x]" } else { "[ ]" };
-                let badge = if c.looks_like_dac { s::WIZ_DAC_BADGE } else { "" };
-                let deflt = if c.is_default { s::WIZ_DEFAULT_BADGE } else { "" };
-                let bus = if c.bus.is_empty() { String::new() } else { format!(" ({})", c.bus) };
+                let badge = if c.looks_like_dac {
+                    s::WIZ_DAC_BADGE
+                } else {
+                    ""
+                };
+                let deflt = if c.is_default {
+                    s::WIZ_DEFAULT_BADGE
+                } else {
+                    ""
+                };
+                let bus = if c.bus.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", c.bus)
+                };
                 let text = format!("{mark} {}{bus}{badge}{deflt}", c.description);
                 let focused = i == self.dac_focus;
-                let style = if focused { theme::selection() } else { Style::default() };
+                let style = if focused {
+                    theme::selection()
+                } else {
+                    Style::default()
+                };
                 lines.push(Line::from(Span::styled(format!("  {text}"), style)));
                 if !c.rates_label.is_empty() {
                     lines.push(widgets::note_line(&format!("supports {}", c.rates_label)));
@@ -785,7 +857,10 @@ impl WizardState {
 
         // Reserve the bottom row for the status flash + a fixed footer line.
         let body_h = area.height.saturating_sub(1);
-        let body = Rect { height: body_h, ..area };
+        let body = Rect {
+            height: body_h,
+            ..area
+        };
 
         let mut lines: Vec<Line> = Vec::new();
         // A backup reminder above the blocks (dim).
@@ -797,19 +872,30 @@ impl WizardState {
         f.render_widget(Paragraph::new(lines).scroll((self.review_scroll, 0)), body);
 
         // Footer: transient status flash (copy/save result) else the safety note.
-        let footer = Rect { y: area.y + area.height.saturating_sub(1), height: 1, ..area };
+        let footer = Rect {
+            y: area.y + area.height.saturating_sub(1),
+            height: 1,
+            ..area
+        };
         let footer_line = match &self.status_flash {
             Some((msg, at)) if at.elapsed() < STATUS_FLASH => {
                 Line::from(Span::styled(format!(" {msg}"), theme::ok()))
             }
-            _ => Line::from(Span::styled(format!(" {}", s::WIZ_REVIEW_FOOTER), theme::dim())),
+            _ => Line::from(Span::styled(
+                format!(" {}", s::WIZ_REVIEW_FOOTER),
+                theme::dim(),
+            )),
         };
         f.render_widget(Paragraph::new(footer_line), footer);
     }
 
     fn draw_test(&self, f: &mut Frame, area: Rect) {
         let mut lines: Vec<Line> = Vec::new();
-        lines.extend(widgets::wrapped_note(s::WIZ_TEST_INTRO, area.width, theme::dim()));
+        lines.extend(widgets::wrapped_note(
+            s::WIZ_TEST_INTRO,
+            area.width,
+            theme::dim(),
+        ));
         lines.push(widgets::blank());
 
         if let Some(note) = &self.test_note {
@@ -824,7 +910,10 @@ impl WizardState {
                 }
                 _ => s::WIZ_TEST_NOTHING.to_string(),
             };
-            lines.push(Line::from(Span::styled(format!("  {req}"), Style::default())));
+            lines.push(Line::from(Span::styled(
+                format!("  {req}"),
+                Style::default(),
+            )));
             match &self.test_negotiated {
                 Some(n) => {
                     let matched = self
@@ -881,9 +970,16 @@ impl WizardState {
             lines.push(Line::from(wl));
         }
         lines.push(widgets::blank());
-        lines.extend(widgets::wrapped_note(s::WIZ_DONE_REMINDER, area.width, theme::warn()));
+        lines.extend(widgets::wrapped_note(
+            s::WIZ_DONE_REMINDER,
+            area.width,
+            theme::warn(),
+        ));
         // The init-aware "(re)start the audio services" command for this box.
-        let init = InitSystem::ALL.get(self.init_index).copied().unwrap_or(InitSystem::Unknown);
+        let init = InitSystem::ALL
+            .get(self.init_index)
+            .copied()
+            .unwrap_or(InitSystem::Unknown);
         lines.push(widgets::blank());
         lines.push(widgets::note_line(s::WIZ_DONE_RESTART));
         for cmd_line in wizard_core::restart_cmd(init).lines() {
@@ -923,7 +1019,11 @@ fn block_line_count(data: &DacConfigData) -> u16 {
 /// as a bordered box while long config lines can run past the frame edge (the
 /// FULL verbatim text is what `c`/`w` copy, not the clipped preview).
 fn append_block_lines(lines: &mut Vec<Line<'static>>, block: &ConfigBlock, focused: bool) {
-    let rail_style = if focused { theme::accent() } else { theme::dim() };
+    let rail_style = if focused {
+        theme::accent()
+    } else {
+        theme::dim()
+    };
     let flashing = block
         .flash
         .as_ref()
@@ -935,12 +1035,19 @@ fn append_block_lines(lines: &mut Vec<Line<'static>>, block: &ConfigBlock, focus
         Span::styled("│ ".to_string(), rail_style),
         Span::styled(
             block.data.name.clone(),
-            if focused { theme::accent_bold() } else { Style::default() },
+            if focused {
+                theme::accent_bold()
+            } else {
+                Style::default()
+            },
         ),
     ];
     if flashing {
         if let Some((tier, _)) = &block.flash {
-            header.push(Span::styled(format!("   {}", tier.short_label()), theme::ok()));
+            header.push(Span::styled(
+                format!("   {}", tier.short_label()),
+                theme::ok(),
+            ));
         }
     }
     lines.push(Line::from(header));
@@ -1025,7 +1132,10 @@ mod tests {
             },
         ]);
         // Only the likely DAC is pre-checked.
-        assert_eq!(w.checked_dacs(), vec![("node-a".to_string(), "DAC A".to_string())]);
+        assert_eq!(
+            w.checked_dacs(),
+            vec![("node-a".to_string(), "DAC A".to_string())]
+        );
         // With nothing checked, the manual node is the fallback.
         for c in &mut w.candidates {
             c.checked = false;
@@ -1033,7 +1143,10 @@ mod tests {
         w.manual_node = Some("alsa_output.usb-y".to_string());
         assert_eq!(
             w.checked_dacs(),
-            vec![("alsa_output.usb-y".to_string(), "alsa_output.usb-y".to_string())]
+            vec![(
+                "alsa_output.usb-y".to_string(),
+                "alsa_output.usb-y".to_string()
+            )]
         );
     }
 
@@ -1069,7 +1182,10 @@ mod tests {
         let mut w = populated(); // one config block
         w.step = WStep::Review;
         let max = w.max_review_scroll();
-        assert!(max > 0, "the populated fixture should have real content to clamp against");
+        assert!(
+            max > 0,
+            "the populated fixture should have real content to clamp against"
+        );
 
         let page_down = KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE);
         // Mash PageDown well past the content height.
@@ -1109,15 +1225,20 @@ mod tests {
         w.set_configs(vec![DacConfigData {
             name: "Cambridge DacMagic".into(),
             node_name: "alsa_output.usb-Cambridge-00.analog-stereo".into(),
-            pipewire_conf: "context.properties = { default.clock.allowed-rates = [ 44100 192000 ] }".into(),
+            pipewire_conf:
+                "context.properties = { default.clock.allowed-rates = [ 44100 192000 ] }".into(),
             pulse_conf: "stream.rules = [ ... ]".into(),
             wireplumber_conf: "monitor.alsa.rules = [ ... ]".into(),
         }]);
-        w.set_test_result(Some((192000, 24)), Some(NegotiatedRate {
-            sample_rate: 192000,
-            format: "S32_LE".into(),
-            channels: 2,
-        }), None);
+        w.set_test_result(
+            Some((192000, 24)),
+            Some(NegotiatedRate {
+                sample_rate: 192000,
+                format: "S32_LE".into(),
+                channels: 2,
+            }),
+            None,
+        );
         w
     }
 
@@ -1161,13 +1282,22 @@ mod tests {
         for (step, needle) in expect {
             w.step = step;
             let out = render_step(&w);
-            assert!(out.contains(needle), "step {step:?} should render {needle:?}");
+            assert!(
+                out.contains(needle),
+                "step {step:?} should render {needle:?}"
+            );
         }
         // The Review step exposes the copy affordance + the never-writes footer.
         w.step = WStep::Review;
         let review = render_step(&w);
-        assert!(review.contains("→ ~/.config"), "review shows the target file paths");
-        assert!(review.contains("NEVER"), "review footer states the wizard never writes files");
+        assert!(
+            review.contains("→ ~/.config"),
+            "review shows the target file paths"
+        );
+        assert!(
+            review.contains("NEVER"),
+            "review footer states the wizard never writes files"
+        );
     }
 
     #[test]
@@ -1187,7 +1317,10 @@ mod tests {
         for (step, needle) in expect {
             w.step = step;
             let out = render_step_sized(&w, 120, 30);
-            assert!(out.contains(needle), "wide step {step:?} should render {needle:?}");
+            assert!(
+                out.contains(needle),
+                "wide step {step:?} should render {needle:?}"
+            );
         }
     }
 }

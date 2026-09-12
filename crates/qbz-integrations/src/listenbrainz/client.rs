@@ -325,10 +325,7 @@ impl ListenBrainzClient {
             LISTENBRAINZ_API_URL, user_name
         );
 
-        let mut request = self
-            .client
-            .get(&url)
-            .query(&[("count", count.to_string())]);
+        let mut request = self.client.get(&url).query(&[("count", count.to_string())]);
         if let Some(token) = token {
             request = request.header("Authorization", format!("Token {}", token));
         }
@@ -367,15 +364,15 @@ impl ListenBrainzClient {
 
         let mut recommendations = Vec::with_capacity(mbids.len());
         for item in mbids {
-            let recording_mbid = match item
-                .get("recording_mbid")
-                .and_then(|value| value.as_str())
-            {
+            let recording_mbid = match item.get("recording_mbid").and_then(|value| value.as_str()) {
                 Some(mbid) if !mbid.is_empty() => mbid.to_string(),
                 // An entry with no recording_mbid is useless downstream; skip it.
                 _ => continue,
             };
-            let score = item.get("score").and_then(|value| value.as_f64()).unwrap_or(0.0);
+            let score = item
+                .get("score")
+                .and_then(|value| value.as_f64())
+                .unwrap_or(0.0);
             let latest_listened_at = item
                 .get("latest_listened_at")
                 .and_then(|value| value.as_str())
@@ -409,10 +406,7 @@ impl ListenBrainzClient {
 
         let url = format!("{}/user/{}/listens", LISTENBRAINZ_API_URL, user_name);
 
-        let mut request = self
-            .client
-            .get(&url)
-            .query(&[("count", count.to_string())]);
+        let mut request = self.client.get(&url).query(&[("count", count.to_string())]);
         if let Some(token) = token {
             request = request.header("Authorization", format!("Token {}", token));
         }
@@ -633,10 +627,7 @@ impl ListenBrainzClient {
             LISTENBRAINZ_API_URL, user_name
         );
 
-        let mut request = self
-            .client
-            .get(&url)
-            .query(&[("count", count.to_string())]);
+        let mut request = self.client.get(&url).query(&[("count", count.to_string())]);
         if let Some(token) = token {
             request = request.header("Authorization", format!("Token {}", token));
         }
@@ -678,10 +669,7 @@ impl ListenBrainzClient {
                 None => continue,
             };
 
-            let playlist_mbid = match playlist
-                .get("identifier")
-                .and_then(last_identifier_segment)
-            {
+            let playlist_mbid = match playlist.get("identifier").and_then(last_identifier_segment) {
                 Some(mbid) => mbid,
                 // No usable playlist id -> useless downstream; skip it.
                 None => continue,

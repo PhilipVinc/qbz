@@ -96,7 +96,13 @@ mod tests {
             }
         });
         let out: Vec<Item> = parse_items_array(&value, "tracks", "test");
-        assert_eq!(out, vec![Item { id: 7, name: "keep".into() }]);
+        assert_eq!(
+            out,
+            vec![Item {
+                id: 7,
+                name: "keep".into()
+            }]
+        );
     }
 
     #[test]

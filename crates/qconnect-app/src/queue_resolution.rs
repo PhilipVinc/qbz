@@ -42,9 +42,7 @@ pub fn is_valid_ordered_queue_shuffle_order(order: &[usize], track_count: usize)
     true
 }
 
-pub fn ordered_queue_cursors(
-    queue: &QConnectQueueState,
-) -> Vec<QconnectOrderedQueueCursor> {
+pub fn ordered_queue_cursors(queue: &QConnectQueueState) -> Vec<QconnectOrderedQueueCursor> {
     let mut cursors = if queue.shuffle_mode {
         queue
             .shuffle_order
@@ -449,9 +447,10 @@ pub fn resolve_core_shuffle_order(
         return None;
     }
 
-    let raw_order = queue_state.shuffle_order.as_ref().filter(|order| {
-        is_valid_ordered_queue_shuffle_order(order, queue_state.queue_items.len())
-    });
+    let raw_order = queue_state
+        .shuffle_order
+        .as_ref()
+        .filter(|order| is_valid_ordered_queue_shuffle_order(order, queue_state.queue_items.len()));
 
     if raw_order.is_none() {
         log::debug!(
@@ -493,7 +492,9 @@ pub fn resolve_core_shuffle_order(
 
     log::debug!(
         "[QConnect] resolve_core_shuffle_order: result={:?} current={:?} next={:?}",
-        ordered, current_index, next_index,
+        ordered,
+        current_index,
+        next_index,
     );
 
     Some(ordered)

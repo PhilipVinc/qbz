@@ -36,8 +36,8 @@ pub mod queue;
 
 // Re-export main types
 pub use player::{
-    BufferWriter, BufferedMediaSource, FetchPlan, TrackAudio, IncrementalStreamingSource,
-    PlaybackEvent, PlaybackState, Player, SharedState, StreamSeekMode, StreamingConfig,
+    BufferWriter, BufferedMediaSource, FetchPlan, IncrementalStreamingSource, PlaybackEvent,
+    PlaybackState, Player, SharedState, StreamSeekMode, StreamingConfig, TrackAudio,
 };
 pub use qbz_cache::TrackBytes;
 pub use queue::QueueManager;

@@ -28,8 +28,16 @@ pub fn lyrics(state: &ApiState, query: &str) -> Response<Cursor<Vec<u8>>> {
 
     match state.rt.block_on(state.runtime.core().get_lyrics(id)) {
         Ok(Some(doc)) => json(200, normalize(id, &doc)),
-        Ok(None) => json(200, serde_json::json!({"track_id": id, "synced": false, "lines": []})),
-        Err(_) => err_json(502, "lyrics_failed", "lyrics request to Qobuz failed", "try again in a moment"),
+        Ok(None) => json(
+            200,
+            serde_json::json!({"track_id": id, "synced": false, "lines": []}),
+        ),
+        Err(_) => err_json(
+            502,
+            "lyrics_failed",
+            "lyrics request to Qobuz failed",
+            "try again in a moment",
+        ),
     }
 }
 
@@ -50,7 +58,10 @@ fn normalize(id: u64, doc: &QobuzLyricsDocument) -> Value {
         ),
         Some(QobuzLyricsContent::Plain { lines, .. }) => (
             false,
-            lines.iter().map(|l| serde_json::json!({"text": l.line})).collect(),
+            lines
+                .iter()
+                .map(|l| serde_json::json!({"text": l.line}))
+                .collect(),
         ),
         None => (false, Vec::new()),
     };
@@ -69,13 +80,28 @@ fn resolve_id(state: &ApiState, query: &str) -> Result<u64, Response<Cursor<Vec<
         .unwrap_or("current");
 
     if raw.is_empty() || raw == "current" {
-        return match state.rt.block_on(state.runtime.core().get_queue_state()).current_track {
+        return match state
+            .rt
+            .block_on(state.runtime.core().get_queue_state())
+            .current_track
+        {
             Some(t) => Ok(t.id),
-            None => Err(err_json(404, "not_found", "nothing is playing", "give a track id: qbzd lyrics <TRACK_ID>")),
+            None => Err(err_json(
+                404,
+                "not_found",
+                "nothing is playing",
+                "give a track id: qbzd lyrics <TRACK_ID>",
+            )),
         };
     }
-    raw.parse::<u64>()
-        .map_err(|_| err_json(400, "bad_request", "lyrics id must be a track id or 'current'", "usage: qbzd lyrics [TRACK_ID]"))
+    raw.parse::<u64>().map_err(|_| {
+        err_json(
+            400,
+            "bad_request",
+            "lyrics id must be a track id or 'current'",
+            "usage: qbzd lyrics [TRACK_ID]",
+        )
+    })
 }
 
 fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
@@ -85,7 +111,12 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
         .map(|s| s.auth == AuthState::NeedsAuth)
         .unwrap_or(false);
     if needs_auth {
-        Some(err_json(409, "needs_auth", "not logged in to Qobuz", "run: qbzd login"))
+        Some(err_json(
+            409,
+            "needs_auth",
+            "not logged in to Qobuz",
+            "run: qbzd login",
+        ))
     } else {
         None
     }

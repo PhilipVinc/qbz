@@ -53,7 +53,12 @@ impl ScrobblerState {
         let lines: Vec<Line> = vec![
             Line::from(Span::styled("Scrobbling", theme::accent_bold())),
             Line::from(""),
-            provider_line("Last.fm", s.lastfm_is_authed(), s.lastfm_active(), &s.lastfm_username),
+            provider_line(
+                "Last.fm",
+                s.lastfm_is_authed(),
+                s.lastfm_active(),
+                &s.lastfm_username,
+            ),
             provider_line(
                 "ListenBrainz",
                 s.listenbrainz_is_authed(),

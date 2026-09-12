@@ -15,7 +15,9 @@ use std::sync::mpsc::{Receiver, Sender};
 use serde_json::{json, Value};
 use tokio::runtime::Handle;
 
-use qbz_app::settings::bundle::{self, Bundle, ExportOptions, ExportSource, ImportOptions, LiveSystem, ProfilePaths};
+use qbz_app::settings::bundle::{
+    self, Bundle, ExportOptions, ExportSource, ImportOptions, LiveSystem, ProfilePaths,
+};
 use qbz_app::settings::daemon_prefs;
 use qbz_app::settings::playback::PlaybackPreferencesStore;
 use qbz_audio::settings::{AudioSettings, AudioSettingsStore};
@@ -221,7 +223,10 @@ pub enum ScreenAction {
     Logout,
     ImportPlan(String),
     ImportApply,
-    Export { dest: String, include_auth: bool },
+    Export {
+        dest: String,
+        include_auth: bool,
+    },
     // ---- HiFi Wizard (FB4) worker requests ----
     /// Run the heavy audio-stack health probe (Check step).
     WizardProbeHealth,
@@ -265,10 +270,19 @@ pub enum LoopCmd {
 
 pub enum Msg {
     Devices(Result<Vec<AudioDevice>, String>),
-    Saved { lines: Vec<String>, status: Option<Value>, reachable: bool, success: bool },
+    Saved {
+        lines: Vec<String>,
+        status: Option<Value>,
+        reachable: bool,
+        success: bool,
+    },
     TokenLogin(Result<(String, Option<String>), String>),
     ImportPlanned(Result<Box<PendingImport>, String>),
-    ImportApplied { lines: Vec<String>, status: Option<Value>, reachable: bool },
+    ImportApplied {
+        lines: Vec<String>,
+        status: Option<Value>,
+        reachable: bool,
+    },
     Exported(Result<Vec<String>, String>),
     // ---- HiFi Wizard (FB4) worker results ----
     WizardHealth(qbz_audio::AudioStackHealth),
@@ -297,8 +311,13 @@ enum Active {
 enum Overlay {
     None,
     Help,
-    Result { title: String, lines: Vec<String> },
-    DirtyLeave { target: LeaveTarget },
+    Result {
+        title: String,
+        lines: Vec<String>,
+    },
+    DirtyLeave {
+        target: LeaveTarget,
+    },
     /// FB4: Esc mid-wizard — leaving discards the wizard's transient selections.
     ConfirmAbandon,
 }
@@ -395,7 +414,10 @@ impl App {
     fn derive_auth(&self) -> AuthSnapshot {
         if self.reachable {
             if let Some(st) = &self.status {
-                let state = st.pointer("/auth/state").and_then(Value::as_str).unwrap_or("");
+                let state = st
+                    .pointer("/auth/state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if state == "logged_in" {
                     let id = st.pointer("/auth/user_id").and_then(Value::as_u64);
                     let plan = st
@@ -447,7 +469,12 @@ impl App {
                     .and_then(|s| s.get_preferences())
                     .unwrap_or_default();
                 let dp = daemon_prefs::load_at(&self.roots.data);
-                Active::Playback(PlaybackState::new(&dp.streaming_quality, dp.mpris_enabled, &audio, &playback))
+                Active::Playback(PlaybackState::new(
+                    &dp.streaming_quality,
+                    dp.mpris_enabled,
+                    &audio,
+                    &playback,
+                ))
             }
             Screen::QConnect => {
                 let db = self.roots.data.join("qconnect_settings.db");
@@ -479,7 +506,9 @@ impl App {
             return;
         }
         if self.active_is_dirty() {
-            self.overlay = Overlay::DirtyLeave { target: LeaveTarget::Section(target) };
+            self.overlay = Overlay::DirtyLeave {
+                target: LeaveTarget::Section(target),
+            };
             return;
         }
         self.enter_screen(target);
@@ -490,7 +519,9 @@ impl App {
     /// section opens the Save/Discard/Stay modal targeting `Quit`.
     fn leave_quit(&mut self) {
         if self.active_is_dirty() {
-            self.overlay = Overlay::DirtyLeave { target: LeaveTarget::Quit };
+            self.overlay = Overlay::DirtyLeave {
+                target: LeaveTarget::Quit,
+            };
         } else {
             self.should_quit = true;
         }
@@ -576,7 +607,10 @@ impl App {
         // Overlays capture keys first.
         match &self.overlay {
             Overlay::Help => {
-                if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+                if matches!(
+                    key.code,
+                    KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')
+                ) {
                     self.overlay = Overlay::None;
                 }
                 return LoopCmd::None;
@@ -795,7 +829,12 @@ impl App {
                 return;
             }
             let (lines, status, reachable) = do_reload(&roots, is_network, reinit).await;
-            let _ = tx.send(Msg::Saved { lines, status, reachable, success });
+            let _ = tx.send(Msg::Saved {
+                lines,
+                status,
+                reachable,
+                success,
+            });
         });
     }
 
@@ -935,11 +974,13 @@ impl App {
                         tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
                     }
                     Err(CliError::Unreachable(_)) => {
-                        note = Some("daemon not reachable — start it, then try the test".to_string());
+                        note =
+                            Some("daemon not reachable — start it, then try the test".to_string());
                     }
                     Err(_) => {
                         note = Some(
-                            "nothing to play — queue a track or cast to the daemon first".to_string(),
+                            "nothing to play — queue a track or cast to the daemon first"
+                                .to_string(),
                         );
                     }
                 }
@@ -947,12 +988,19 @@ impl App {
             // Requested (what QBZ asked the daemon for), while playing.
             let requested = client.get("/api/status").await.ok().and_then(|st| {
                 let sr = st.pointer("/audio/sample_rate").and_then(Value::as_u64)?;
-                let bd = st.pointer("/audio/bit_depth").and_then(Value::as_u64).unwrap_or(0);
+                let bd = st
+                    .pointer("/audio/bit_depth")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
                 Some((sr as u32, bd as u32))
             });
             // Negotiated (the DAC's real hardware clock).
             let negotiated = qbz_audio::negotiated_active_rate();
-            let _ = tx.send(Msg::WizardTest { requested, negotiated, note });
+            let _ = tx.send(Msg::WizardTest {
+                requested,
+                negotiated,
+                note,
+            });
         });
     }
 
@@ -971,7 +1019,12 @@ impl App {
                     s.set_devices(result);
                 }
             }
-            Msg::Saved { lines, status, reachable, success } => {
+            Msg::Saved {
+                lines,
+                status,
+                reachable,
+                success,
+            } => {
                 self.busy = None;
                 self.reachable = reachable;
                 if status.is_some() {
@@ -1041,7 +1094,11 @@ impl App {
                     }
                 }
             }
-            Msg::ImportApplied { lines, status, reachable } => {
+            Msg::ImportApplied {
+                lines,
+                status,
+                reachable,
+            } => {
                 self.busy = None;
                 self.reachable = reachable;
                 if status.is_some() {
@@ -1086,7 +1143,11 @@ impl App {
                     w.set_configs(configs);
                 }
             }
-            Msg::WizardTest { requested, negotiated, note } => {
+            Msg::WizardTest {
+                requested,
+                negotiated,
+                note,
+            } => {
                 self.busy = None;
                 if let Active::Wizard(w) = &mut self.active {
                     w.set_test_result(requested, negotiated, note);
@@ -1205,7 +1266,10 @@ impl App {
                 f,
                 area,
                 s::HELP_TITLE,
-                s::HELP_OVERLAY.lines().map(|l| Line::from(l.to_string())).collect(),
+                s::HELP_OVERLAY
+                    .lines()
+                    .map(|l| Line::from(l.to_string()))
+                    .collect(),
                 0,
             ),
             Overlay::Result { title, lines } => {
@@ -1216,7 +1280,13 @@ impl App {
                 widgets::modal(f, area, s::DIRTY_TITLE, s::DIRTY_BODY, s::DIRTY_HINT);
             }
             Overlay::ConfirmAbandon => {
-                widgets::modal(f, area, s::WIZ_ABANDON_TITLE, s::WIZ_ABANDON_BODY, s::WIZ_ABANDON_HINT);
+                widgets::modal(
+                    f,
+                    area,
+                    s::WIZ_ABANDON_TITLE,
+                    s::WIZ_ABANDON_BODY,
+                    s::WIZ_ABANDON_HINT,
+                );
             }
             Overlay::None => {}
         }
@@ -1281,7 +1351,11 @@ impl App {
             let is_active = *screen == self.active_section;
             let dirty = sidebar_dirty_marker(*screen, self.active_section, active_dirty);
             let highlighted = self.focus == Focus::Nav && i == self.nav_cursor;
-            let label = if wide { s::SIDEBAR_LABELS_WIDE[i] } else { s::SIDEBAR_LABELS[i] };
+            let label = if wide {
+                s::SIDEBAR_LABELS_WIDE[i]
+            } else {
+                s::SIDEBAR_LABELS[i]
+            };
             let marker = if is_active { "▸ " } else { "  " };
 
             if highlighted {
@@ -1295,11 +1369,19 @@ impl App {
                 let mut spans = vec![
                     Span::styled(
                         marker.to_string(),
-                        if is_active { theme::accent() } else { Style::default() },
+                        if is_active {
+                            theme::accent()
+                        } else {
+                            Style::default()
+                        },
                     ),
                     Span::styled(
                         label.to_string(),
-                        if is_active { theme::accent_bold() } else { Style::default() },
+                        if is_active {
+                            theme::accent_bold()
+                        } else {
+                            Style::default()
+                        },
                     ),
                 ];
                 if dirty {
@@ -1323,10 +1405,7 @@ impl App {
     fn draw_footer(&self, f: &mut Frame, area: Rect) {
         let playing = self.status.as_ref().and_then(playing_extra);
         let (text, style) = footer_state(self.reachable, self.auth.logged_in, playing);
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(text, style))),
-            area,
-        );
+        f.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
     }
 
     fn help_text(&self) -> &'static str {
@@ -1389,14 +1468,22 @@ fn write_keys(roots: &ProfileRoots, keys: &[(String, String)]) -> (Option<String
                 // The TUI only displays the message — it doesn't need the
                 // Usage/Io exit-code split `settings set` maps to (see
                 // `cli::settings::SetError`).
-                return (Some(format!("failed to save {k}: {}", e.to_string().trim())), reinit);
+                return (
+                    Some(format!("failed to save {k}: {}", e.to_string().trim())),
+                    reinit,
+                );
             }
         }
     }
     (None, reinit)
 }
 
-fn save_network(roots: &ProfileRoots, bind: &str, port: u16, token: Option<&str>) -> Option<String> {
+fn save_network(
+    roots: &ProfileRoots,
+    bind: &str,
+    port: u16,
+    token: Option<&str>,
+) -> Option<String> {
     let path = roots.config.join("qbzd.toml");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     match network_screen::rewrite_toml(&existing, bind, port, token) {
@@ -1529,7 +1616,8 @@ async fn apply_import(
         };
     }
 
-    let (mut lines, status, reachable) = do_reload(roots, false, plan.routing_critical_changed).await;
+    let (mut lines, status, reachable) =
+        do_reload(roots, false, plan.routing_critical_changed).await;
     let mut out = vec![s::b_import_done(
         plan.applied.len(),
         plan.adapted.len(),
@@ -1539,10 +1627,18 @@ async fn apply_import(
     if uid.is_some() {
         out.push("logged in with the bundled account".to_string());
     }
-    Msg::ImportApplied { lines: out, status, reachable }
+    Msg::ImportApplied {
+        lines: out,
+        status,
+        reachable,
+    }
 }
 
-fn export_bundle(roots: &ProfileRoots, dest: &str, include_auth: bool) -> Result<Vec<String>, String> {
+fn export_bundle(
+    roots: &ProfileRoots,
+    dest: &str,
+    include_auth: bool,
+) -> Result<Vec<String>, String> {
     let source = ExportSource::Daemon(ProfilePaths {
         config_root: roots.config.clone(),
         data_root: roots.data.clone(),
@@ -1558,7 +1654,10 @@ fn export_bundle(roots: &ProfileRoots, dest: &str, include_auth: bool) -> Result
         .to_string();
     let mut lines = vec![s::b_export_success(&name)];
     if b.contains_secrets() {
-        lines.push("this file contains your Qobuz token — 0600, move it privately, delete after import".to_string());
+        lines.push(
+            "this file contains your Qobuz token — 0600, move it privately, delete after import"
+                .to_string(),
+        );
     }
     if desktop_profile_present() {
         for l in s::B_DESKTOP_HINT.lines() {
@@ -1575,7 +1674,11 @@ fn export_bundle(roots: &ProfileRoots, dest: &str, include_auth: bool) -> Result
 fn build_live(bundle: &Bundle) -> (LiveSystem, AudioBackendType, Vec<AudioDevice>) {
     let backends: Vec<String> = BackendManager::available_backends()
         .into_iter()
-        .filter_map(|b| serde_json::to_value(b).ok().and_then(|v| v.as_str().map(str::to_string)))
+        .filter_map(|b| {
+            serde_json::to_value(b)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+        })
         .collect();
     let wanted: Option<AudioBackendType> = bundle
         .domains
@@ -1584,10 +1687,15 @@ fn build_live(bundle: &Bundle) -> (LiveSystem, AudioBackendType, Vec<AudioDevice
         .and_then(|v| serde_json::from_value(v.clone()).ok());
     let backend = wanted.unwrap_or(AudioBackendType::SystemDefault);
     let devices = enumerate_devices(backend).unwrap_or_default();
-    let live_devices: Vec<(String, String)> =
-        devices.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
+    let live_devices: Vec<(String, String)> = devices
+        .iter()
+        .map(|d| (d.id.clone(), d.name.clone()))
+        .collect();
     (
-        LiveSystem { backends, devices: live_devices },
+        LiveSystem {
+            backends,
+            devices: live_devices,
+        },
         backend,
         devices,
     )
@@ -1623,17 +1731,24 @@ fn footer_state(
 
 /// A "playing 192000 Hz / 24 bit" tail from a status body (§4.3), if playing.
 fn playing_extra(status: &Value) -> Option<String> {
-    let state = status.pointer("/playback/state").and_then(Value::as_str).unwrap_or("");
+    let state = status
+        .pointer("/playback/state")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     if state != "playing" {
         return None;
     }
-    let sr = status.pointer("/audio/sample_rate").and_then(Value::as_u64)?;
+    let sr = status
+        .pointer("/audio/sample_rate")
+        .and_then(Value::as_u64)?;
     let bd = status.pointer("/audio/bit_depth").and_then(Value::as_u64)?;
     Some(format!("playing {sr} Hz / {bd} bit"))
 }
 
 fn desktop_profile_present() -> bool {
-    dirs::data_dir().map(|d| d.join("qbz").exists()).unwrap_or(false)
+    dirs::data_dir()
+        .map(|d| d.join("qbz").exists())
+        .unwrap_or(false)
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
@@ -1682,7 +1797,10 @@ mod tests {
 
     #[test]
     fn breadcrumb_is_section_then_field_when_editing() {
-        assert_eq!(breadcrumb_nodes("Audio", Some("Backend")), ("Audio", "Backend"));
+        assert_eq!(
+            breadcrumb_nodes("Audio", Some("Backend")),
+            ("Audio", "Backend")
+        );
     }
 
     // ---- sidebar dirty marker: only the active section can show `*` ----
@@ -1758,23 +1876,46 @@ mod tests {
     #[test]
     fn number_keys_jump_from_any_focus_but_not_while_editing() {
         // 1-7 jump from nav and from content (not editing).
-        assert_eq!(classify_key(Focus::Nav, KeyCode::Char('3'), false, false), NavIntent::JumpSection(2));
-        assert_eq!(classify_key(Focus::Content, KeyCode::Char('1'), false, false), NavIntent::JumpSection(0));
-        assert_eq!(classify_key(Focus::Content, KeyCode::Char('6'), false, false), NavIntent::JumpSection(5));
+        assert_eq!(
+            classify_key(Focus::Nav, KeyCode::Char('3'), false, false),
+            NavIntent::JumpSection(2)
+        );
+        assert_eq!(
+            classify_key(Focus::Content, KeyCode::Char('1'), false, false),
+            NavIntent::JumpSection(0)
+        );
+        assert_eq!(
+            classify_key(Focus::Content, KeyCode::Char('6'), false, false),
+            NavIntent::JumpSection(5)
+        );
         // 7 reaches the FB4 Wizard section (the seventh).
-        assert_eq!(classify_key(Focus::Content, KeyCode::Char('7'), false, false), NavIntent::JumpSection(6));
+        assert_eq!(
+            classify_key(Focus::Content, KeyCode::Char('7'), false, false),
+            NavIntent::JumpSection(6)
+        );
         // While a field editor is open, digits are typed into it, not swallowed.
-        assert_eq!(classify_key(Focus::Content, KeyCode::Char('5'), true, false), NavIntent::ToScreen);
+        assert_eq!(
+            classify_key(Focus::Content, KeyCode::Char('5'), true, false),
+            NavIntent::ToScreen
+        );
         // ...and so is every other key while editing.
-        assert_eq!(classify_key(Focus::Content, KeyCode::Tab, true, false), NavIntent::ToScreen);
-        assert_eq!(classify_key(Focus::Content, KeyCode::Esc, true, false), NavIntent::ToScreen);
+        assert_eq!(
+            classify_key(Focus::Content, KeyCode::Tab, true, false),
+            NavIntent::ToScreen
+        );
+        assert_eq!(
+            classify_key(Focus::Content, KeyCode::Esc, true, false),
+            NavIntent::ToScreen
+        );
     }
 
     // ---- 80×24 floor: every section renders inside the frames shell ----
 
     fn bare_app(section: Screen, focus: Focus) -> App {
         let (tx, rx) = std::sync::mpsc::channel();
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let active = match section {
             Screen::Account => Active::Account(AccountState::new(AuthSnapshot::default())),
             Screen::Audio => Active::Audio(AudioState::new(&AudioSettings::default())),
@@ -1785,7 +1926,9 @@ mod tests {
                 &qbz_app::settings::playback::PlaybackPreferences::default(),
             )),
             Screen::QConnect => Active::QConnect(QConnectState::new(false, None, None)),
-            Screen::Network => Active::Network(NetworkState::new(&QbzdConfig::default(), Vec::new())),
+            Screen::Network => {
+                Active::Network(NetworkState::new(&QbzdConfig::default(), Vec::new()))
+            }
             Screen::Bundle => Active::Bundle(BundleState::new(false)),
             Screen::Wizard => Active::Wizard(WizardState::new()),
             Screen::Scrobbler => Active::Scrobbler(ScrobblerState::new(&ProfileRoots {
@@ -1850,7 +1993,10 @@ mod tests {
                 // The sidebar and version chrome are present.
                 assert!(out.contains("Account"), "sidebar missing for {screen:?}");
                 let version = format!("qbzd {}", env!("CARGO_PKG_VERSION"));
-                assert!(out.contains(&version), "version chrome missing for {screen:?}");
+                assert!(
+                    out.contains(&version),
+                    "version chrome missing for {screen:?}"
+                );
             }
         }
     }
@@ -1862,7 +2008,6 @@ mod tests {
         assert!(out.contains("terminal too small"));
     }
 
-
     // ---- 120×30 wide: the roomy sidebar tier + every section still renders (FB5) ----
 
     #[test]
@@ -1871,13 +2016,19 @@ mod tests {
             for focus in [Focus::Nav, Focus::Content] {
                 let app = bare_app(screen, focus);
                 let out = render(&app, 120, 30);
-                assert!(out.contains("QBZ Daemon Setup"), "header missing {screen:?}/{focus:?}");
+                assert!(
+                    out.contains("QBZ Daemon Setup"),
+                    "header missing {screen:?}/{focus:?}"
+                );
                 assert!(
                     !out.contains("terminal too small"),
                     "120x30 must not trip the resize guard for {screen:?}"
                 );
                 // Wide tier: labels spell out and each name carries a dim summary.
-                assert!(out.contains("Import / Export"), "wide sidebar label missing {screen:?}");
+                assert!(
+                    out.contains("Import / Export"),
+                    "wide sidebar label missing {screen:?}"
+                );
                 assert!(
                     out.contains("output · bit-perfect"),
                     "wide sidebar summary missing {screen:?}"
@@ -1891,7 +2042,10 @@ mod tests {
         // At the 80-col floor the compact label is used, not the spelled-out one.
         let floor = render(&bare_app(Screen::Audio, Focus::Nav), 80, 24);
         assert!(floor.contains("Import/Exp"), "compact label at the floor");
-        assert!(!floor.contains("Import / Export"), "no wide label at the floor");
+        assert!(
+            !floor.contains("Import / Export"),
+            "no wide label at the floor"
+        );
         // The 28-col sidebar is at least double the 14-col compact one.
         assert!(widgets::sidebar_width(120) >= 2 * widgets::sidebar_width(80));
     }
@@ -1905,7 +2059,10 @@ mod tests {
 
         // Reachable but not signed in → warn, names the missing auth.
         let (text, style) = footer_state(true, false, None);
-        assert_eq!(text, format!(" {} · {}", s::FOOTER_RUNNING, s::FOOTER_NEEDS_AUTH));
+        assert_eq!(
+            text,
+            format!(" {} · {}", s::FOOTER_RUNNING, s::FOOTER_NEEDS_AUTH)
+        );
         assert_eq!(style, theme::warn());
 
         // Running + signed in → ok, with and without the playing tail.

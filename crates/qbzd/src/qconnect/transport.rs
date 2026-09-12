@@ -79,10 +79,7 @@ pub fn resolve_qconnect_software_version() -> String {
         .unwrap_or_else(|| {
             // Build id when stamped, so the controller (and Qobuz-side logs)
             // name the exact build rather than a bare upstream version.
-            format!(
-                "{DEFAULT_QCONNECT_SOFTWARE_PREFIX}/{}",
-                crate::VERSION
-            )
+            format!("{DEFAULT_QCONNECT_SOFTWARE_PREFIX}/{}", crate::VERSION)
         })
 }
 
@@ -474,9 +471,11 @@ pub fn load_pairing_enabled_at(path: &Path) -> bool {
         return true;
     };
     let value: Option<String> = conn
-        .query_row("SELECT value FROM settings WHERE key = 'pairing'", [], |row| {
-            row.get::<_, String>(0)
-        })
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'pairing'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
         .ok();
     !matches!(value.as_deref(), Some("off"))
 }
@@ -711,7 +710,10 @@ fn normalize_opt_string(value: Option<String>) -> Option<String> {
 }
 
 pub fn parse_subscribe_channels(items: Vec<String>) -> Result<Vec<Vec<u8>>, String> {
-    items.into_iter().map(|item| decode_hex_channel(&item)).collect()
+    items
+        .into_iter()
+        .map(|item| decode_hex_channel(&item))
+        .collect()
 }
 
 pub fn decode_hex_channel(raw: &str) -> Result<Vec<u8>, String> {
@@ -766,10 +768,8 @@ mod tests {
 
     #[test]
     fn kv_helpers_round_trip_against_a_temp_daemon_db() {
-        let tmp = std::env::temp_dir().join(format!(
-            "qbzd_qconnect_kv_test_{}.db",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("qbzd_qconnect_kv_test_{}.db", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
 
         // Unset -> defaults / None.

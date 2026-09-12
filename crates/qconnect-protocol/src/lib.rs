@@ -19,12 +19,12 @@ pub use error::ProtocolError;
 pub use event::{ErrorType, PlaybackErrorEvent, QueueEventType, QueueServerEvent};
 // Proto message types needed by downstream crates to construct/encode frames
 // (e.g. PlaybackErrorMessage for tests and any future re-encoding path).
-pub use queue_command_proto::{
-    PlaybackErrorMessage, QConnectMessage, QConnectMessages, QueueVersionRef,
-};
 pub use mapper::{
     build_qconnect_outbound_envelope, build_qconnect_renderer_outbound_envelope,
     encode_queue_command_batch, encode_renderer_report_batch,
+};
+pub use queue_command_proto::{
+    PlaybackErrorMessage, QConnectMessage, QConnectMessages, QueueVersionRef,
 };
 pub use renderer::{
     RendererCommandType, RendererReport, RendererReportType, RendererServerCommand,

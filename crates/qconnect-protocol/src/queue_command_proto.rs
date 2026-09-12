@@ -916,8 +916,7 @@ pub struct QConnectMessage {
     #[prost(message, optional, tag = "26")]
     pub rndr_srvr_file_audio_quality_changed: Option<RendererFileAudioQualityChangedMessage>,
     #[prost(message, optional, tag = "27")]
-    pub rndr_srvr_device_audio_quality_changed:
-        Option<RendererDeviceAudioQualityChangedMessage>,
+    pub rndr_srvr_device_audio_quality_changed: Option<RendererDeviceAudioQualityChangedMessage>,
     #[prost(message, optional, tag = "28")]
     pub rndr_srvr_max_audio_quality_changed: Option<RendererMaxAudioQualityChangedMessage>,
     #[prost(message, optional, tag = "29")]

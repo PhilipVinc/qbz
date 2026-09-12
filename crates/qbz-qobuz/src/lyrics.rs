@@ -40,10 +40,12 @@ where
         Number(serde_json::Number),
     }
 
-    Ok(Option::<StringOrNumber>::deserialize(deserializer)?.map(|v| match v {
-        StringOrNumber::String(s) => s,
-        StringOrNumber::Number(n) => n.to_string(),
-    }))
+    Ok(
+        Option::<StringOrNumber>::deserialize(deserializer)?.map(|v| match v {
+            StringOrNumber::String(s) => s,
+            StringOrNumber::Number(n) => n.to_string(),
+        }),
+    )
 }
 
 /// Step-1 envelope returned by `GET /track/lyricsUrl`.
@@ -478,8 +480,8 @@ mod tests {
         // v10 LIVE WIRE (verified 2026-07-22, track 266725027 with
         // language=es): a translation request returns a document carrying
         // ONLY `translation` — no `original` at all.
-        let doc: QobuzLyricsDocument = serde_json::from_str(DOC_TRANSLATION_ONLY)
-            .expect("parse translation-only document");
+        let doc: QobuzLyricsDocument =
+            serde_json::from_str(DOC_TRANSLATION_ONLY).expect("parse translation-only document");
         assert!(doc.original.is_none(), "no original on the translated doc");
         assert_eq!(doc.translation_langs.len(), 5);
         let translation = doc.translation.expect("translation present");
@@ -525,8 +527,7 @@ mod tests {
     fn content_serializes_back_to_wire_shape() {
         // The lyrics cache persists an embedded translation verbatim, so the
         // content union must round-trip through serde.
-        let doc: QobuzLyricsDocument =
-            serde_json::from_str(DOC_WSYNC_TRANSLATION).expect("parse");
+        let doc: QobuzLyricsDocument = serde_json::from_str(DOC_WSYNC_TRANSLATION).expect("parse");
         let translation = doc.translation.expect("translation present");
         let json = serde_json::to_string(&translation).expect("serialize");
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -543,8 +544,7 @@ mod tests {
         // The yaml's "lsync" guess ({line,start,end}, no words) must still
         // parse via the alias in case line-only docs exist in the catalog.
         let json = r#"{"type":"lsync","lang":"fr","lines":[{"line":"hi","start":100,"end":200}]}"#;
-        let content: QobuzLyricsContent =
-            serde_json::from_str(json).expect("parse lsync alias");
+        let content: QobuzLyricsContent = serde_json::from_str(json).expect("parse lsync alias");
         match content {
             QobuzLyricsContent::Synced { lang, lines } => {
                 assert_eq!(lang.as_deref(), Some("fr"));

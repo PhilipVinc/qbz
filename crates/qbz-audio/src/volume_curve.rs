@@ -163,7 +163,10 @@ mod tests {
 
     #[test]
     fn keys_round_trip_and_reject_nonsense() {
-        assert_eq!(VolumeCurve::from_key("perceptual"), Some(VolumeCurve::Perceptual));
+        assert_eq!(
+            VolumeCurve::from_key("perceptual"),
+            Some(VolumeCurve::Perceptual)
+        );
         assert_eq!(VolumeCurve::from_key("MPD"), Some(VolumeCurve::Perceptual));
         assert_eq!(VolumeCurve::from_key(" linear "), Some(VolumeCurve::Linear));
         assert_eq!(VolumeCurve::from_key("loud"), None);

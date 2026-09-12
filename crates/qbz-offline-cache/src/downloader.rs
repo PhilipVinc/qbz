@@ -288,8 +288,8 @@ pub(crate) async fn try_cmaf_offline_download(
     });
 
     let sink_for_cb = sink.clone();
-    let progress_cb: qbz_qobuz::CmafProgressCallback = std::sync::Arc::new(
-        move |update: qbz_qobuz::CmafProgressUpdate| {
+    let progress_cb: qbz_qobuz::CmafProgressCallback =
+        std::sync::Arc::new(move |update: qbz_qobuz::CmafProgressUpdate| {
             let percent = if update.n_segments > 0 {
                 (update.segments_completed as f64 / update.n_segments as f64 * 100.0)
                     .round()
@@ -303,8 +303,7 @@ pub(crate) async fn try_cmaf_offline_download(
                 bytes_downloaded: update.bytes_this_segment,
                 total_bytes: None,
             });
-        },
-    );
+        });
 
     // Fetch the raw CMAF bundle. Requires an initialized QobuzClient; if
     // it is missing, bail so the legacy path runs.
@@ -385,24 +384,29 @@ pub(crate) async fn try_cmaf_offline_download(
         // the legacy path does next to the FLAC file. cover.jpg lives at
         // <offline_root>/tracks-cmaf/<track_id>/cover.jpg — set as the
         // library row's artwork_path so the UI picks it up.
-        let artwork_path: Option<String> = if let Some(artwork_url) = metadata.artwork_url.as_deref() {
-            match crate::metadata::save_album_artwork(&layout.track_dir, artwork_url).await {
-                Ok(()) => {
-                    let cover = layout.track_dir.join("cover.jpg");
-                    if cover.exists() {
-                        Some(cover.to_string_lossy().to_string())
-                    } else {
+        let artwork_path: Option<String> =
+            if let Some(artwork_url) = metadata.artwork_url.as_deref() {
+                match crate::metadata::save_album_artwork(&layout.track_dir, artwork_url).await {
+                    Ok(()) => {
+                        let cover = layout.track_dir.join("cover.jpg");
+                        if cover.exists() {
+                            Some(cover.to_string_lossy().to_string())
+                        } else {
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[Offline/CMAF] Track {} artwork save failed: {}",
+                            track_id,
+                            e
+                        );
                         None
                     }
                 }
-                Err(e) => {
-                    log::warn!("[Offline/CMAF] Track {} artwork save failed: {}", track_id, e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
 
         let album_artist = metadata.album_artist.as_ref().unwrap_or(&metadata.artist);
         let album_group_key = format!("{}|{}", metadata.album, album_artist);
@@ -494,11 +498,7 @@ pub fn spawn_track_cache_download(
         };
 
         if let Some(db_guard) = db.lock().await.as_ref() {
-            let _ = db_guard.update_status(
-                track_id,
-                crate::OfflineCacheStatus::Downloading,
-                None,
-            );
+            let _ = db_guard.update_status(track_id, crate::OfflineCacheStatus::Downloading, None);
         }
         sink(CacheEvent::Started { track_id });
 
@@ -509,15 +509,8 @@ pub fn spawn_track_cache_download(
         // CoreBridge yet, /file/url returns a non-CMAF response, network
         // flake, vault init failure, etc.). The legacy fallback keeps
         // existing users unblocked while we validate the new path.
-        match try_cmaf_offline_download(
-            track_id,
-            &db,
-            &offline_root,
-            &library_db,
-            &client,
-            &sink,
-        )
-        .await
+        match try_cmaf_offline_download(track_id, &db, &offline_root, &library_db, &client, &sink)
+            .await
         {
             Ok(()) => return,
             Err(e) => {
@@ -576,9 +569,7 @@ pub fn spawn_track_cache_download(
                 let metadata = {
                     let client_guard = client.read().await;
                     let result = match client_guard.as_ref() {
-                        Some(qc) => {
-                            crate::metadata::fetch_complete_metadata(track_id, qc).await
-                        }
+                        Some(qc) => crate::metadata::fetch_complete_metadata(track_id, qc).await,
                         None => Err("QobuzClient not initialized".to_string()),
                     };
                     match result {
@@ -594,15 +585,12 @@ pub fn spawn_track_cache_download(
                     }
                 };
 
-                if let Err(e) =
-                    crate::metadata::write_flac_tags(&file_path_str, &metadata)
-                {
+                if let Err(e) = crate::metadata::write_flac_tags(&file_path_str, &metadata) {
                     log::warn!("Failed to write tags for {}: {}", track_id, e);
                 }
                 if let Some(artwork_url) = &metadata.artwork_url {
                     if let Err(e) =
-                        crate::metadata::embed_artwork(&file_path_str, artwork_url)
-                            .await
+                        crate::metadata::embed_artwork(&file_path_str, artwork_url).await
                     {
                         log::warn!("Failed to embed artwork for {}: {}", track_id, e);
                     }
@@ -623,31 +611,27 @@ pub fn spawn_track_cache_download(
 
                 // Save cover.jpg next to the organized FLAC so the library
                 // UI has artwork to display.
-                let artwork_path_v1: Option<String> =
-                    if let Some(artwork_url) = metadata.artwork_url.as_deref() {
-                        if let Some(parent_dir) = std::path::Path::new(&new_path).parent() {
-                            match crate::metadata::save_album_artwork(
-                                parent_dir,
-                                artwork_url,
-                            )
-                            .await
-                            {
-                                Ok(()) => {
-                                    let cover = parent_dir.join("cover.jpg");
-                                    if cover.exists() {
-                                        Some(cover.to_string_lossy().to_string())
-                                    } else {
-                                        None
-                                    }
+                let artwork_path_v1: Option<String> = if let Some(artwork_url) =
+                    metadata.artwork_url.as_deref()
+                {
+                    if let Some(parent_dir) = std::path::Path::new(&new_path).parent() {
+                        match crate::metadata::save_album_artwork(parent_dir, artwork_url).await {
+                            Ok(()) => {
+                                let cover = parent_dir.join("cover.jpg");
+                                if cover.exists() {
+                                    Some(cover.to_string_lossy().to_string())
+                                } else {
+                                    None
                                 }
-                                Err(_) => None,
                             }
-                        } else {
-                            None
+                            Err(_) => None,
                         }
                     } else {
                         None
-                    };
+                    }
+                } else {
+                    None
+                };
 
                 let (bit_depth_detected, sample_rate_detected) =
                     match lofty::read_from_path(&new_path) {
@@ -698,18 +682,13 @@ pub fn spawn_track_cache_download(
             Err(e) => {
                 log::error!("Caching failed for track {}: {}", track_id, e);
                 if let Some(db_guard) = db.lock().await.as_ref() {
-                    let _ = db_guard.update_status(
-                        track_id,
-                        OfflineCacheStatus::Failed,
-                        Some(&e),
-                    );
+                    let _ = db_guard.update_status(track_id, OfflineCacheStatus::Failed, Some(&e));
                 }
                 sink(CacheEvent::Failed { track_id, error: e });
             }
         }
     });
 }
-
 
 /// Validate downloaded byte count against optional Content-Length.
 /// Fail closed when length is known and mismatched, or when zero bytes.

@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
+use qbz_cache::TrackBytes;
 use rodio::Source;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{Decoder, DecoderOptions};
@@ -38,7 +39,6 @@ use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::default::{get_codecs, get_probe};
-use qbz_cache::TrackBytes;
 use tokio::sync::Notify;
 
 /// Configuration for the streaming buffer
@@ -1668,8 +1668,7 @@ mod tests {
         let total_frames = RAMP_RATE * RAMP_SECS;
         let slack_frames = RAMP_RATE / 4;
         let expected = (RAMP_PEAK as f32 / 2.0) / 32768.0;
-        let tolerance =
-            (slack_frames as f32 / total_frames as f32) * (RAMP_PEAK as f32 / 32768.0);
+        let tolerance = (slack_frames as f32 / total_frames as f32) * (RAMP_PEAK as f32 / 32768.0);
         let landed = src.next().unwrap();
         assert!(
             (landed - expected).abs() < tolerance,

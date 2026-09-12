@@ -72,8 +72,10 @@ pub const SIDEBAR_SUMMARIES: [&str; 8] = [
 
 // Global help-bar hints (context-sensitive; assembled per focus + screen).
 pub const HELP_NAV: &str = "up/down move · Enter open · 1-8 jump · Tab content · ? help · q quit";
-pub const HELP_CONTENT_CLEAN: &str = "up/down move · Enter edit · Tab nav · Esc nav · ? help · q quit";
-pub const HELP_CONTENT_DIRTY: &str = "up/down move · Enter edit · s SAVE* · Tab nav · Esc nav · q quit";
+pub const HELP_CONTENT_CLEAN: &str =
+    "up/down move · Enter edit · Tab nav · Esc nav · ? help · q quit";
+pub const HELP_CONTENT_DIRTY: &str =
+    "up/down move · Enter edit · s SAVE* · Tab nav · Esc nav · q quit";
 pub const HELP_AUDIO_CLEAN: &str =
     "up/down move · Enter edit · r refresh · / filter · Tab nav · Esc nav";
 pub const HELP_AUDIO_DIRTY: &str =
@@ -324,8 +326,7 @@ pub fn b_import_done(applied: usize, adapted: usize, skipped: usize) -> String {
 pub const SAVE_TITLE: &str = "Saved";
 pub const RESULT_HINT: &str = "Enter / Esc close";
 
-pub const SAVED_DISK_ONLY: &str =
-    "saved to disk — daemon didn't answer; changes apply on restart";
+pub const SAVED_DISK_ONLY: &str = "saved to disk — daemon didn't answer; changes apply on restart";
 pub const RELOAD_REFUSED: &str =
     "saved to disk — daemon answered but refused the reload; restart it:\n  systemctl --user restart qbzd";
 
@@ -343,11 +344,14 @@ pub const WIZ_STEP_DONE: &str = "Done";
 
 // Per-step help bars.
 pub const WIZ_HELP_WELCOME: &str = "Enter start · → next · Tab nav · q quit";
-pub const WIZ_HELP_CHECK: &str = "up/down move · Enter override · → next · ← back · Esc quit wizard";
-pub const WIZ_HELP_SELECT: &str = "up/down move · Space toggle · m manual · → next · ← back · Esc quit";
+pub const WIZ_HELP_CHECK: &str =
+    "up/down move · Enter override · → next · ← back · Esc quit wizard";
+pub const WIZ_HELP_SELECT: &str =
+    "up/down move · Space toggle · m manual · → next · ← back · Esc quit";
 pub const WIZ_HELP_REVIEW: &str =
     "up/down block · c copy · C copy all · w save · PgUp/PgDn scroll · → next · ← back";
-pub const WIZ_HELP_TEST: &str = "t play test · r re-read · → next (skip) · ← back · Esc quit wizard";
+pub const WIZ_HELP_TEST: &str =
+    "t play test · r re-read · → next (skip) · ← back · Esc quit wizard";
 pub const WIZ_HELP_DONE: &str = "Enter finish · ← back · Esc close";
 
 // Welcome step.
@@ -360,8 +364,10 @@ pub const WIZ_DISTRO: &str = "Distribution";
 pub const WIZ_INIT: &str = "Init system";
 pub const WIZ_HEALTH_CHECKING: &str = "checking your audio stack…";
 pub const WIZ_HEALTH_READY: &str = "✓ your audio stack is ready for bit-perfect playback";
-pub const WIZ_HEALTH_ATTENTION: &str = "! some pieces need attention before bit-perfect playback will work:";
-pub const WIZ_NO_REMEDIATION: &str = "nothing to change — the commands below are for reference only.";
+pub const WIZ_HEALTH_ATTENTION: &str =
+    "! some pieces need attention before bit-perfect playback will work:";
+pub const WIZ_NO_REMEDIATION: &str =
+    "nothing to change — the commands below are for reference only.";
 
 pub fn wiz_sandbox_note(name: &str) -> String {
     format!(
@@ -371,21 +377,27 @@ the commands below are the reference setup for the distro/init you pick."
 }
 
 // Select-DACs step.
-pub const WIZ_SELECT_INTRO: &str = "Detected outputs — check the DAC(s) you want bit-perfect config for:";
+pub const WIZ_SELECT_INTRO: &str =
+    "Detected outputs — check the DAC(s) you want bit-perfect config for:";
 pub const WIZ_DETECTING: &str = "detecting DACs…";
 pub const WIZ_DAC_BADGE: &str = "  [likely DAC]";
 pub const WIZ_DEFAULT_BADGE: &str = "  [default]";
 pub const WIZ_NO_DACS: &str = "no outputs enumerated — is PipeWire running and pw-dump installed?\nyou can still enter a node.name manually with 'm'.";
-pub const WIZ_MANUAL_HINT: &str = "m — enter a PipeWire node.name manually (alsa_output.* / alsa_input.*)";
+pub const WIZ_MANUAL_HINT: &str =
+    "m — enter a PipeWire node.name manually (alsa_output.* / alsa_input.*)";
 pub const WIZ_MANUAL_ACCEPTED: &str = "manual node:";
 pub const WIZ_MANUAL_TITLE: &str = "Manual node.name";
-pub const WIZ_MANUAL_BODY: &str = "Paste a PipeWire node.name (must contain alsa_output or alsa_input):";
-pub const WIZ_MANUAL_INVALID: &str = "not a valid node.name — it must contain alsa_output or alsa_input";
-pub const WIZ_SELECT_GATE: &str = "select at least one DAC (or enter a node.name with 'm') before continuing";
+pub const WIZ_MANUAL_BODY: &str =
+    "Paste a PipeWire node.name (must contain alsa_output or alsa_input):";
+pub const WIZ_MANUAL_INVALID: &str =
+    "not a valid node.name — it must contain alsa_output or alsa_input";
+pub const WIZ_SELECT_GATE: &str =
+    "select at least one DAC (or enter a node.name with 'm') before continuing";
 
 // Review step.
 pub const WIZ_GENERATING: &str = "generating per-DAC config…";
-pub const WIZ_BACKUP_HINT: &str = "tip: back up ~/.config/pipewire + ~/.config/wireplumber before applying anything.";
+pub const WIZ_BACKUP_HINT: &str =
+    "tip: back up ~/.config/pipewire + ~/.config/wireplumber before applying anything.";
 pub const WIZ_REVIEW_FOOTER: &str =
     "the wizard NEVER writes these files — copy (c/C) or save (w), then apply them yourself";
 pub const WIZ_SAVED_TO: &str = "saved to";
@@ -429,7 +441,8 @@ pub const WIZ_ABANDON_HINT: &str = "y quit · Esc stay";
 // ============================ Scrobbler (CONSOLE ext) ============================
 
 pub const SCROBBLER_TITLE: &str = "Scrobbler";
-pub const HELP_SCROBBLER: &str = "L connect Last.fm · B connect ListenBrainz · Tab nav · Esc nav · q quit";
+pub const HELP_SCROBBLER: &str =
+    "L connect Last.fm · B connect ListenBrainz · Tab nav · Esc nav · q quit";
 // Alt-screen handoffs — printed on the plain terminal before the CLI auth flow
 // runs (same methodology as the Account browser login).
 pub const SCROBBLE_LASTFM_HANDOFF: &str =

@@ -59,7 +59,10 @@ impl MprisHandle {
 /// `qbzd settings set playback.mpris` write.
 fn enabled(roots: &ProfileRoots) -> bool {
     if let Ok(v) = std::env::var("QBZD_MPRIS") {
-        return !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no");
+        return !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        );
     }
     qbz_app::settings::daemon_prefs::load_at(&roots.data).mpris_enabled
 }
@@ -117,7 +120,10 @@ pub fn spawn(
 
         loop {
             match bus.recv().await {
-                Ok(CoreEvent::TrackStarted { track, position_secs }) => {
+                Ok(CoreEvent::TrackStarted {
+                    track,
+                    position_secs,
+                }) => {
                     updater_integ.set_metadata(&track_meta(&track));
                     last = PlaybackStatus::Playing;
                     updater_integ.set_playback(last, Some(Duration::from_secs(position_secs)));
@@ -140,7 +146,10 @@ pub fn spawn(
         }
     });
 
-    Some(MprisHandle { integration, updater })
+    Some(MprisHandle {
+        integration,
+        updater,
+    })
 }
 
 // ============================ inbound ============================
@@ -178,7 +187,11 @@ fn handle_media_event(rt: &Runtime, roots: &ProfileRoots, handle: &Handle, ev: M
             }
             let ev = player.get_playback_event();
             let target = (ev.position as i64 + micros / 1_000_000).max(0) as u64;
-            let clamped = if ev.duration > 0 { target.min(ev.duration) } else { target };
+            let clamped = if ev.duration > 0 {
+                target.min(ev.duration)
+            } else {
+                target
+            };
             let _ = core.seek(clamped);
         }
         MediaEvent::SetPosition(micros) => {
@@ -188,7 +201,11 @@ fn handle_media_event(rt: &Runtime, roots: &ProfileRoots, handle: &Handle, ev: M
             }
             let ev = player.get_playback_event();
             let target = (micros.max(0) as u64) / 1_000_000;
-            let clamped = if ev.duration > 0 { target.min(ev.duration) } else { target };
+            let clamped = if ev.duration > 0 {
+                target.min(ev.duration)
+            } else {
+                target
+            };
             let _ = core.seek(clamped);
         }
         MediaEvent::SetVolume(vol) => {
@@ -257,13 +274,19 @@ mod tests {
         // classification the getter uses.
         for v in ["0", "false", "off", "no", "FALSE", " Off "] {
             assert!(
-                matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
+                matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "0" | "false" | "off" | "no"
+                ),
                 "{v:?} should read as disabled"
             );
         }
         for v in ["1", "true", "on", "yes", "anything"] {
             assert!(
-                !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "0" | "false" | "off" | "no"
+                ),
                 "{v:?} should read as enabled"
             );
         }

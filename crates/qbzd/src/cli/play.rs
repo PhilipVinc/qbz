@@ -106,10 +106,22 @@ mod tests {
 
     #[test]
     fn to_body_maps_prefixes_and_urls() {
-        assert_eq!(to_body("track:42").unwrap(), serde_json::json!({"track_id": 42}));
-        assert_eq!(to_body("album:0060254728933").unwrap(), serde_json::json!({"album_id": "0060254728933"}));
-        assert_eq!(to_body("artist:9").unwrap(), serde_json::json!({"artist_id": 9}));
-        assert_eq!(to_body("playlist:7").unwrap(), serde_json::json!({"playlist_id": 7}));
+        assert_eq!(
+            to_body("track:42").unwrap(),
+            serde_json::json!({"track_id": 42})
+        );
+        assert_eq!(
+            to_body("album:0060254728933").unwrap(),
+            serde_json::json!({"album_id": "0060254728933"})
+        );
+        assert_eq!(
+            to_body("artist:9").unwrap(),
+            serde_json::json!({"artist_id": 9})
+        );
+        assert_eq!(
+            to_body("playlist:7").unwrap(),
+            serde_json::json!({"playlist_id": 7})
+        );
         assert_eq!(
             to_body("https://open.qobuz.com/album/abc").unwrap(),
             serde_json::json!({"url": "https://open.qobuz.com/album/abc"})
@@ -118,7 +130,10 @@ mod tests {
 
     #[test]
     fn to_body_bare_number_is_a_track_id() {
-        assert_eq!(to_body("176544871").unwrap(), serde_json::json!({"track_id": 176544871u64}));
+        assert_eq!(
+            to_body("176544871").unwrap(),
+            serde_json::json!({"track_id": 176544871u64})
+        );
     }
 
     #[test]

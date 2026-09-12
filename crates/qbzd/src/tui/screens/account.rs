@@ -111,7 +111,11 @@ impl AccountState {
         let actions = self.actions();
         match key.code {
             KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
-                self.focus = if self.focus == 0 { actions.len() - 1 } else { self.focus - 1 };
+                self.focus = if self.focus == 0 {
+                    actions.len() - 1
+                } else {
+                    self.focus - 1
+                };
                 ScreenAction::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
@@ -173,7 +177,11 @@ impl AccountState {
         for (i, action) in self.actions().iter().enumerate() {
             let focused = i == self.focus && !self.is_editing();
             if focused {
-                anchor = Some(widgets::FocusAnchor { section: 0, inner_line: lines.len() as u16, height: 1 });
+                anchor = Some(widgets::FocusAnchor {
+                    section: 0,
+                    inner_line: lines.len() as u16,
+                    height: 1,
+                });
             }
             lines.push(widgets::action_line(&format!("> {action}"), focused, true));
         }
@@ -182,7 +190,13 @@ impl AccountState {
         widgets::sections_scroll(f, area, &secs, anchor);
 
         if let Some(input) = &self.token_input {
-            widgets::modal(f, area, s::ACCOUNT_PASTE_TOKEN, &input.display(), s::HELP_INPUT);
+            widgets::modal(
+                f,
+                area,
+                s::ACCOUNT_PASTE_TOKEN,
+                &input.display(),
+                s::HELP_INPUT,
+            );
         } else if self.confirm_logout {
             widgets::modal(
                 f,

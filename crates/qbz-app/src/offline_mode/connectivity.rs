@@ -261,10 +261,7 @@ fn ipv6_has_default_route(content: &str) -> bool {
         let dest = cols[0];
         let prefix_len = cols[1];
         let iface = cols[9];
-        iface != "lo"
-            && prefix_len == "00"
-            && dest.len() == 32
-            && dest.bytes().all(|b| b == b'0')
+        iface != "lo" && prefix_len == "00" && dest.len() == 32 && dest.bytes().all(|b| b == b'0')
     })
 }
 
@@ -484,7 +481,10 @@ mod tests {
     #[test]
     fn first_success_goes_up_immediately() {
         let mut judge = ConnectivityJudge::new();
-        assert_eq!(judge.on_probe(ProbeOutcome::Success, now()), JudgeAction::Idle);
+        assert_eq!(
+            judge.on_probe(ProbeOutcome::Success, now()),
+            JudgeAction::Idle
+        );
         assert_eq!(judge.snapshot().state, Connectivity::Up);
     }
 

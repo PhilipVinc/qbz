@@ -142,12 +142,11 @@ pub async fn login_browser(
 
     let nonce_owned = nonce.clone();
     let deadline = Instant::now() + LOGIN_DEADLINE;
-    let captured = tokio::task::spawn_blocking(move || {
-        capture_callback(listener, &nonce_owned, deadline)
-    })
-    .await
-    .map_err(|e| LoginError::Failed(format!("login listener task panicked: {e}")))?
-    .map_err(|e| LoginError::Failed(format!("login listener I/O error: {e}")))?;
+    let captured =
+        tokio::task::spawn_blocking(move || capture_callback(listener, &nonce_owned, deadline))
+            .await
+            .map_err(|e| LoginError::Failed(format!("login listener task panicked: {e}")))?
+            .map_err(|e| LoginError::Failed(format!("login listener I/O error: {e}")))?;
 
     let code = captured.ok_or(LoginError::Timeout(port))?;
     let session = exchange_code(&runtime, &code).await?;
@@ -434,7 +433,10 @@ async fn exchange_code(
     let client = guard
         .as_ref()
         .ok_or_else(|| LoginError::Failed("Qobuz client not initialized".to_string()))?;
-    client.login_with_oauth_code(code).await.map_err(map_api_err)
+    client
+        .login_with_oauth_code(code)
+        .await
+        .map_err(map_api_err)
 }
 
 /// Register the secret, persist the token into the daemon config root (0600),
@@ -481,9 +483,8 @@ pub(crate) fn nudge_host(roots: &ProfileRoots) -> String {
 ///     blocking DNS lookup) — binds the IPv4 wildcard `0.0.0.0`.
 fn bind_login_listener(redirect_host: &str) -> Result<TcpListener, LoginError> {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    let fail = |e: std::io::Error| {
-        LoginError::Failed(format!("could not bind the login listener: {e}"))
-    };
+    let fail =
+        |e: std::io::Error| LoginError::Failed(format!("could not bind the login listener: {e}"));
     let wildcard: IpAddr = match redirect_host.parse::<IpAddr>() {
         Ok(IpAddr::V6(_)) => Ipv6Addr::UNSPECIFIED.into(),
         _ => Ipv4Addr::UNSPECIFIED.into(),
@@ -531,7 +532,11 @@ fn capture_callback(
                 let request_line = request.lines().next().unwrap_or("");
                 let code = parse_callback(request_line, expected_nonce);
 
-                let body = if code.is_some() { SUCCESS_HTML } else { WAITING_HTML };
+                let body = if code.is_some() {
+                    SUCCESS_HTML
+                } else {
+                    WAITING_HTML
+                };
                 let response = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
                      Content-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -617,7 +622,10 @@ mod tests {
         // redirect_url=http://<host>:<port>/<nonce> — the nonce rides the PATH,
         // never a state param the provider would have to echo.
         let url = build_oauth_url("app123", "127.0.0.1", 39114, "NONCEabc");
-        assert!(url.starts_with("https://www.qobuz.com/signin/oauth?"), "{url}");
+        assert!(
+            url.starts_with("https://www.qobuz.com/signin/oauth?"),
+            "{url}"
+        );
         assert!(url.contains("ext_app_id=app123"), "{url}");
         let decoded = urlencoding::decode(&url).unwrap();
         assert!(
@@ -671,8 +679,7 @@ mod tests {
 
     #[test]
     fn resolve_callback_host_handles_ipv6_ssh_connection() {
-        let (host, auto) =
-            resolve_callback_host(None, Some("2001:db8::1 51820 2001:db8::2 22"));
+        let (host, auto) = resolve_callback_host(None, Some("2001:db8::1 51820 2001:db8::2 22"));
         assert_eq!(host, "2001:db8::2");
         assert!(auto);
     }
@@ -688,8 +695,7 @@ mod tests {
     #[test]
     fn resolve_callback_host_falls_through_on_non_ip_server_field() {
         // 3rd field present but not a parseable IP — reject, don't guess.
-        let (host, auto) =
-            resolve_callback_host(None, Some("203.0.113.4 51820 not-an-ip 22"));
+        let (host, auto) = resolve_callback_host(None, Some("203.0.113.4 51820 not-an-ip 22"));
         assert_eq!(host, "127.0.0.1");
         assert!(!auto);
     }
@@ -794,7 +800,10 @@ mod tests {
         let no_state = "GET /abc123?code=OK HTTP/1.1";
         assert_eq!(parse_callback(no_state, "abc123"), Some("OK".to_string()));
         let stray_state = "GET /abc123?state=whatever&code=OK HTTP/1.1";
-        assert_eq!(parse_callback(stray_state, "abc123"), Some("OK".to_string()));
+        assert_eq!(
+            parse_callback(stray_state, "abc123"),
+            Some("OK".to_string())
+        );
     }
 
     #[test]
@@ -824,8 +833,14 @@ mod tests {
 
     #[test]
     fn code_from_paste_accepts_a_bare_code() {
-        assert_eq!(code_from_paste("JUSTACODE", "nn"), Some("JUSTACODE".to_string()));
-        assert_eq!(code_from_paste("  JUSTACODE  ", "nn"), Some("JUSTACODE".to_string()));
+        assert_eq!(
+            code_from_paste("JUSTACODE", "nn"),
+            Some("JUSTACODE".to_string())
+        );
+        assert_eq!(
+            code_from_paste("  JUSTACODE  ", "nn"),
+            Some("JUSTACODE".to_string())
+        );
     }
 
     #[test]
@@ -872,9 +887,18 @@ mod tests {
     #[test]
     fn login_timeout_error_renders_the_verbatim_copy_with_the_port() {
         let rendered = LoginError::Timeout(39114).to_string();
-        assert!(rendered.contains("no OAuth redirect received within 300 s"), "{rendered}");
-        assert!(rendered.contains("ssh -L 39114:localhost:39114"), "{rendered}");
+        assert!(
+            rendered.contains("no OAuth redirect received within 300 s"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("ssh -L 39114:localhost:39114"),
+            "{rendered}"
+        );
         assert!(rendered.contains("qbzd login --paste"), "{rendered}");
-        assert!(rendered.contains("qbzd login --token <user_auth_token>"), "{rendered}");
+        assert!(
+            rendered.contains("qbzd login --token <user_auth_token>"),
+            "{rendered}"
+        );
     }
 }

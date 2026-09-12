@@ -67,7 +67,10 @@ const HISTORY_RENDER_CAP: usize = 3;
 /// qbz-player/src/queue.rs:1036-1082), numbering starts at 1, and no
 /// history rows render (there is no current row to anchor them to).
 fn render_queue_list(v: &Value) -> String {
-    let current_index = v.get("current_index").and_then(|i| i.as_u64()).map(|i| i as usize);
+    let current_index = v
+        .get("current_index")
+        .and_then(|i| i.as_u64())
+        .map(|i| i as usize);
     let total = v.get("total_tracks").and_then(|t| t.as_u64()).unwrap_or(0);
     let shuffle = v.get("shuffle").and_then(|s| s.as_bool()).unwrap_or(false);
     let repeat = v.get("repeat").and_then(|r| r.as_str()).unwrap_or("off");
@@ -83,7 +86,9 @@ fn render_queue_list(v: &Value) -> String {
         // oldest-first so the most recent lands directly above the current
         // row, numbered backwards from it (never below position 1).
         if let Some(history) = v.get("history").and_then(|h| h.as_array()) {
-            let take = HISTORY_RENDER_CAP.min(cur_pos.saturating_sub(1)).min(history.len());
+            let take = HISTORY_RENDER_CAP
+                .min(cur_pos.saturating_sub(1))
+                .min(history.len());
             for (i, played) in history[..take].iter().rev().enumerate() {
                 out.push_str(&render_row(false, cur_pos - take + i, played));
             }
@@ -109,7 +114,10 @@ fn render_row(is_current: bool, position: usize, track: &Value) -> String {
     let marker = if is_current { "->" } else { "  " };
     let title = track.get("title").and_then(|t| t.as_str()).unwrap_or("");
     let artist = track.get("artist").and_then(|a| a.as_str()).unwrap_or("");
-    let dur = track.get("duration_secs").and_then(|d| d.as_u64()).unwrap_or(0);
+    let dur = track
+        .get("duration_secs")
+        .and_then(|d| d.as_u64())
+        .unwrap_or(0);
     format!(
         "{marker}{position:>3}  {title:<40}{artist:<17}{len:>4}\n",
         len = fmt_mmss(dur)
@@ -261,7 +269,13 @@ pub async fn move_(host: Option<String>, roots: &ProfileRoots, from: usize, to: 
         }
     };
     let client = ApiClient::new(host, roots);
-    match client.post("/api/queue/move", serde_json::json!({"from": from_i, "to": to_i})).await {
+    match client
+        .post(
+            "/api/queue/move",
+            serde_json::json!({"from": from_i, "to": to_i}),
+        )
+        .await
+    {
         Ok(_) => {
             println!("moved {from} -> {to}");
             0
@@ -284,10 +298,21 @@ pub async fn jump(host: Option<String>, roots: &ProfileRoots, position: usize) -
         }
     };
     let client = ApiClient::new(host, roots);
-    match client.post("/api/queue/jump", serde_json::json!({"index": index})).await {
+    match client
+        .post("/api/queue/jump", serde_json::json!({"index": index}))
+        .await
+    {
         Ok(v) => {
-            let title = v.get("track").and_then(|t| t.get("title")).and_then(|x| x.as_str()).unwrap_or("");
-            let artist = v.get("track").and_then(|t| t.get("artist")).and_then(|x| x.as_str()).unwrap_or("");
+            let title = v
+                .get("track")
+                .and_then(|t| t.get("title"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            let artist = v
+                .get("track")
+                .and_then(|t| t.get("artist"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
             if title.is_empty() {
                 println!("jumped to {position}");
             } else {
@@ -472,7 +497,10 @@ mod tests {
             "total_tracks": 0, "stop_after_track_id": null, "offset": 0, "limit": 100
         });
         let rendered = render_queue_list(&v);
-        assert_eq!(rendered, format!("{HEADER}\n0 tracks · shuffle off · repeat off\n"));
+        assert_eq!(
+            rendered,
+            format!("{HEADER}\n0 tracks · shuffle off · repeat off\n")
+        );
     }
 
     // ------------------------------ add rendering ------------------------------

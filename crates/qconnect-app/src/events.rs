@@ -48,13 +48,19 @@ pub enum QconnectAppEvent {
         payload: Value,
     },
     /// Active peer renderer went silent >=12s while PLAYING (liveness watchdog).
-    RendererUnreachable { renderer_id: i32 },
+    RendererUnreachable {
+        renderer_id: i32,
+    },
     /// Active peer renderer left gracefully (status == ACTIVE_DISCONNECTED).
-    RendererDisconnected { renderer_id: i32 },
+    RendererDisconnected {
+        renderer_id: i32,
+    },
     /// Post-reconnect resync has been issued (safe-to-replay advisory).
     ResyncComplete,
     /// Granular connection lifecycle changed (Connecting/Reconnecting/Connected/Exhausted/Off).
-    LifecycleChanged { state: QconnectLifecycleState },
+    LifecycleChanged {
+        state: QconnectLifecycleState,
+    },
     /// Pass-through diagnostic (inbound-event preview, cloud error, max-reconnect, ...).
     /// `channel` is the legacy Tauri channel suffix so the mapper is mechanical.
     Diagnostic {

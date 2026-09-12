@@ -54,8 +54,9 @@ impl LibraryDatabase {
             .map_err(|e| LibraryError::Database(format!("local_playlists schema: {}", e)))?;
         // Qobuz playlist snapshot (offline-mode B7/B8) — names + membership
         // captured opportunistically while online. Idempotent.
-        crate::qobuz_playlist_snapshot::init_schema(&db.conn)
-            .map_err(|e| LibraryError::Database(format!("qobuz_playlist_snapshot schema: {}", e)))?;
+        crate::qobuz_playlist_snapshot::init_schema(&db.conn).map_err(|e| {
+            LibraryError::Database(format!("qobuz_playlist_snapshot schema: {}", e))
+        })?;
         Ok(db)
     }
 
@@ -1124,9 +1125,8 @@ impl LibraryDatabase {
         // mount topology can change between folder scans; the cost is
         // negligible (one /proc/mounts read, cached by the kernel
         // page cache).
-        let is_network_mount = crate::mount_info::is_network_path(
-            std::path::Path::new(&track.file_path),
-        );
+        let is_network_mount =
+            crate::mount_info::is_network_path(std::path::Path::new(&track.file_path));
 
         self.conn
             .execute(
@@ -1639,8 +1639,8 @@ impl LibraryDatabase {
                 "track" => {
                     // Use the actual file_path so paths with edge-case
                     // characters round-trip exactly as stored.
-                    let path = one_file_path
-                        .unwrap_or_else(|| format!("{}/{}", parent_path, segment));
+                    let path =
+                        one_file_path.unwrap_or_else(|| format!("{}/{}", parent_path, segment));
                     entries.push(FolderTreeEntry::Track { path, segment });
                 }
                 _ => {
@@ -1948,8 +1948,7 @@ impl LibraryDatabase {
                 let group_key: String = row.get(0)?;
                 let album: String = row.get(1)?;
                 let artist: String = row.get(2)?;
-                let all_artists: String =
-                    row.get::<_, Option<String>>(3)?.unwrap_or_default();
+                let all_artists: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
                 let artwork_path: Option<String> = row.get(6)?;
                 let source_folders: Option<String> = row.get(12)?;
 
@@ -2027,10 +2026,7 @@ impl LibraryDatabase {
                 let _ = self.conn.execute("DETACH DATABASE plex_cache", []);
                 let path_str = path.to_string_lossy().replace('\'', "''");
                 self.conn
-                    .execute(
-                        &format!("ATTACH DATABASE '{}' AS plex_cache", path_str),
-                        [],
-                    )
+                    .execute(&format!("ATTACH DATABASE '{}' AS plex_cache", path_str), [])
                     .is_ok()
             } else {
                 false
@@ -2102,7 +2098,10 @@ impl LibraryDatabase {
             };
             // Check the folder and its parent (covers multi-disc layouts where
             // the art sits one level up).
-            let dirs = [Some(folder.clone()), folder.parent().map(|x| x.to_path_buf())];
+            let dirs = [
+                Some(folder.clone()),
+                folder.parent().map(|x| x.to_path_buf()),
+            ];
             for dir in dirs.into_iter().flatten() {
                 for name in NAMES {
                     let cover = dir.join(name);
@@ -2323,8 +2322,7 @@ impl LibraryDatabase {
                     let group_key: String = row.get(0)?;
                     let title: String = row.get(1)?;
                     let artist: String = row.get(2)?;
-                    let all_artists: String =
-                        row.get::<_, Option<String>>(3)?.unwrap_or_default();
+                    let all_artists: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
                     let artwork_path: Option<String> = row.get(6)?;
                     let source_folders: Option<String> = row.get(12)?;
                     let total: u64 = row.get::<_, i64>(14)? as u64;
@@ -2483,11 +2481,9 @@ impl LibraryDatabase {
 
         let total: i64 = self
             .conn
-            .query_row(
-                &query,
-                rusqlite::params![has_search, search_like],
-                |row| row.get(0),
-            )
+            .query_row(&query, rusqlite::params![has_search, search_like], |row| {
+                row.get(0)
+            })
             .map_err(|e| LibraryError::Database(e.to_string()))?;
         Ok(total as u64)
     }
@@ -2663,7 +2659,9 @@ impl LibraryDatabase {
     /// per-track embedded covers. Per-track artwork is now resolved
     /// individually at scan time. Kept compilable for any caller that
     /// might still exist; do not introduce new callers.
-    #[deprecated(note = "Was destructive in scan loop; per-track artwork is resolved during scan instead")]
+    #[deprecated(
+        note = "Was destructive in scan loop; per-track artwork is resolved during scan instead"
+    )]
     pub fn update_album_group_artwork(
         &self,
         group_key: &str,
@@ -4162,10 +4160,7 @@ impl LibraryDatabase {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
             })
             .map_err(|e| {
-                LibraryError::Database(format!(
-                    "Failed to query playlist plex tracks: {}",
-                    e
-                ))
+                LibraryError::Database(format!("Failed to query playlist plex tracks: {}", e))
             })?;
 
         rows.collect::<Result<Vec<_>, _>>().map_err(|e| {
@@ -4577,8 +4572,7 @@ impl LibraryDatabase {
         if moves.is_empty() {
             return Ok(Vec::new());
         }
-        let mut next =
-            ((qobuz_track_count as i32) + sidecar_total as i32).max(max_pos + 1);
+        let mut next = ((qobuz_track_count as i32) + sidecar_total as i32).max(max_pos + 1);
         let mut healed = Vec::with_capacity(moves.len());
         for (kind, rowid, reference, old) in moves {
             let sql = if kind == "local" {
@@ -5243,9 +5237,7 @@ impl LibraryDatabase {
                 let url: Option<String> = row.get(2)?;
                 Ok((row.get::<_, String>(0)?, custom.or(url)))
             })
-            .map_err(|e| {
-                LibraryError::Database(format!("Failed to query artist images: {}", e))
-            })?;
+            .map_err(|e| LibraryError::Database(format!("Failed to query artist images: {}", e)))?;
 
         let mut map = std::collections::HashMap::new();
         for row in rows.flatten() {
@@ -5778,7 +5770,14 @@ mod metadata_grouping_tests {
             "/m/mix/cd",
         );
 
-        let albums = db.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata).unwrap();
+        let albums = db
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
+            .unwrap();
         let vespertine = albums
             .iter()
             .find(|a| a.title == "Vespertine")
@@ -5793,7 +5792,14 @@ mod metadata_grouping_tests {
         insert_track_for_test(&db, "/m/folder/01.flac", None, None, "A", "/m/folder");
         insert_track_for_test(&db, "/m/folder/02.flac", None, None, "B", "/m/folder");
 
-        let albums = db.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata).unwrap();
+        let albums = db
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
+            .unwrap();
         assert_eq!(albums.len(), 1, "single folder fallback group");
         assert_eq!(albums[0].track_count, 2);
         assert_eq!(albums[0].artist, "Various Artists");
@@ -5806,7 +5812,14 @@ mod metadata_grouping_tests {
         insert_track_for_test(&db, "/m/ghost/01.flac", None, None, "X", "");
         insert_track_for_test(&db, "/m/ghost/02.flac", None, None, "Y", "");
 
-        let albums = db.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata).unwrap();
+        let albums = db
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
+            .unwrap();
         let unknown = albums
             .iter()
             .find(|a| a.title == "Unknown Album")
@@ -5835,7 +5848,14 @@ mod metadata_grouping_tests {
             "/m/comp",
         );
 
-        let albums = db.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata).unwrap();
+        let albums = db
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
+            .unwrap();
         let comp = albums
             .iter()
             .find(|a| a.title == "Comp")
@@ -5852,8 +5872,16 @@ mod metadata_grouping_tests {
         // album_artist. Metadata mode splits per track artist; Folder mode
         // keeps ONE card.
         for (i, artist) in [
-            "MAKE-UP", "MAKE-UP PROJECT", "Horie", "Kageyama", "Furuya",
-            "Trooper", "Matsuzawa", "Marina", "Broadway", "Oren",
+            "MAKE-UP",
+            "MAKE-UP PROJECT",
+            "Horie",
+            "Kageyama",
+            "Furuya",
+            "Trooper",
+            "Matsuzawa",
+            "Marina",
+            "Broadway",
+            "Oren",
         ]
         .iter()
         .enumerate()
@@ -5869,11 +5897,25 @@ mod metadata_grouping_tests {
         }
 
         // Metadata mode: one group per album|artist pair (the #411 split).
-        let albums = db.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata).unwrap();
+        let albums = db
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
+            .unwrap();
         assert_eq!(albums.len(), 10, "metadata mode splits per track artist");
 
         // Folder mode: ONE album, Various Artists, everyone in all_artists.
-        let albums = db.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Folder).unwrap();
+        let albums = db
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Folder,
+            )
+            .unwrap();
         assert_eq!(albums.len(), 1, "folder mode keeps the compilation whole");
         let comp = &albums[0];
         assert_eq!(comp.title, "Saint Seiya Best");
@@ -5902,7 +5944,14 @@ mod metadata_grouping_tests {
             "EELS",
             "/m/eels",
         );
-        let albums = db2.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Folder).unwrap();
+        let albums = db2
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Folder,
+            )
+            .unwrap();
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].artist, "EELS");
 
@@ -5910,7 +5959,14 @@ mod metadata_grouping_tests {
         let (_tmp3, db3) = fresh_db();
         insert_track_for_test(&db3, "/m/ghost/01.flac", None, None, "X", "");
         insert_track_for_test(&db3, "/m/ghost/02.flac", None, None, "Y", "");
-        let albums = db3.get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Folder).unwrap();
+        let albums = db3
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Folder,
+            )
+            .unwrap();
         let unknown = albums
             .iter()
             .find(|a| a.title == "Unknown Album")
@@ -6014,7 +6070,12 @@ mod metadata_grouping_tests {
         );
 
         let albums = db
-            .get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata)
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
             .unwrap();
         let mix = albums
             .iter()
@@ -6040,7 +6101,12 @@ mod metadata_grouping_tests {
         );
 
         let albums = db
-            .get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata)
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
             .unwrap();
         let a = albums
             .iter()
@@ -6087,7 +6153,12 @@ mod metadata_grouping_tests {
         );
 
         let albums = db
-            .get_albums_metadata_grouped(false, true, false, crate::album_grouping::AlbumGroupMode::Metadata)
+            .get_albums_metadata_grouped(
+                false,
+                true,
+                false,
+                crate::album_grouping::AlbumGroupMode::Metadata,
+            )
             .unwrap();
         let old = albums
             .iter()
@@ -6272,7 +6343,13 @@ mod folder_tree_tests {
         // Folder containing a literal '%' in the filename. Without
         // escape_like_pattern, the '%' would behave as a wildcard and
         // either over-match or fail to match.
-        insert_at(&db, "/m/percent_test/100%.flac", Some(1), Some(1), "Hundred");
+        insert_at(
+            &db,
+            "/m/percent_test/100%.flac",
+            Some(1),
+            Some(1),
+            "Hundred",
+        );
         // A second literal-percent path that should NOT show up under
         // /m/percent_test (different parent).
         insert_at(
@@ -6338,7 +6415,13 @@ mod folder_tree_tests {
         // Expected sort: disc ASC, track ASC, title ASC (NOCASE).
         insert_at(&db, "/m/order/disc2-track1.flac", Some(2), Some(1), "D2T1");
         insert_at(&db, "/m/order/disc1-track2.flac", Some(1), Some(2), "D1T2");
-        insert_at(&db, "/m/order/disc1-track1-bee.flac", Some(1), Some(1), "Bee");
+        insert_at(
+            &db,
+            "/m/order/disc1-track1-bee.flac",
+            Some(1),
+            Some(1),
+            "Bee",
+        );
         insert_at(
             &db,
             "/m/order/disc1-track1-ant.flac",
@@ -6360,9 +6443,15 @@ mod folder_tree_tests {
         // /m/A/album1 has direct tracks t1.flac, t2.flac AND a deeper
         // file at /m/A/album1/Disc 1/t3.flac. The recursive listing
         // must return all three.
-        let tracks = db.list_folder_tracks_recursive("/m/A/album1", false).unwrap();
+        let tracks = db
+            .list_folder_tracks_recursive("/m/A/album1", false)
+            .unwrap();
         let titles: Vec<_> = tracks.iter().map(|track| track.title.clone()).collect();
-        assert_eq!(tracks.len(), 3, "recursive listing must include subfolder tracks");
+        assert_eq!(
+            tracks.len(),
+            3,
+            "recursive listing must include subfolder tracks"
+        );
         assert!(titles.contains(&"Alpha".to_string()));
         assert!(titles.contains(&"Beta".to_string()));
         assert!(titles.contains(&"Gamma".to_string()));
@@ -6401,11 +6490,25 @@ mod folder_tree_tests {
         // Folder containing literal '_' that LIKE would otherwise treat
         // as a single-character wildcard. With escape_like_pattern, the
         // sibling /m/percentXtest must not contaminate the result set.
-        insert_at(&db, "/m/percent_test/100%.flac", Some(1), Some(1), "Hundred");
-        insert_at(&db, "/m/percent_test/inner/200.flac", Some(1), Some(1), "TwoHundred");
+        insert_at(
+            &db,
+            "/m/percent_test/100%.flac",
+            Some(1),
+            Some(1),
+            "Hundred",
+        );
+        insert_at(
+            &db,
+            "/m/percent_test/inner/200.flac",
+            Some(1),
+            Some(1),
+            "TwoHundred",
+        );
         insert_at(&db, "/m/percentXtest/decoy.flac", Some(1), Some(1), "Decoy");
 
-        let tracks = db.list_folder_tracks_recursive("/m/percent_test", false).unwrap();
+        let tracks = db
+            .list_folder_tracks_recursive("/m/percent_test", false)
+            .unwrap();
         let titles: Vec<_> = tracks.iter().map(|track| track.title.clone()).collect();
         assert_eq!(tracks.len(), 2, "underscore in parent path must be escaped");
         assert!(titles.contains(&"Hundred".to_string()));
@@ -6419,7 +6522,9 @@ mod folder_tree_tests {
         // Vec rather than an error — frontend treats empty as "nothing
         // to play/queue" and skips the toast.
         let (_tmp, db) = fresh_db();
-        let tracks = db.list_folder_tracks_recursive("/m/does/not/exist", false).unwrap();
+        let tracks = db
+            .list_folder_tracks_recursive("/m/does/not/exist", false)
+            .unwrap();
         assert!(tracks.is_empty());
     }
 
@@ -6479,7 +6584,11 @@ mod folder_tree_tests {
 
         // --- list_folder_tracks (direct children) ------------------
         let direct_all = db.list_folder_tracks("/m/net/album", false).unwrap();
-        assert_eq!(direct_all.len(), 1, "net1.flac must appear when exclude=false");
+        assert_eq!(
+            direct_all.len(),
+            1,
+            "net1.flac must appear when exclude=false"
+        );
 
         let direct_filtered = db.list_folder_tracks("/m/net/album", true).unwrap();
         assert!(
@@ -6493,11 +6602,13 @@ mod folder_tree_tests {
 
         // --- list_folder_tracks_recursive --------------------------
         let recursive_all = db.list_folder_tracks_recursive("/m/net", false).unwrap();
-        assert_eq!(recursive_all.len(), 2, "both net tracks visible when exclude=false");
+        assert_eq!(
+            recursive_all.len(),
+            2,
+            "both net tracks visible when exclude=false"
+        );
 
-        let recursive_filtered = db
-            .list_folder_tracks_recursive("/m/net", true)
-            .unwrap();
+        let recursive_filtered = db.list_folder_tracks_recursive("/m/net", true).unwrap();
         assert!(
             recursive_filtered.is_empty(),
             "network tracks leaked into recursive listing when exclude=true"
@@ -6505,9 +6616,7 @@ mod folder_tree_tests {
 
         // Recursive listing on a non-network root still returns its
         // tracks even when exclude=true.
-        let recursive_local = db
-            .list_folder_tracks_recursive("/m/local", true)
-            .unwrap();
+        let recursive_local = db.list_folder_tracks_recursive("/m/local", true).unwrap();
         assert_eq!(recursive_local.len(), 2);
     }
 

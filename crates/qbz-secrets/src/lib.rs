@@ -145,8 +145,7 @@ mod tests {
         // exercised by design because the sandboxed tempdir + nonexistent
         // entry guarantees a fresh state; the keyring may be reachable
         // but we accept either backend — the round-trip still holds.
-        let vault = SecretBox::open("qbz-secrets-test-harness", dir.path())
-            .expect("open vault");
+        let vault = SecretBox::open("qbz-secrets-test-harness", dir.path()).expect("open vault");
         (vault, dir)
     }
 

@@ -70,7 +70,10 @@ fn tables() -> &'static Tables {
                 ctables[CTABLES - 1 - t][e] = acc as f32;
             }
         }
-        Tables { bitreverse, ctables }
+        Tables {
+            bitreverse,
+            ctables,
+        }
     })
 }
 
@@ -89,7 +92,10 @@ pub struct Dsd2Pcm {
 impl Dsd2Pcm {
     pub fn new() -> Self {
         // 0x69 is DSD silence; priming the FIFO with it avoids a start click.
-        Self { fifo: [0x69; FIFO_SIZE], pos: 0 }
+        Self {
+            fifo: [0x69; FIFO_SIZE],
+            pos: 0,
+        }
     }
 
     /// Translate DSD bytes to float samples, appending to `dst`.
@@ -99,7 +105,11 @@ impl Dsd2Pcm {
         let mut ffp = self.pos;
         dst.reserve(src.len());
         for &byte in src {
-            let bite1 = if lsb_first { tb.bitreverse[byte as usize] } else { byte };
+            let bite1 = if lsb_first {
+                tb.bitreverse[byte as usize]
+            } else {
+                byte
+            };
             self.fifo[ffp] = bite1;
             // Pre-reverse the byte that just crossed the filter midpoint so
             // the mirrored half reads straight from the table (dsd2pcm.c).
@@ -159,7 +169,10 @@ mod tests {
         let mut b = Dsd2Pcm::new();
         let (mut oa, mut ob) = (Vec::new(), Vec::new());
         let pattern: Vec<u8> = (0..=255u8).cycle().take(2048).collect();
-        let reversed: Vec<u8> = pattern.iter().map(|&x| tables().bitreverse[x as usize]).collect();
+        let reversed: Vec<u8> = pattern
+            .iter()
+            .map(|&x| tables().bitreverse[x as usize])
+            .collect();
         a.translate(&pattern, false, &mut oa);
         b.translate(&reversed, true, &mut ob);
         assert_eq!(oa, ob);

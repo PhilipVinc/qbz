@@ -593,7 +593,10 @@ mod tests {
 
     #[test]
     fn renderer_status_from_wire_collapses_unknown_and_missing_to_inactive() {
-        assert_eq!(RendererStatus::from_wire(Some(99)), RendererStatus::Inactive); // UNRECOGNIZED
+        assert_eq!(
+            RendererStatus::from_wire(Some(99)),
+            RendererStatus::Inactive
+        ); // UNRECOGNIZED
         assert_eq!(RendererStatus::from_wire(None), RendererStatus::Inactive); // absent field
     }
 
@@ -639,7 +642,10 @@ mod tests {
         assert_eq!(quality_from_max_audio_quality(Some(4)), Quality::UltraHiRes);
         assert_eq!(quality_from_max_audio_quality(Some(5)), Quality::UltraHiRes);
         assert_eq!(quality_from_max_audio_quality(None), Quality::UltraHiRes);
-        assert_eq!(quality_from_max_audio_quality(Some(99)), Quality::UltraHiRes);
+        assert_eq!(
+            quality_from_max_audio_quality(Some(99)),
+            Quality::UltraHiRes
+        );
     }
 
     /// The ids answer the role outright in two shapes and cannot in the third.

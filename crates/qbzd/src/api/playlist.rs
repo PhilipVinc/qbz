@@ -22,7 +22,12 @@ pub fn list(state: &ApiState) -> Response<Cursor<Vec<u8>>> {
             200,
             serde_json::json!({"playlists": serde_json::to_value(pls).unwrap_or(Value::Null)}),
         ),
-        Err(_) => err_json(502, "playlists_failed", "playlists request to Qobuz failed", "try again in a moment"),
+        Err(_) => err_json(
+            502,
+            "playlists_failed",
+            "playlists request to Qobuz failed",
+            "try again in a moment",
+        ),
     }
 }
 
@@ -33,14 +38,26 @@ pub fn show(state: &ApiState, query: &str) -> Response<Cursor<Vec<u8>>> {
     }
     let id = match id_param(query) {
         Some(id) => id,
-        None => return err_json(400, "bad_request", "playlist requires a numeric id", "usage: qbzd playlist show <ID>"),
+        None => {
+            return err_json(
+                400,
+                "bad_request",
+                "playlist requires a numeric id",
+                "usage: qbzd playlist show <ID>",
+            )
+        }
     };
     match state.rt.block_on(state.runtime.core().get_playlist(id)) {
         Ok(pl) => json(
             200,
             serde_json::json!({"playlist": serde_json::to_value(pl).unwrap_or(Value::Null)}),
         ),
-        Err(_) => err_json(404, "not_found", &format!("playlist {id} not found"), "check: qbzd playlist list"),
+        Err(_) => err_json(
+            404,
+            "not_found",
+            &format!("playlist {id} not found"),
+            "check: qbzd playlist list",
+        ),
     }
 }
 
@@ -50,15 +67,40 @@ pub fn create(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
     if let Some(resp) = auth_gate(state) {
         return resp;
     }
-    let name = match body.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()) {
+    let name = match body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|n| !n.trim().is_empty())
+    {
         Some(n) => n,
-        None => return err_json(400, "bad_request", "create requires a name", "body: {\"name\": \"My Playlist\"}"),
+        None => {
+            return err_json(
+                400,
+                "bad_request",
+                "create requires a name",
+                "body: {\"name\": \"My Playlist\"}",
+            )
+        }
     };
     let desc = body.get("description").and_then(|v| v.as_str());
-    let public = body.get("public").and_then(|v| v.as_bool()).unwrap_or(false);
-    match state.rt.block_on(state.runtime.core().create_playlist(name, desc, public)) {
-        Ok(pl) => json(200, serde_json::json!({"playlist": serde_json::to_value(pl).unwrap_or(Value::Null)})),
-        Err(_) => err_json(502, "playlists_failed", "playlist create failed", "try again in a moment"),
+    let public = body
+        .get("public")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    match state
+        .rt
+        .block_on(state.runtime.core().create_playlist(name, desc, public))
+    {
+        Ok(pl) => json(
+            200,
+            serde_json::json!({"playlist": serde_json::to_value(pl).unwrap_or(Value::Null)}),
+        ),
+        Err(_) => err_json(
+            502,
+            "playlists_failed",
+            "playlist create failed",
+            "try again in a moment",
+        ),
     }
 }
 
@@ -70,14 +112,32 @@ pub fn update(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
     }
     let id = match body.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id,
-        None => return err_json(400, "bad_request", "update requires an id", "body: {\"id\": 987, \"name\": \"...\"}"),
+        None => {
+            return err_json(
+                400,
+                "bad_request",
+                "update requires an id",
+                "body: {\"id\": 987, \"name\": \"...\"}",
+            )
+        }
     };
     let name = body.get("name").and_then(|v| v.as_str());
     let desc = body.get("description").and_then(|v| v.as_str());
     let public = body.get("public").and_then(|v| v.as_bool());
-    match state.rt.block_on(state.runtime.core().update_playlist(id, name, desc, public)) {
-        Ok(pl) => json(200, serde_json::json!({"playlist": serde_json::to_value(pl).unwrap_or(Value::Null)})),
-        Err(_) => err_json(502, "playlists_failed", "playlist update failed", "try again in a moment"),
+    match state
+        .rt
+        .block_on(state.runtime.core().update_playlist(id, name, desc, public))
+    {
+        Ok(pl) => json(
+            200,
+            serde_json::json!({"playlist": serde_json::to_value(pl).unwrap_or(Value::Null)}),
+        ),
+        Err(_) => err_json(
+            502,
+            "playlists_failed",
+            "playlist update failed",
+            "try again in a moment",
+        ),
     }
 }
 
@@ -88,11 +148,23 @@ pub fn delete(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
     }
     let id = match body.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id,
-        None => return err_json(400, "bad_request", "delete requires an id", "body: {\"id\": 987}"),
+        None => {
+            return err_json(
+                400,
+                "bad_request",
+                "delete requires an id",
+                "body: {\"id\": 987}",
+            )
+        }
     };
     match state.rt.block_on(state.runtime.core().delete_playlist(id)) {
         Ok(()) => json(200, serde_json::json!({"ok": true, "deleted": id})),
-        Err(_) => err_json(502, "playlists_failed", "playlist delete failed", "try again in a moment"),
+        Err(_) => err_json(
+            502,
+            "playlists_failed",
+            "playlist delete failed",
+            "try again in a moment",
+        ),
     }
 }
 
@@ -103,15 +175,33 @@ pub fn tracks_add(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
     }
     let id = match body.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id,
-        None => return err_json(400, "bad_request", "add requires a playlist id", "body: {\"id\": 987, \"track_ids\": [...]}"),
+        None => {
+            return err_json(
+                400,
+                "bad_request",
+                "add requires a playlist id",
+                "body: {\"id\": 987, \"track_ids\": [...]}",
+            )
+        }
     };
     let track_ids = match parse_ids(body) {
         Ok(ids) => ids,
         Err((m, h)) => return err_json(400, "bad_request", &m, &h),
     };
-    match state.rt.block_on(state.runtime.core().add_tracks_to_playlist(id, &track_ids)) {
-        Ok(()) => json(200, serde_json::json!({"ok": true, "added": track_ids.len()})),
-        Err(_) => err_json(502, "playlists_failed", "add to playlist failed", "try again in a moment"),
+    match state
+        .rt
+        .block_on(state.runtime.core().add_tracks_to_playlist(id, &track_ids))
+    {
+        Ok(()) => json(
+            200,
+            serde_json::json!({"ok": true, "added": track_ids.len()}),
+        ),
+        Err(_) => err_json(
+            502,
+            "playlists_failed",
+            "add to playlist failed",
+            "try again in a moment",
+        ),
     }
 }
 
@@ -125,7 +215,14 @@ pub fn tracks_remove(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>
     }
     let id = match body.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id,
-        None => return err_json(400, "bad_request", "remove requires a playlist id", "body: {\"id\": 987, \"track_ids\": [...]}"),
+        None => {
+            return err_json(
+                400,
+                "bad_request",
+                "remove requires a playlist id",
+                "body: {\"id\": 987, \"track_ids\": [...]}",
+            )
+        }
     };
     let track_ids = match parse_ids(body) {
         Ok(ids) => ids,
@@ -133,7 +230,14 @@ pub fn tracks_remove(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>
     };
     let pl = match state.rt.block_on(state.runtime.core().get_playlist(id)) {
         Ok(p) => p,
-        Err(_) => return err_json(404, "not_found", &format!("playlist {id} not found"), "check: qbzd playlist list"),
+        Err(_) => {
+            return err_json(
+                404,
+                "not_found",
+                &format!("playlist {id} not found"),
+                "check: qbzd playlist list",
+            )
+        }
     };
     let wanted: std::collections::HashSet<u64> = track_ids.iter().copied().collect();
     let items = pl.tracks.map(|t| t.items).unwrap_or_default();
@@ -143,11 +247,29 @@ pub fn tracks_remove(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>
         .filter_map(|t| t.playlist_track_id)
         .collect();
     if row_ids.is_empty() {
-        return err_json(404, "not_found", "none of those tracks are in the playlist", "check: qbzd playlist show <ID>");
+        return err_json(
+            404,
+            "not_found",
+            "none of those tracks are in the playlist",
+            "check: qbzd playlist show <ID>",
+        );
     }
-    match state.rt.block_on(state.runtime.core().remove_tracks_from_playlist(id, &row_ids)) {
-        Ok(()) => json(200, serde_json::json!({"ok": true, "removed": row_ids.len()})),
-        Err(_) => err_json(502, "playlists_failed", "remove from playlist failed", "try again in a moment"),
+    match state.rt.block_on(
+        state
+            .runtime
+            .core()
+            .remove_tracks_from_playlist(id, &row_ids),
+    ) {
+        Ok(()) => json(
+            200,
+            serde_json::json!({"ok": true, "removed": row_ids.len()}),
+        ),
+        Err(_) => err_json(
+            502,
+            "playlists_failed",
+            "remove from playlist failed",
+            "try again in a moment",
+        ),
     }
 }
 
@@ -188,7 +310,12 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
         .map(|s| s.auth == AuthState::NeedsAuth)
         .unwrap_or(false);
     if needs_auth {
-        Some(err_json(409, "needs_auth", "not logged in to Qobuz", "run: qbzd login"))
+        Some(err_json(
+            409,
+            "needs_auth",
+            "not logged in to Qobuz",
+            "run: qbzd login",
+        ))
     } else {
         None
     }
@@ -208,7 +335,10 @@ mod tests {
 
     #[test]
     fn parse_ids_accepts_valid_and_rejects_bad() {
-        assert_eq!(parse_ids(&serde_json::json!({"track_ids": [1, 2, 3]})), Ok(vec![1, 2, 3]));
+        assert_eq!(
+            parse_ids(&serde_json::json!({"track_ids": [1, 2, 3]})),
+            Ok(vec![1, 2, 3])
+        );
         assert!(parse_ids(&serde_json::json!({"track_ids": []})).is_err());
         assert!(parse_ids(&serde_json::json!({"track_ids": [1, "x"]})).is_err());
         assert!(parse_ids(&serde_json::json!({})).is_err());

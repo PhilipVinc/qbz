@@ -128,7 +128,8 @@ fn run_scrobble_login(
     match provider {
         ScrobbleProvider::Lastfm => {
             println!("{}", strings::SCROBBLE_LASTFM_HANDOFF);
-            let _ = handle.block_on(async { crate::cli::scrobble::login_lastfm(None, &roots).await });
+            let _ =
+                handle.block_on(async { crate::cli::scrobble::login_lastfm(None, &roots).await });
         }
         ScrobbleProvider::Listenbrainz => {
             println!("{}", strings::SCROBBLE_LISTENBRAINZ_HANDOFF);
@@ -140,8 +141,9 @@ fn run_scrobble_login(
                 if token.is_empty() {
                     println!("no token entered — skipped.");
                 } else {
-                    let _ = handle
-                        .block_on(async { crate::cli::scrobble::login_listenbrainz(None, token, &roots).await });
+                    let _ = handle.block_on(async {
+                        crate::cli::scrobble::login_listenbrainz(None, token, &roots).await
+                    });
                 }
             }
         }

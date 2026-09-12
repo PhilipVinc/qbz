@@ -121,7 +121,11 @@ mod tests {
         b.record_forbidden();
         b.record_forbidden();
         let opened = b.record_forbidden();
-        assert_eq!(opened, Some(BASE_COOLDOWN), "3rd 403 opens with base cooldown");
+        assert_eq!(
+            opened,
+            Some(BASE_COOLDOWN),
+            "3rd 403 opens with base cooldown"
+        );
         let remaining = b.blocked_for().expect("breaker is open");
         assert!(remaining <= BASE_COOLDOWN && remaining > Duration::ZERO);
     }
@@ -148,12 +152,21 @@ mod tests {
         // Consecutive is not reset on open, so a single further 403 re-opens
         // with the doubled cooldown.
         assert_eq!(b.record_forbidden(), Some(BASE_COOLDOWN * 2));
-        assert_eq!(b.record_forbidden(), Some((BASE_COOLDOWN * 4).min(MAX_COOLDOWN)));
+        assert_eq!(
+            b.record_forbidden(),
+            Some((BASE_COOLDOWN * 4).min(MAX_COOLDOWN))
+        );
         // Keep re-opening; cooldown must never exceed the cap.
         for _ in 0..8 {
-            let c = b.record_forbidden().expect("re-opens each time past threshold");
+            let c = b
+                .record_forbidden()
+                .expect("re-opens each time past threshold");
             assert!(c <= MAX_COOLDOWN);
         }
-        assert_eq!(b.record_forbidden(), Some(MAX_COOLDOWN), "cooldown pinned at cap");
+        assert_eq!(
+            b.record_forbidden(),
+            Some(MAX_COOLDOWN),
+            "cooldown pinned at cap"
+        );
     }
 }

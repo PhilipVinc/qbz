@@ -39,9 +39,13 @@ pub fn radio(state: &ApiState, body: &Value) -> Response<Cursor<Vec<u8>>> {
 
 fn fetch_radio(state: &ApiState, body: &Value) -> Result<Vec<Track>, Response<Cursor<Vec<u8>>>> {
     let radio = if let Some(id) = body.get("artist_id").and_then(|v| v.as_u64()) {
-        state.rt.block_on(state.runtime.core().get_radio_artist(&id.to_string()))
+        state
+            .rt
+            .block_on(state.runtime.core().get_radio_artist(&id.to_string()))
     } else if let Some(id) = body.get("track_id").and_then(|v| v.as_u64()) {
-        state.rt.block_on(state.runtime.core().get_radio_track(&id.to_string()))
+        state
+            .rt
+            .block_on(state.runtime.core().get_radio_track(&id.to_string()))
     } else if let Some(id) = body.get("album_id").and_then(|v| v.as_str()) {
         state.rt.block_on(state.runtime.core().get_radio_album(id))
     } else {
@@ -70,7 +74,12 @@ fn auth_gate(state: &ApiState) -> Option<Response<Cursor<Vec<u8>>>> {
         .map(|s| s.auth == AuthState::NeedsAuth)
         .unwrap_or(false);
     if needs_auth {
-        Some(err_json(409, "needs_auth", "not logged in to Qobuz", "run: qbzd login"))
+        Some(err_json(
+            409,
+            "needs_auth",
+            "not logged in to Qobuz",
+            "run: qbzd login",
+        ))
     } else {
         None
     }

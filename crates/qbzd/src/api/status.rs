@@ -116,31 +116,40 @@ pub fn status(state: &super::ApiState) -> Response<Cursor<Vec<u8>>> {
 fn assemble_live(state: &super::ApiState) -> StatusDoc {
     // 1. snapshot DaemonShared, then DROP the guard before any block_on so the
     //    mutex is never held across an await point.
-    let (auth, user_id, subscription, last_errors, qconnect, tick_age, muted, uptime, network_online) =
-        match state.shared.lock() {
-            Ok(s) => (
-                s.auth,
-                s.user_id,
-                s.subscription.clone(),
-                s.last_errors.clone(),
-                s.qconnect.clone(),
-                s.driver_last_tick.map(|t| t.elapsed().as_millis() as u64),
-                s.muted,
-                s.started_at.elapsed().as_secs(),
-                s.network_online(),
-            ),
-            Err(_) => (
-                AuthState::Restoring,
-                None,
-                None,
-                LatchedErrors::default(),
-                QconnectStatus::default(),
-                None,
-                false,
-                0,
-                true,
-            ),
-        };
+    let (
+        auth,
+        user_id,
+        subscription,
+        last_errors,
+        qconnect,
+        tick_age,
+        muted,
+        uptime,
+        network_online,
+    ) = match state.shared.lock() {
+        Ok(s) => (
+            s.auth,
+            s.user_id,
+            s.subscription.clone(),
+            s.last_errors.clone(),
+            s.qconnect.clone(),
+            s.driver_last_tick.map(|t| t.elapsed().as_millis() as u64),
+            s.muted,
+            s.started_at.elapsed().as_secs(),
+            s.network_online(),
+        ),
+        Err(_) => (
+            AuthState::Restoring,
+            None,
+            None,
+            LatchedErrors::default(),
+            QconnectStatus::default(),
+            None,
+            false,
+            0,
+            true,
+        ),
+    };
 
     // 2. live player snapshot (all sync atomics, folded into one PlaybackEvent).
     let player = state.runtime.core().player();
@@ -155,7 +164,9 @@ fn assemble_live(state: &super::ApiState) -> StatusDoc {
     //    ..."), never `hw:CARD=...` ids, so a playing direct-hw stream would
     //    otherwise report `not present` (false negative).
     let settings = state.audio.get_settings().ok();
-    let backend = settings.as_ref().and_then(|s| backend_label(s.backend_type));
+    let backend = settings
+        .as_ref()
+        .and_then(|s| backend_label(s.backend_type));
     let configured_device = settings.as_ref().and_then(|s| s.output_device.clone());
     let device_present = match &configured_device {
         None => true, // system default is always "present"
@@ -212,7 +223,9 @@ fn assemble_live(state: &super::ApiState) -> StatusDoc {
             queue_len: queue.total_tracks,
         },
         qconnect,
-        network: NetworkStatus { online: network_online },
+        network: NetworkStatus {
+            online: network_online,
+        },
         last_errors,
     }
 }

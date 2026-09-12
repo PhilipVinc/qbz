@@ -650,8 +650,7 @@ impl RecoStore {
             .map_err(|e| format!("Failed to query forgotten favorites: {}", e))?;
         let mut albums = Vec::new();
         for row in rows {
-            albums
-                .push(row.map_err(|e| format!("Failed to read forgotten favorite row: {}", e))?);
+            albums.push(row.map_err(|e| format!("Failed to read forgotten favorite row: {}", e))?);
         }
         Ok(albums)
     }
@@ -739,11 +738,7 @@ impl RecoStore {
         Ok(out)
     }
 
-    fn get_events_since(
-        &self,
-        since_ts: i64,
-        limit: u32,
-    ) -> Result<Vec<RecoEventRecord>, String> {
+    fn get_events_since(&self, since_ts: i64, limit: u32) -> Result<Vec<RecoEventRecord>, String> {
         let mut stmt = self
             .conn
             .prepare(
@@ -1045,11 +1040,7 @@ impl RecoStore {
 
     /// Upsert an album-meta row (only needed so `get_top_genres` can resolve a
     /// genre name; mirrors the relevant columns of Tauri's `set_album_meta`).
-    pub fn set_album_genre_name(
-        &self,
-        album_id: &str,
-        genre_name: &str,
-    ) -> Result<(), String> {
+    pub fn set_album_genre_name(&self, album_id: &str, genre_name: &str) -> Result<(), String> {
         self.conn
             .execute(
                 r#"INSERT INTO reco_album_meta
@@ -1157,7 +1148,9 @@ mod tests {
         let dir = unique_test_dir("reco-idempotent");
         {
             let store = RecoStore::new_at(&dir).expect("open");
-            store.log_play_event(1, Some("a1".into()), Some(10), Some(5)).unwrap();
+            store
+                .log_play_event(1, Some("a1".into()), Some(10), Some(5))
+                .unwrap();
         }
         // Reopen the SAME db file — init() must not error on existing tables.
         {
@@ -1175,9 +1168,15 @@ mod tests {
         let dir = unique_test_dir("reco-logread");
         let store = RecoStore::new_at(&dir).expect("open");
 
-        store.log_play_event(100, Some("alb".into()), Some(7), Some(3)).unwrap();
-        store.log_play_event(200, Some("alb".into()), Some(7), Some(3)).unwrap();
-        store.log_favorite_event(300, Some("alb2".into()), Some(9), Some(4)).unwrap();
+        store
+            .log_play_event(100, Some("alb".into()), Some(7), Some(3))
+            .unwrap();
+        store
+            .log_play_event(200, Some("alb".into()), Some(7), Some(3))
+            .unwrap();
+        store
+            .log_favorite_event(300, Some("alb2".into()), Some(9), Some(4))
+            .unwrap();
 
         let recent = store.get_recent_track_ids(10).unwrap();
         assert!(recent.contains(&100) && recent.contains(&200));
@@ -1195,8 +1194,26 @@ mod tests {
         let now = now_ts();
         let day = 86_400;
         // track 1 played 2 days ago (inside 7d window), track 2 played 10 days ago (outside).
-        insert_at(&store, "play", "track", Some(1), Some("a"), Some(11), Some(2), now - 2 * day);
-        insert_at(&store, "play", "track", Some(2), Some("b"), Some(12), Some(2), now - 10 * day);
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(1),
+            Some("a"),
+            Some(11),
+            Some(2),
+            now - 2 * day,
+        );
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(2),
+            Some("b"),
+            Some(12),
+            Some(2),
+            now - 10 * day,
+        );
 
         let week = store.get_recent_track_ids_since(7 * day, 50).unwrap();
         assert_eq!(week, vec![1]);
@@ -1212,11 +1229,56 @@ mod tests {
         let store = RecoStore::new_at(&dir).expect("open");
         let now = now_ts();
         // genre 5 played 3x, genre 6 played 1x; genre 0 ignored (> 0 filter).
-        insert_at(&store, "play", "track", Some(1), Some("alb5"), Some(1), Some(5), now);
-        insert_at(&store, "play", "track", Some(2), Some("alb5"), Some(1), Some(5), now);
-        insert_at(&store, "play", "track", Some(3), Some("alb5"), Some(1), Some(5), now);
-        insert_at(&store, "play", "track", Some(4), Some("alb6"), Some(2), Some(6), now);
-        insert_at(&store, "play", "track", Some(5), Some("albz"), Some(3), Some(0), now);
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(1),
+            Some("alb5"),
+            Some(1),
+            Some(5),
+            now,
+        );
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(2),
+            Some("alb5"),
+            Some(1),
+            Some(5),
+            now,
+        );
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(3),
+            Some("alb5"),
+            Some(1),
+            Some(5),
+            now,
+        );
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(4),
+            Some("alb6"),
+            Some(2),
+            Some(6),
+            now,
+        );
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(5),
+            Some("albz"),
+            Some(3),
+            Some(0),
+            now,
+        );
         // Provide a genre name for the album associated with genre 5.
         store.set_album_genre_name("alb5", "Jazz").unwrap();
 
@@ -1233,16 +1295,45 @@ mod tests {
         let dir = unique_test_dir("reco-homeseeds");
         let mut store = RecoStore::new_at(&dir).expect("open");
         let now = now_ts();
-        insert_at(&store, "play", "track", Some(1), Some("alb1"), Some(10), Some(2), now - 100);
-        insert_at(&store, "play", "track", Some(2), Some("alb2"), Some(11), Some(2), now - 50);
-        insert_at(&store, "favorite", "track", Some(9), Some("alb9"), Some(20), Some(3), now - 10);
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(1),
+            Some("alb1"),
+            Some(10),
+            Some(2),
+            now - 100,
+        );
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(2),
+            Some("alb2"),
+            Some(11),
+            Some(2),
+            now - 50,
+        );
+        insert_at(
+            &store,
+            "favorite",
+            "track",
+            Some(9),
+            Some("alb9"),
+            Some(20),
+            Some(3),
+            now - 10,
+        );
 
         // No scores yet -> fallback path.
         let seeds = store.get_home_seeds(HomeSeedLimits::default()).unwrap();
         assert!(seeds.continue_listening_track_ids.contains(&1));
         assert!(seeds.continue_listening_track_ids.contains(&2));
         assert!(seeds.favorite_track_ids.contains(&9));
-        assert!(seeds.recently_played_album_ids.contains(&"alb1".to_string()));
+        assert!(seeds
+            .recently_played_album_ids
+            .contains(&"alb1".to_string()));
         assert!(seeds.top_artist_ids.iter().any(|s| s.artist_id == 10));
 
         // Train -> scores now exist; seeds still return a coherent shape.
@@ -1259,8 +1350,26 @@ mod tests {
         let mut store = RecoStore::new_at(&dir).expect("open");
         let now = now_ts();
         // track 1: a single play (weight 1.0). track 2: a favorite (weight 3.0).
-        insert_at(&store, "play", "track", Some(1), Some("a"), Some(1), Some(2), now);
-        insert_at(&store, "favorite", "track", Some(2), Some("b"), Some(2), Some(2), now);
+        insert_at(
+            &store,
+            "play",
+            "track",
+            Some(1),
+            Some("a"),
+            Some(1),
+            Some(2),
+            now,
+        );
+        insert_at(
+            &store,
+            "favorite",
+            "track",
+            Some(2),
+            Some("b"),
+            Some(2),
+            Some(2),
+            now,
+        );
 
         store.train(TrainParams::default()).unwrap();
 
@@ -1278,9 +1387,15 @@ mod tests {
         let dir = unique_test_dir("reco-forgotten");
         let store = RecoStore::new_at(&dir).unwrap();
         // Favorite albums A and B; only A was played (now).
-        store.log_favorite_event(1, Some("A".into()), Some(10), None).unwrap();
-        store.log_favorite_event(2, Some("B".into()), Some(11), None).unwrap();
-        store.log_play_event(1, Some("A".into()), Some(10), None).unwrap();
+        store
+            .log_favorite_event(1, Some("A".into()), Some(10), None)
+            .unwrap();
+        store
+            .log_favorite_event(2, Some("B".into()), Some(11), None)
+            .unwrap();
+        store
+            .log_play_event(1, Some("A".into()), Some(10), None)
+            .unwrap();
         let forgotten = store.get_forgotten_favorite_album_ids(10, 30).unwrap();
         assert!(forgotten.contains(&"B".to_string())); // never played -> forgotten
         assert!(!forgotten.contains(&"A".to_string())); // played now -> not forgotten
@@ -1292,9 +1407,15 @@ mod tests {
         let dir = unique_test_dir("reco-genre-backfill");
         let store = RecoStore::new_at(&dir).unwrap();
         // Plays log no genre_id, so top genres is empty until backfill.
-        store.log_play_event(1, Some("jz".into()), Some(10), None).unwrap();
-        store.log_play_event(2, Some("jz".into()), Some(10), None).unwrap();
-        store.log_play_event(3, Some("rk".into()), Some(11), None).unwrap();
+        store
+            .log_play_event(1, Some("jz".into()), Some(10), None)
+            .unwrap();
+        store
+            .log_play_event(2, Some("jz".into()), Some(10), None)
+            .unwrap();
+        store
+            .log_play_event(3, Some("rk".into()), Some(11), None)
+            .unwrap();
         assert!(store.get_top_genres(10).unwrap().is_empty());
         // The frontend backfills genre on album resolution (id + name).
         store.update_genre_for_album("jz", 5).unwrap();
@@ -1315,9 +1436,15 @@ mod tests {
         let store = RecoStore::new_at(&dir).unwrap();
         // artist 10: 3 plays (> threshold 2). artist 20: a single favorite, no
         // plays. artist 30: 1 play, not favorited -> excluded.
-        store.log_play_event(1, Some("a".into()), Some(10), None).unwrap();
-        store.log_play_event(2, Some("a".into()), Some(10), None).unwrap();
-        store.log_play_event(3, Some("a".into()), Some(10), None).unwrap();
+        store
+            .log_play_event(1, Some("a".into()), Some(10), None)
+            .unwrap();
+        store
+            .log_play_event(2, Some("a".into()), Some(10), None)
+            .unwrap();
+        store
+            .log_play_event(3, Some("a".into()), Some(10), None)
+            .unwrap();
         store
             .insert_event(&RecoEventInput {
                 event_type: RecoEventType::Favorite,
@@ -1329,7 +1456,9 @@ mod tests {
                 genre_id: None,
             })
             .unwrap();
-        store.log_play_event(4, Some("c".into()), Some(30), None).unwrap();
+        store
+            .log_play_event(4, Some("c".into()), Some(30), None)
+            .unwrap();
         let known = store.get_known_artist_ids(2).unwrap();
         assert!(known.contains(&10)); // 3 plays > 2
         assert!(known.contains(&20)); // favorited

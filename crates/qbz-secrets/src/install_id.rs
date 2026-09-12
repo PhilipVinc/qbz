@@ -75,8 +75,8 @@ pub(crate) fn machine_id() -> Option<String> {
                     if let Some(end_off) = rest.find('"') {
                         return Some(rest[..end_off].to_string());
                     }
-                    if let Some(end_off) = rest[rest.find('"').map(|i| i + 1).unwrap_or(0)..]
-                        .find('"')
+                    if let Some(end_off) =
+                        rest[rest.find('"').map(|i| i + 1).unwrap_or(0)..].find('"')
                     {
                         return Some(rest[..end_off].to_string());
                     }

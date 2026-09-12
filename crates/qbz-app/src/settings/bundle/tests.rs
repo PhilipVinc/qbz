@@ -13,10 +13,8 @@ fn scratch(name: &str) -> ProfilePaths {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "qbz-bundle-{name}-{}-{nonce}",
-        std::process::id()
-    ));
+    let base =
+        std::env::temp_dir().join(format!("qbz-bundle-{name}-{}-{nonce}", std::process::id()));
     ProfilePaths {
         config_root: base.join("config"),
         data_root: base.join("data"),
@@ -87,12 +85,35 @@ fn portable_fields_apply_verbatim() {
 
     let plan = plan(&bundle, &p, &ImportOptions::default(), &live()).expect("plan");
 
-    assert!(plan.adapted.is_empty(), "portable fields must not adapt: {:?}", plan.adapted);
-    assert_eq!(find(&plan.applied, "playback.autoplay_mode").unwrap().new, "infinite");
-    assert_eq!(find(&plan.applied, "playback.show_context_icon").unwrap().new, "false");
-    assert_eq!(find(&plan.applied, "audio.gapless_enabled").unwrap().new, "true");
-    assert_eq!(find(&plan.applied, "audio.stream_buffer_seconds").unwrap().new, "4");
-    assert_eq!(find(&plan.applied, "prefs.streaming_quality").unwrap().new, "hires_plus");
+    assert!(
+        plan.adapted.is_empty(),
+        "portable fields must not adapt: {:?}",
+        plan.adapted
+    );
+    assert_eq!(
+        find(&plan.applied, "playback.autoplay_mode").unwrap().new,
+        "infinite"
+    );
+    assert_eq!(
+        find(&plan.applied, "playback.show_context_icon")
+            .unwrap()
+            .new,
+        "false"
+    );
+    assert_eq!(
+        find(&plan.applied, "audio.gapless_enabled").unwrap().new,
+        "true"
+    );
+    assert_eq!(
+        find(&plan.applied, "audio.stream_buffer_seconds")
+            .unwrap()
+            .new,
+        "4"
+    );
+    assert_eq!(
+        find(&plan.applied, "prefs.streaming_quality").unwrap().new,
+        "hires_plus"
+    );
     cleanup(&p);
 }
 
@@ -128,7 +149,10 @@ fn device_uuid_never_imported() {
 
     assert!(find(&plan.skipped, "qconnect.device_uuid").is_some());
     // device_name is still applied verbatim.
-    assert_eq!(find(&plan.applied, "qconnect.device_name").unwrap().new, "Studio");
+    assert_eq!(
+        find(&plan.applied, "qconnect.device_name").unwrap().new,
+        "Studio"
+    );
     assert!(plan.writes.iter().all(|(k, _)| k != "qconnect.device_uuid"));
     cleanup(&p);
 }
@@ -144,12 +168,21 @@ fn dsd_downgrades_without_trust_flag() {
     let line = find(&plan_no_trust.adapted, "audio.dsd_mode").expect("dsd adapted");
     assert_eq!(line.old.as_deref(), Some("dop"));
     assert_eq!(line.new, "convert");
-    assert_eq!(write_of(&plan_no_trust, "audio.dsd_mode"), Some(&json!("convert")));
+    assert_eq!(
+        write_of(&plan_no_trust, "audio.dsd_mode"),
+        Some(&json!("convert"))
+    );
 
-    let opts = ImportOptions { trust_dsd: true, ..Default::default() };
+    let opts = ImportOptions {
+        trust_dsd: true,
+        ..Default::default()
+    };
     let plan_trust = plan(&bundle, &p, &opts, &live()).expect("plan");
     assert!(find(&plan_trust.adapted, "audio.dsd_mode").is_none());
-    assert_eq!(find(&plan_trust.applied, "audio.dsd_mode").unwrap().new, "dop");
+    assert_eq!(
+        find(&plan_trust.applied, "audio.dsd_mode").unwrap().new,
+        "dop"
+    );
     cleanup(&p);
 }
 
@@ -205,8 +238,15 @@ fn secrets_double_gate() {
     let plan = plan(&bundle, &p, &ImportOptions::default(), &live()).expect("plan");
 
     let token_line = find(&plan.skipped, "auth.user_auth_token").expect("auth token skipped");
-    assert!(token_line.why.contains("--include-auth"), "{}", token_line.why);
-    assert!(plan.auth_token.is_none(), "token must not be queued without the gate");
+    assert!(
+        token_line.why.contains("--include-auth"),
+        "{}",
+        token_line.why
+    );
+    assert!(
+        plan.auth_token.is_none(),
+        "token must not be queued without the gate"
+    );
 
     let secret = find(&plan.skipped, "integrations.scrobblers.lastfm_session_key")
         .expect("scrobbler secret skipped");
@@ -225,7 +265,10 @@ fn secret_applies_with_gate() {
         "integrations": { "scrobblers": { "lastfm_session_key": "d580secret" } },
         "auth": { "user_auth_token": "Bo4Asecret", "user_id": 1234567 }
     }));
-    let opts = ImportOptions { include_auth: true, ..Default::default() };
+    let opts = ImportOptions {
+        include_auth: true,
+        ..Default::default()
+    };
 
     let plan = plan(&bundle, &p, &opts, &live()).expect("plan");
 
@@ -266,18 +309,27 @@ fn missing_device_non_tty_falls_back_safe() {
             "dac_passthrough": true
         }
     }));
-    let opts = ImportOptions { non_tty: true, ..Default::default() };
+    let opts = ImportOptions {
+        non_tty: true,
+        ..Default::default()
+    };
 
     let plan = plan(&bundle, &p, &opts, &live()).expect("plan");
 
-    assert!(plan.device_pick.is_none(), "non-tty must not request a pick");
+    assert!(
+        plan.device_pick.is_none(),
+        "non-tty must not request a pick"
+    );
 
     let dev = find(&plan.adapted, "audio.output_device").expect("device adapted");
     assert_eq!(dev.old.as_deref(), Some("hw:9,9"));
     assert_eq!(write_of(&plan, "audio.output_device"), Some(&Value::Null));
 
     let backend = find(&plan.adapted, "audio.backend_type").expect("backend adapted");
-    assert_eq!(write_of(&plan, "audio.backend_type"), Some(&json!("SystemDefault")));
+    assert_eq!(
+        write_of(&plan, "audio.backend_type"),
+        Some(&json!("SystemDefault"))
+    );
     assert!(backend.new.contains("SystemDefault"));
 
     for flag in ["audio.exclusive_mode", "audio.dac_passthrough"] {
@@ -303,10 +355,23 @@ fn found_device_applies_verbatim() {
     let plan = plan(&bundle, &p, &ImportOptions::default(), &live()).expect("plan");
 
     assert!(plan.device_pick.is_none());
-    assert_eq!(find(&plan.applied, "audio.output_device").unwrap().new, "hw:1,0");
-    assert_eq!(find(&plan.applied, "audio.backend_type").unwrap().new, "Alsa");
-    assert_eq!(find(&plan.applied, "audio.exclusive_mode").unwrap().new, "true");
-    assert!(plan.adapted.is_empty(), "clean validation must not adapt: {:?}", plan.adapted);
+    assert_eq!(
+        find(&plan.applied, "audio.output_device").unwrap().new,
+        "hw:1,0"
+    );
+    assert_eq!(
+        find(&plan.applied, "audio.backend_type").unwrap().new,
+        "Alsa"
+    );
+    assert_eq!(
+        find(&plan.applied, "audio.exclusive_mode").unwrap().new,
+        "true"
+    );
+    assert!(
+        plan.adapted.is_empty(),
+        "clean validation must not adapt: {:?}",
+        plan.adapted
+    );
     cleanup(&p);
 }
 
@@ -338,14 +403,18 @@ fn machine_caches_always_skipped() {
 
     let plan = plan(&bundle, &p, &ImportOptions::default(), &live()).expect("plan");
 
-    for key in ["audio.device_max_sample_rate", "audio.device_sample_rate_limits"] {
+    for key in [
+        "audio.device_max_sample_rate",
+        "audio.device_sample_rate_limits",
+    ] {
         let l = find(&plan.skipped, key).unwrap_or_else(|| panic!("{key} must skip"));
         assert!(l.why.contains("device cache"), "{}", l.why);
     }
     assert!(plan
         .writes
         .iter()
-        .all(|(k, _)| !k.contains("device_max_sample_rate") && !k.contains("device_sample_rate_limits")));
+        .all(|(k, _)| !k.contains("device_max_sample_rate")
+            && !k.contains("device_sample_rate_limits")));
     cleanup(&p);
 }
 
@@ -360,11 +429,15 @@ fn roundtrip_same_box_is_noop() {
     // device that this box's LiveSystem enumerates).
     {
         let audio = AudioSettingsStore::new_at(&p.data_root).unwrap();
-        audio.set_backend_type(Some(AudioBackendType::Alsa)).unwrap();
+        audio
+            .set_backend_type(Some(AudioBackendType::Alsa))
+            .unwrap();
         audio.set_output_device(Some("hw:1,0")).unwrap();
         audio.set_exclusive_mode(true).unwrap();
         audio.set_dsd_mode("dop").unwrap(); // a working DSD daemon
-        audio.set_quality_fallback_behavior("always_fallback").unwrap();
+        audio
+            .set_quality_fallback_behavior("always_fallback")
+            .unwrap();
         audio.set_gapless_enabled(true).unwrap();
 
         let pb = PlaybackPreferencesStore::new_at(&p.data_root).unwrap();
@@ -400,8 +473,14 @@ fn roundtrip_same_box_is_noop() {
     assert!(plan.device_pick.is_none());
     // dsd dop survived without --trust-dsd (no-change short-circuit).
     assert_eq!(find(&plan.applied, "audio.dsd_mode").unwrap().new, "dop");
-    assert_eq!(find(&plan.applied, "audio.output_device").unwrap().new, "hw:1,0");
-    assert_eq!(find(&plan.applied, "qconnect.startup_mode").unwrap().new, "on");
+    assert_eq!(
+        find(&plan.applied, "audio.output_device").unwrap().new,
+        "hw:1,0"
+    );
+    assert_eq!(
+        find(&plan.applied, "qconnect.startup_mode").unwrap().new,
+        "on"
+    );
 
     // Every skipped line must be one of the always-skip caches.
     for l in &plan.skipped {
@@ -460,19 +539,28 @@ fn apply_writes_are_idempotent_and_persist() {
         "prefs": { "streaming_quality": "cd" },
         "qconnect": { "device_name": "Kitchen", "startup_mode": "on" }
     }));
-    let opts = ImportOptions { trust_dsd: true, ..Default::default() };
+    let opts = ImportOptions {
+        trust_dsd: true,
+        ..Default::default()
+    };
 
     let plan = plan(&bundle, &p, &opts, &live()).expect("plan");
     apply(&plan, &p, None).expect("apply once");
     apply(&plan, &p, None).expect("apply twice (idempotent)");
 
-    let audio = AudioSettingsStore::new_at(&p.data_root).unwrap().get_settings().unwrap();
+    let audio = AudioSettingsStore::new_at(&p.data_root)
+        .unwrap()
+        .get_settings()
+        .unwrap();
     assert_eq!(audio.output_device.as_deref(), Some("hw:1,0"));
     assert_eq!(audio.backend_type, Some(AudioBackendType::Alsa));
     assert!(audio.gapless_enabled);
     assert_eq!(audio.dsd_mode, "dop");
 
-    let pb = PlaybackPreferencesStore::new_at(&p.data_root).unwrap().get_preferences().unwrap();
+    let pb = PlaybackPreferencesStore::new_at(&p.data_root)
+        .unwrap()
+        .get_preferences()
+        .unwrap();
     assert!(!pb.persist_session);
 
     assert_eq!(daemon_prefs::load_at(&p.data_root).streaming_quality, "cd");
@@ -517,7 +605,10 @@ fn secret_values_never_render_in_summary() {
             "listenbrainz_token": ""
         } }
     }));
-    let opts = ImportOptions { include_auth: true, ..Default::default() };
+    let opts = ImportOptions {
+        include_auth: true,
+        ..Default::default()
+    };
 
     let plan = plan(&bundle, &p, &opts, &live()).expect("plan");
 
@@ -528,7 +619,10 @@ fn secret_values_never_render_in_summary() {
 
     // No rendered bucket line anywhere carries the raw secret.
     let rendered = format!("{:?} {:?} {:?}", plan.applied, plan.adapted, plan.skipped);
-    assert!(!rendered.contains("d580REALSECRET"), "secret leaked into summary: {rendered}");
+    assert!(
+        !rendered.contains("d580REALSECRET"),
+        "secret leaked into summary: {rendered}"
+    );
 
     // The write list still carries the real value so apply works.
     assert_eq!(

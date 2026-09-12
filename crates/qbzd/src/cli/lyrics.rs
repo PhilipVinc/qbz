@@ -7,8 +7,16 @@ use serde_json::Value;
 use crate::cli::client::ApiClient;
 use crate::paths::ProfileRoots;
 
-pub async fn lyrics(host: Option<String>, track_id: Option<u64>, synced: bool, json: bool, roots: &ProfileRoots) -> i32 {
-    let id = track_id.map(|n| n.to_string()).unwrap_or_else(|| "current".to_string());
+pub async fn lyrics(
+    host: Option<String>,
+    track_id: Option<u64>,
+    synced: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
+    let id = track_id
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "current".to_string());
     let client = ApiClient::new(host, roots);
     match client.get(&format!("/api/lyrics?id={id}")).await {
         Ok(v) => {
@@ -75,12 +83,21 @@ mod tests {
             {"time_ms": 12400, "text": "You're everything"},
             {"time_ms": 19850, "text": "From the start"}
         ]});
-        assert_eq!(render(&synced, true), "[00:12.40] You're everything\n[00:19.85] From the start\n");
+        assert_eq!(
+            render(&synced, true),
+            "[00:12.40] You're everything\n[00:19.85] From the start\n"
+        );
         // without --synced, timestamps are dropped.
-        assert_eq!(render(&synced, false), "You're everything\nFrom the start\n");
+        assert_eq!(
+            render(&synced, false),
+            "You're everything\nFrom the start\n"
+        );
         // plain doc ignores --synced.
         let plain = serde_json::json!({"synced": false, "lines": [{"text": "Line one"}]});
         assert_eq!(render(&plain, true), "Line one\n");
-        assert_eq!(render(&serde_json::json!({"lines": []}), false), "no lyrics\n");
+        assert_eq!(
+            render(&serde_json::json!({"lines": []}), false),
+            "no lyrics\n"
+        );
     }
 }

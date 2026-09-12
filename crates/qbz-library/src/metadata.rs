@@ -42,10 +42,7 @@ impl MetadataExtractor {
     /// First non-empty string for `key` across all of the file's tags
     /// (primary first). When several tags disagree, the primary tag wins —
     /// deterministic, and matches what other players show.
-    fn string_across_tags(
-        tagged_file: &lofty::file::TaggedFile,
-        key: &ItemKey,
-    ) -> Option<String> {
+    fn string_across_tags(tagged_file: &lofty::file::TaggedFile, key: &ItemKey) -> Option<String> {
         Self::string_from_tags(Self::tags_primary_first(tagged_file), key)
     }
 
@@ -790,7 +787,11 @@ impl MetadataExtractor {
             return match generate_thumbnail_from_bytes(&art, &cache_key) {
                 Ok(thumbnail_path) => Some(thumbnail_path.to_string_lossy().to_string()),
                 Err(e) => {
-                    log::warn!("Failed to generate DSD thumbnail for {:?}: {}", file_path, e);
+                    log::warn!(
+                        "Failed to generate DSD thumbnail for {:?}: {}",
+                        file_path,
+                        e
+                    );
                     None
                 }
             };

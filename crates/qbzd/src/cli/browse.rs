@@ -12,21 +12,54 @@ use crate::cli::client::ApiClient;
 use crate::paths::ProfileRoots;
 
 /// `qbzd album <ALBUM_ID> [--suggest] [--ids] [--json]`.
-pub async fn album(host: Option<String>, id: String, suggest: bool, ids: bool, json: bool, roots: &ProfileRoots) -> i32 {
-    let path = format!("/api/album?id={}&suggest={}", urlencoding::encode(&id), if suggest { 1 } else { 0 });
+pub async fn album(
+    host: Option<String>,
+    id: String,
+    suggest: bool,
+    ids: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
+    let path = format!(
+        "/api/album?id={}&suggest={}",
+        urlencoding::encode(&id),
+        if suggest { 1 } else { 0 }
+    );
     get_and_render(host, roots, &path, ids, json).await
 }
 
 /// `qbzd artist <ARTIST_ID> [--top|--albums] [--limit N] [--ids] [--json]`.
 #[allow(clippy::too_many_arguments)]
-pub async fn artist(host: Option<String>, id: u64, top: bool, albums: bool, limit: u32, ids: bool, json: bool, roots: &ProfileRoots) -> i32 {
-    let view = if albums { "albums" } else if top { "top" } else { "page" };
+pub async fn artist(
+    host: Option<String>,
+    id: u64,
+    top: bool,
+    albums: bool,
+    limit: u32,
+    ids: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
+    let view = if albums {
+        "albums"
+    } else if top {
+        "top"
+    } else {
+        "page"
+    };
     let path = format!("/api/artist?id={id}&view={view}&limit={limit}");
     get_and_render(host, roots, &path, ids, json).await
 }
 
 /// `qbzd similar <artist:ID | album:ID> [--limit N] [--ids] [--json]`.
-pub async fn similar(host: Option<String>, selector: String, limit: u32, ids: bool, json: bool, roots: &ProfileRoots) -> i32 {
+pub async fn similar(
+    host: Option<String>,
+    selector: String,
+    limit: u32,
+    ids: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let path = match to_similar_query(&selector, limit) {
         Ok(p) => p,
         Err(msg) => {
@@ -41,7 +74,14 @@ pub async fn similar(host: Option<String>, selector: String, limit: u32, ids: bo
 /// `qbzd suggest [--seed <ID,ID> | --seed -] [--limit N] [--ids] [--json]`.
 /// No `--seed` = the daemon seeds from the current queue. `--seed -` reads ids
 /// one-per-line from stdin.
-pub async fn suggest(host: Option<String>, seed: Option<String>, limit: u32, ids: bool, json: bool, roots: &ProfileRoots) -> i32 {
+pub async fn suggest(
+    host: Option<String>,
+    seed: Option<String>,
+    limit: u32,
+    ids: bool,
+    json: bool,
+    roots: &ProfileRoots,
+) -> i32 {
     let seed_param = match seed.as_deref() {
         Some("-") => Some(read_stdin_ids()),
         Some(s) => Some(s.to_string()),
@@ -56,7 +96,13 @@ pub async fn suggest(host: Option<String>, seed: Option<String>, limit: u32, ids
 
 // ============================ shared ============================
 
-async fn get_and_render(host: Option<String>, roots: &ProfileRoots, path: &str, ids: bool, json: bool) -> i32 {
+async fn get_and_render(
+    host: Option<String>,
+    roots: &ProfileRoots,
+    path: &str,
+    ids: bool,
+    json: bool,
+) -> i32 {
     let client = ApiClient::new(host, roots);
     let payload = match client.get(path).await {
         Ok(v) => v,
@@ -80,14 +126,19 @@ async fn get_and_render(host: Option<String>, roots: &ProfileRoots, path: &str, 
 fn to_similar_query(selector: &str, limit: u32) -> Result<String, String> {
     let s = selector.trim();
     if let Some(id) = s.strip_prefix("artist:") {
-        let id: u64 = id.parse().map_err(|_| format!("'{id}' is not a numeric artist id"))?;
+        let id: u64 = id
+            .parse()
+            .map_err(|_| format!("'{id}' is not a numeric artist id"))?;
         return Ok(format!("/api/similar?artist={id}&limit={limit}"));
     }
     if let Some(id) = s.strip_prefix("album:") {
         if id.is_empty() {
             return Err("album id is empty".into());
         }
-        return Ok(format!("/api/similar?album={}&limit={limit}", urlencoding::encode(id)));
+        return Ok(format!(
+            "/api/similar?album={}&limit={limit}",
+            urlencoding::encode(id)
+        ));
     }
     Err(format!("unrecognized selector '{s}'"))
 }
@@ -172,7 +223,11 @@ fn secondary(it: &Value) -> Option<&str> {
     it.get("artist")
         .and_then(|a| a.get("name"))
         .and_then(|v| v.as_str())
-        .or_else(|| it.get("performer").and_then(|a| a.get("name")).and_then(|v| v.as_str()))
+        .or_else(|| {
+            it.get("performer")
+                .and_then(|a| a.get("name"))
+                .and_then(|v| v.as_str())
+        })
 }
 
 fn id_str(v: Option<&Value>) -> String {
@@ -189,8 +244,14 @@ mod tests {
 
     #[test]
     fn to_similar_query_builds_artist_and_album_paths() {
-        assert_eq!(to_similar_query("artist:123", 10).unwrap(), "/api/similar?artist=123&limit=10");
-        assert_eq!(to_similar_query("album:abc", 5).unwrap(), "/api/similar?album=abc&limit=5");
+        assert_eq!(
+            to_similar_query("artist:123", 10).unwrap(),
+            "/api/similar?artist=123&limit=10"
+        );
+        assert_eq!(
+            to_similar_query("album:abc", 5).unwrap(),
+            "/api/similar?album=abc&limit=5"
+        );
         assert!(to_similar_query("artist:xy", 10).is_err());
         assert!(to_similar_query("nope", 10).is_err());
     }
@@ -215,6 +276,9 @@ mod tests {
 
     #[test]
     fn render_empty_says_no_results() {
-        assert_eq!(render(&serde_json::json!({"album": Value::Null})), "no results\n");
+        assert_eq!(
+            render(&serde_json::json!({"album": Value::Null})),
+            "no results\n"
+        );
     }
 }

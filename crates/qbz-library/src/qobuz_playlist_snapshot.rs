@@ -191,9 +191,7 @@ pub fn track_ids(conn: &Connection, qobuz_playlist_id: u64) -> Result<Vec<u64>> 
           WHERE qobuz_playlist_id = ?1 ORDER BY position",
     )?;
     let mut out = Vec::new();
-    for r in stmt.query_map(params![qobuz_playlist_id as i64], |r| {
-        r.get::<_, i64>(0)
-    })? {
+    for r in stmt.query_map(params![qobuz_playlist_id as i64], |r| r.get::<_, i64>(0))? {
         out.push(r? as u64);
     }
     Ok(out)

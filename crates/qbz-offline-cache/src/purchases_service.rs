@@ -502,7 +502,8 @@ fn write_track_file(
 
     // Addendum B.3: write `.part`, then rename — no overwrite preflight.
     let temp_path = target.with_extension(format!("{}.part", extension));
-    std::fs::write(&temp_path, data).map_err(|e| format!("Failed to write temporary file: {}", e))?;
+    std::fs::write(&temp_path, data)
+        .map_err(|e| format!("Failed to write temporary file: {}", e))?;
     std::fs::rename(&temp_path, &target).map_err(|e| format!("Failed to finalize file: {}", e))?;
 
     Ok(target.to_string_lossy().to_string())
@@ -686,7 +687,7 @@ pub async fn download_purchase_track_file_only(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use qbz_models::{Artist, AlbumSummary, PurchaseAlbum, PurchaseTrack, SearchResultsPage};
+    use qbz_models::{AlbumSummary, Artist, PurchaseAlbum, PurchaseTrack, SearchResultsPage};
 
     fn album(title: &str, artist: &str) -> PurchaseAlbum {
         PurchaseAlbum {
@@ -737,7 +738,10 @@ mod tests {
     #[test]
     fn filter_matches_album_title_case_insensitive() {
         let resp = response(
-            vec![album("Kind of Blue", "Miles Davis"), album("Thriller", "Michael Jackson")],
+            vec![
+                album("Kind of Blue", "Miles Davis"),
+                album("Thriller", "Michael Jackson"),
+            ],
             vec![],
         );
         let out = filter_purchase_response(resp, "BLUE");
@@ -835,9 +839,18 @@ mod tests {
         assert_eq!(fmts[2].label, "[FLAC][16-bit,44.1kHz]");
         assert_eq!(fmts[3].label, "[MP3][320kbps]");
         // bit_depth / sampling_rate carried verbatim.
-        assert_eq!((fmts[0].bit_depth, fmts[0].sampling_rate), (Some(24), Some(192.0)));
-        assert_eq!((fmts[1].bit_depth, fmts[1].sampling_rate), (Some(24), Some(96.0)));
-        assert_eq!((fmts[2].bit_depth, fmts[2].sampling_rate), (Some(16), Some(44.1)));
+        assert_eq!(
+            (fmts[0].bit_depth, fmts[0].sampling_rate),
+            (Some(24), Some(192.0))
+        );
+        assert_eq!(
+            (fmts[1].bit_depth, fmts[1].sampling_rate),
+            (Some(24), Some(96.0))
+        );
+        assert_eq!(
+            (fmts[2].bit_depth, fmts[2].sampling_rate),
+            (Some(16), Some(44.1))
+        );
         assert_eq!((fmts[3].bit_depth, fmts[3].sampling_rate), (None, None));
         // default-select is index 0 (highest available).
         assert_eq!(fmts[0].id, 27);
@@ -898,7 +911,10 @@ mod tests {
 
     #[test]
     fn apply_flags_marks_track_downloaded_and_records_format_ids() {
-        let mut resp = response(vec![], vec![track_for_album(10, "a1"), track_for_album(20, "a1")]);
+        let mut resp = response(
+            vec![],
+            vec![track_for_album(10, "a1"), track_for_album(20, "a1")],
+        );
         let downloaded = dl_ids(&[10]);
         let mut format_map: HashMap<i64, Vec<u32>> = HashMap::new();
         format_map.insert(10, vec![27, 6]);
@@ -994,8 +1010,7 @@ mod tests {
         meta.purchased_at = Some(1_700_000_000);
         let purchases = response(vec![meta], vec![]);
 
-        let detail =
-            build_purchase_album(&album, &purchases, &dl_ids(&[]), &HashMap::new());
+        let detail = build_purchase_album(&album, &purchases, &dl_ids(&[]), &HashMap::new());
 
         assert_eq!(detail.id, "alb1");
         assert!(detail.downloadable);
@@ -1007,7 +1022,10 @@ mod tests {
         assert_eq!(tracks.total, 3);
         assert_eq!(tracks.limit, 3);
         // per-track purchased_at copies the album-level meta.
-        assert!(tracks.items.iter().all(|t| t.purchased_at == Some(1_700_000_000)));
+        assert!(tracks
+            .items
+            .iter()
+            .all(|t| t.purchased_at == Some(1_700_000_000)));
     }
 
     #[test]
@@ -1015,8 +1033,7 @@ mod tests {
         // No matching purchase meta → downloadable defaults TRUE, purchased_at None.
         let album = catalog_album("missing", false, &[1]);
         let purchases = response(vec![album_id("other")], vec![]);
-        let detail =
-            build_purchase_album(&album, &purchases, &dl_ids(&[]), &HashMap::new());
+        let detail = build_purchase_album(&album, &purchases, &dl_ids(&[]), &HashMap::new());
         // The catalog `downloadable:false` is IGNORED — the value comes from the
         // purchase meta (absent → unwrap_or(true)).
         assert!(detail.downloadable);
@@ -1031,8 +1048,7 @@ mod tests {
         format_map.insert(10, vec![7]);
 
         // Both nested track ids owned → album downloaded; per-track flags set.
-        let detail =
-            build_purchase_album(&album, &purchases, &dl_ids(&[10, 20]), &format_map);
+        let detail = build_purchase_album(&album, &purchases, &dl_ids(&[10, 20]), &format_map);
         assert!(detail.downloaded);
         let tracks = detail.tracks.unwrap();
         assert!(tracks.items[0].downloaded);
@@ -1046,8 +1062,7 @@ mod tests {
         let album = catalog_album("alb1", true, &[10, 20]);
         let purchases = response(vec![album_id("alb1")], vec![]);
         // Only one of two nested tracks owned → album NOT downloaded (all-rule).
-        let detail =
-            build_purchase_album(&album, &purchases, &dl_ids(&[10]), &HashMap::new());
+        let detail = build_purchase_album(&album, &purchases, &dl_ids(&[10]), &HashMap::new());
         assert!(!detail.downloaded);
         let tracks = detail.tracks.unwrap();
         assert!(tracks.items[0].downloaded);
@@ -1059,8 +1074,7 @@ mod tests {
         // No nested tracks → empty-set rule → album downloaded = false.
         let album = catalog_album("alb1", true, &[]);
         let purchases = response(vec![album_id("alb1")], vec![]);
-        let detail =
-            build_purchase_album(&album, &purchases, &dl_ids(&[]), &HashMap::new());
+        let detail = build_purchase_album(&album, &purchases, &dl_ids(&[]), &HashMap::new());
         assert!(!detail.downloaded);
         assert_eq!(detail.tracks.unwrap().items.len(), 0);
     }
@@ -1104,7 +1118,10 @@ mod tests {
         // sanitize: "[FLAC][24-bit,96kHz]" → brackets→`-`, collapsed/trimmed.
         let expected = PathBuf::from("/music")
             .join("Miles Davis")
-            .join(format!("Kind of Blue {}", sanitize_filename("[FLAC][24-bit,96kHz]")))
+            .join(format!(
+                "Kind of Blue {}",
+                sanitize_filename("[FLAC][24-bit,96kHz]")
+            ))
             .join("03 - So What.flac");
         assert_eq!(p, expected);
         // zero-padding is two digits.
@@ -1114,13 +1131,25 @@ mod tests {
     #[test]
     fn target_path_no_quality_dir_uses_bare_album_folder() {
         let p = target_path("/d", "Artist", "Album", "", 1, "Title", "flac");
-        assert_eq!(p, PathBuf::from("/d").join("Artist").join("Album").join("01 - Title.flac"));
+        assert_eq!(
+            p,
+            PathBuf::from("/d")
+                .join("Artist")
+                .join("Album")
+                .join("01 - Title.flac")
+        );
     }
 
     #[test]
     fn target_path_zero_track_number_drops_number_prefix() {
         let p = target_path("/d", "Artist", "Album", "", 0, "Title", "mp3");
-        assert_eq!(p, PathBuf::from("/d").join("Artist").join("Album").join("Title.mp3"));
+        assert_eq!(
+            p,
+            PathBuf::from("/d")
+                .join("Artist")
+                .join("Album")
+                .join("Title.mp3")
+        );
     }
 
     #[test]
@@ -1128,10 +1157,21 @@ mod tests {
         // The "Unknown Artist"/"Singles" fallbacks are applied by the caller;
         // here verify they round-trip through sanitize unchanged (ASCII alnum +
         // spaces survive).
-        let p = target_path("/d", "Unknown Artist", "Singles", "", 0, "Loose Track", "flac");
+        let p = target_path(
+            "/d",
+            "Unknown Artist",
+            "Singles",
+            "",
+            0,
+            "Loose Track",
+            "flac",
+        );
         assert_eq!(
             p,
-            PathBuf::from("/d").join("Unknown Artist").join("Singles").join("Loose Track.flac")
+            PathBuf::from("/d")
+                .join("Unknown Artist")
+                .join("Singles")
+                .join("Loose Track.flac")
         );
     }
 
@@ -1170,12 +1210,18 @@ mod tests {
         let final_path = PathBuf::from(&path);
         assert!(final_path.exists(), "final file must exist");
         assert!(final_path.to_string_lossy().ends_with("05 - So What.flac"));
-        assert!(!final_path.with_extension("flac.part").exists(), "`.part` removed after rename");
+        assert!(
+            !final_path.with_extension("flac.part").exists(),
+            "`.part` removed after rename"
+        );
         assert_eq!(std::fs::read(&final_path).unwrap(), data);
 
         // Registry recorded the REQUESTED format (27), NOT the served 6 (B.2).
         let formats = db.get_downloaded_purchase_formats().unwrap();
-        assert!(formats.contains(&(4242, 27)), "registry keys off REQUESTED format: {formats:?}");
+        assert!(
+            formats.contains(&(4242, 27)),
+            "registry keys off REQUESTED format: {formats:?}"
+        );
         assert!(!formats.iter().any(|&(tid, fid)| tid == 4242 && fid == 6));
     }
 
@@ -1202,9 +1248,15 @@ mod tests {
             dest.to_str().unwrap(),
         )
         .unwrap();
-        assert!(path.ends_with("01 - T.mp3"), "served mp3 → .mp3 extension: {path}");
+        assert!(
+            path.ends_with("01 - T.mp3"),
+            "served mp3 → .mp3 extension: {path}"
+        );
         let formats = db.get_downloaded_purchase_formats().unwrap();
-        assert!(formats.contains(&(1, 7)), "requested format 7 recorded: {formats:?}");
+        assert!(
+            formats.contains(&(1, 7)),
+            "requested format 7 recorded: {formats:?}"
+        );
     }
 
     #[test]
@@ -1216,14 +1268,36 @@ mod tests {
         let dest = tmp.path().join("dl");
 
         let first = write_and_register_track(
-            &db, 9, 6, b"old", "A", "Alb", "", 2, "Song", 6, "audio/flac", dest.to_str().unwrap(),
+            &db,
+            9,
+            6,
+            b"old",
+            "A",
+            "Alb",
+            "",
+            2,
+            "Song",
+            6,
+            "audio/flac",
+            dest.to_str().unwrap(),
         )
         .unwrap();
         assert_eq!(std::fs::read(&first).unwrap(), b"old");
 
         // Second write to the SAME deterministic path with new bytes overwrites.
         let second = write_and_register_track(
-            &db, 9, 6, b"new", "A", "Alb", "", 2, "Song", 6, "audio/flac", dest.to_str().unwrap(),
+            &db,
+            9,
+            6,
+            b"new",
+            "A",
+            "Alb",
+            "",
+            2,
+            "Song",
+            6,
+            "audio/flac",
+            dest.to_str().unwrap(),
         )
         .unwrap();
         assert_eq!(first, second, "same deterministic target path");
@@ -1256,14 +1330,34 @@ mod tests {
 
         let dest = tmp.path().join("downloads");
         let res = write_and_register_track(
-            &db, 77, 6, b"bytes", "A", "Alb", "", 1, "Song", 6, "audio/flac", dest.to_str().unwrap(),
+            &db,
+            77,
+            6,
+            b"bytes",
+            "A",
+            "Alb",
+            "",
+            1,
+            "Song",
+            6,
+            "audio/flac",
+            dest.to_str().unwrap(),
         );
 
         // Registry INSERT failed (no such table) → Err.
-        assert!(res.is_err(), "registry write failure must surface as Err: {res:?}");
+        assert!(
+            res.is_err(),
+            "registry write failure must surface as Err: {res:?}"
+        );
         // ...but the file write happened BEFORE the registry write → orphaned file.
         let orphan = dest.join("A").join("Alb").join("01 - Song.flac");
-        assert!(orphan.exists(), "file left on disk after registry failure (orphaned, B.1)");
-        assert!(!orphan.with_extension("flac.part").exists(), "`.part` already renamed away");
+        assert!(
+            orphan.exists(),
+            "file left on disk after registry failure (orphaned, B.1)"
+        );
+        assert!(
+            !orphan.with_extension("flac.part").exists(),
+            "`.part` already renamed away"
+        );
     }
 }

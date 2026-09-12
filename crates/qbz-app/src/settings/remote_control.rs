@@ -722,7 +722,9 @@ mod tests {
         store.restore_defaults().expect("restore defaults");
         let origins = store.get_origins().expect("get origins");
 
-        assert!(origins.iter().any(|entry| entry.origin == "control.qbz.lol"));
+        assert!(origins
+            .iter()
+            .any(|entry| entry.origin == "control.qbz.lol"));
         assert!(origins.iter().any(|entry| entry.id == origin.id));
         let _ = std::fs::remove_dir_all(dir);
     }

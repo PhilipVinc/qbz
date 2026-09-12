@@ -52,7 +52,12 @@ pub fn sign_search(
 /// `method` is the endpoint path with slashes removed, e.g. "/album/get" → "albumget".
 /// `kv_pairs` are (key, value) pairs sorted alphabetically by key.
 /// The params string is built as key1value1key2value2... (same as mobile app interceptor).
-pub fn sign_request(method: &str, kv_pairs: &[(&str, &str)], timestamp: u64, secret: &str) -> String {
+pub fn sign_request(
+    method: &str,
+    kv_pairs: &[(&str, &str)],
+    timestamp: u64,
+    secret: &str,
+) -> String {
     let mut sorted = kv_pairs.to_vec();
     sorted.sort_by_key(|(k, _)| *k);
     let params: String = sorted.iter().map(|(k, v)| format!("{}{}", k, v)).collect();

@@ -25,9 +25,9 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::adapter::DaemonAdapter;
 use super::sink::DaemonQconnectApp;
 use super::transport::{BUFFER_STATE_BUFFERING, BUFFER_STATE_OK};
+use crate::adapter::DaemonAdapter;
 
 pub const QCONNECT_RENDERER_CHANNELS: i32 = 2;
 /// The player's clock has reached the end of the track it is playing.
@@ -155,10 +155,7 @@ pub async fn report_playback_state(
         // stream format when nothing is open (nothing better to say).
         let device = qbz_audio::dac_probe::negotiated_active_rate();
         let (device_rate, device_channels) = match &device {
-            Some(negotiated) => (
-                negotiated.sample_rate as i32,
-                negotiated.channels as i32,
-            ),
+            Some(negotiated) => (negotiated.sample_rate as i32, negotiated.channels as i32),
             None => (snapshot.sampling_rate, snapshot.nb_channels),
         };
         // ALSA reports a container format (24-bit audio commonly rides in
@@ -326,7 +323,11 @@ pub async fn run_report_scheduler(
         let is_buffering = in_flight.is_some() || awaiting_next;
         // Re-arm the floor for whichever phase we are now in, and reset it either
         // way so the floor only elapses after a full period of edge silence.
-        let wanted = if is_buffering { LOADING_FLOOR } else { IDLE_FLOOR };
+        let wanted = if is_buffering {
+            LOADING_FLOOR
+        } else {
+            IDLE_FLOOR
+        };
         if wanted == floor {
             interval.reset();
         } else {
@@ -484,7 +485,10 @@ mod awaiting_next_tests {
     #[test]
     fn the_clock_is_at_the_end_only_while_playing_a_track_of_known_length() {
         assert!(clock_is_at_the_end(true, 258, 258));
-        assert!(clock_is_at_the_end(true, 259, 258), "past the end counts too");
+        assert!(
+            clock_is_at_the_end(true, 259, 258),
+            "past the end counts too"
+        );
         assert!(!clock_is_at_the_end(true, 257, 258));
         // Paused at the end is not a load, it is a paused track.
         assert!(!clock_is_at_the_end(false, 258, 258));
@@ -498,10 +502,18 @@ mod awaiting_next_tests {
         let mut since = None;
         // A whole grace period has not elapsed on the first observation, so the
         // fraction of a second a hand-off spends here reports nothing.
-        assert!(!awaiting_next_track(true, &mut since, Duration::from_secs(3600)));
+        assert!(!awaiting_next_track(
+            true,
+            &mut since,
+            Duration::from_secs(3600)
+        ));
         assert!(since.is_some(), "the wait is now being timed");
         // The next track starts: forget it happened.
-        assert!(!awaiting_next_track(false, &mut since, Duration::from_secs(3600)));
+        assert!(!awaiting_next_track(
+            false,
+            &mut since,
+            Duration::from_secs(3600)
+        ));
         assert!(since.is_none());
     }
 

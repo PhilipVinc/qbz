@@ -315,13 +315,29 @@ mod tests {
         cache.put("Pink Floyd", &r);
 
         let got = cache.get("Pink Floyd").expect("cached entry");
-        assert_eq!(got.albums.items.iter().map(|a| a.id.clone()).collect::<Vec<_>>(), vec!["1", "2"]);
+        assert_eq!(
+            got.albums
+                .items
+                .iter()
+                .map(|a| a.id.clone())
+                .collect::<Vec<_>>(),
+            vec!["1", "2"]
+        );
         assert_eq!(got.albums.total, 2);
         assert_eq!(got.albums.offset, 0);
         assert_eq!(got.albums.limit, 2);
-        assert_eq!(got.tracks.items.iter().map(|t| t.id).collect::<Vec<_>>(), vec![10]);
-        assert_eq!(got.artists.items.iter().map(|a| a.id).collect::<Vec<_>>(), vec![100, 200]);
-        assert_eq!(got.playlists.items.iter().map(|p| p.id).collect::<Vec<_>>(), vec![7]);
+        assert_eq!(
+            got.tracks.items.iter().map(|t| t.id).collect::<Vec<_>>(),
+            vec![10]
+        );
+        assert_eq!(
+            got.artists.items.iter().map(|a| a.id).collect::<Vec<_>>(),
+            vec![100, 200]
+        );
+        assert_eq!(
+            got.playlists.items.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![7]
+        );
         assert!(got.most_popular.is_none());
 
         // Unknown key -> None.
@@ -346,10 +362,15 @@ mod tests {
         assert_eq!(cache.volatile.len(), VOLATILE_CACHE_CAPACITY);
 
         // One more distinct query evicts the oldest.
-        cache.put("overflow query", &results(vec![album(999)], vec![], vec![], vec![]));
+        cache.put(
+            "overflow query",
+            &results(vec![album(999)], vec![], vec![], vec![]),
+        );
         assert_eq!(cache.volatile.len(), VOLATILE_CACHE_CAPACITY);
         assert!(!cache.volatile.contains_key(&normalize_query("query 0")));
-        assert!(cache.volatile.contains_key(&normalize_query("overflow query")));
+        assert!(cache
+            .volatile
+            .contains_key(&normalize_query("overflow query")));
 
         // get() on the evicted volatile key still returns Some, because the
         // ARTIST slice persists (albums/tracks/playlists come back empty).
@@ -367,14 +388,22 @@ mod tests {
             let mut cache = SearchCache::new(&dir);
             cache.put(
                 "Miles Davis",
-                &results(vec![album(1)], vec![track(2)], vec![artist(42), artist(43)], vec![]),
+                &results(
+                    vec![album(1)],
+                    vec![track(2)],
+                    vec![artist(42), artist(43)],
+                    vec![],
+                ),
             );
         }
         // Reopen at the same base dir: volatile is gone, artists survive.
         {
             let cache = SearchCache::new(&dir);
             let got = cache.get("Miles Davis").expect("artist slice persisted");
-            assert_eq!(got.artists.items.iter().map(|a| a.id).collect::<Vec<_>>(), vec![42, 43]);
+            assert_eq!(
+                got.artists.items.iter().map(|a| a.id).collect::<Vec<_>>(),
+                vec![42, 43]
+            );
             // Volatile categories did NOT persist.
             assert!(got.albums.items.is_empty());
             assert!(got.tracks.items.is_empty());
@@ -404,7 +433,10 @@ mod tests {
         // The cache keys equivalently-normalized queries together.
         let dir = unique_test_dir("search-normkey");
         let mut cache = SearchCache::new(&dir);
-        cache.put("  Pink   Floyd ", &results(vec![album(1)], vec![], vec![], vec![]));
+        cache.put(
+            "  Pink   Floyd ",
+            &results(vec![album(1)], vec![], vec![], vec![]),
+        );
         assert!(cache.get("pink floyd").is_some());
         assert!(cache.get("PINK FLOYD").is_some());
         let _ = std::fs::remove_dir_all(dir);

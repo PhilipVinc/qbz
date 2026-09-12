@@ -273,7 +273,9 @@ mod tests {
         }
         let rows = query_on(&c, None);
         assert_eq!(
-            rows.iter().map(|r| (r.album_id.as_str(), r.plays)).collect::<Vec<_>>(),
+            rows.iter()
+                .map(|r| (r.album_id.as_str(), r.plays))
+                .collect::<Vec<_>>(),
             vec![("C", 36), ("B", 20), ("A", 12)]
         );
         // Meta round-trips.
@@ -291,7 +293,10 @@ mod tests {
         record_on(&c, &meta("B", "B"), 20);
         record_on(&c, &meta("B", "B"), 21);
         let rows = query_on(&c, None);
-        assert_eq!(rows.iter().map(|r| r.album_id.clone()).collect::<Vec<_>>(), vec!["B", "A"]);
+        assert_eq!(
+            rows.iter().map(|r| r.album_id.clone()).collect::<Vec<_>>(),
+            vec!["B", "A"]
+        );
     }
 
     #[test]
@@ -306,7 +311,10 @@ mod tests {
         }
         let top = query_on(&c, Some(3));
         assert_eq!(top.len(), 3);
-        assert_eq!(top.iter().map(|r| r.album_id.clone()).collect::<Vec<_>>(), vec!["id4", "id3", "id2"]);
+        assert_eq!(
+            top.iter().map(|r| r.album_id.clone()).collect::<Vec<_>>(),
+            vec!["id4", "id3", "id2"]
+        );
     }
 
     #[test]

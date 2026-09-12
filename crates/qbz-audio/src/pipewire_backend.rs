@@ -354,7 +354,12 @@ impl PipeWireBackend {
         for (idx, dev) in devices.iter().enumerate() {
             log::info!(
                 "  [{}] {} (id: {}, bus: {:?}, hw: {}, default: {})",
-                idx, dev.name, dev.id, dev.device_bus, dev.is_hardware, dev.is_default
+                idx,
+                dev.name,
+                dev.id,
+                dev.device_bus,
+                dev.is_hardware,
+                dev.is_default
             );
         }
         Some(devices)
@@ -925,10 +930,7 @@ impl AudioBackend for PipeWireBackend {
                         }
                     }
                 } else {
-                    log::info!(
-                        "[PipeWire Backend] Rate verified: {}Hz",
-                        actual_rate
-                    );
+                    log::info!("[PipeWire Backend] Rate verified: {}Hz", actual_rate);
                 }
             }
         }
@@ -947,7 +949,10 @@ impl AudioBackend for PipeWireBackend {
         // Subprocess probes are time-bounded so a wedged daemon can never
         // stall stream init on the audio thread.
         if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-            if std::path::Path::new(&runtime_dir).join("pipewire-0").exists() {
+            if std::path::Path::new(&runtime_dir)
+                .join("pipewire-0")
+                .exists()
+            {
                 return true;
             }
         }
@@ -1021,7 +1026,11 @@ mod pw_dump_tests {
     fn parses_sinks_only_with_node_names_bus_and_default() {
         let devs = parse_pw_dump_sinks(FIXTURE);
         // The Audio/Source must be excluded.
-        assert_eq!(devs.len(), 2, "should parse exactly the two Audio/Sink nodes");
+        assert_eq!(
+            devs.len(),
+            2,
+            "should parse exactly the two Audio/Sink nodes"
+        );
 
         let usb = devs
             .iter()
@@ -1031,7 +1040,10 @@ mod pw_dump_tests {
         assert_eq!(usb.device_bus.as_deref(), Some("usb")); // read from node props
         assert!(usb.is_hardware);
         assert!(usb.is_default, "usb sink is the default per Metadata");
-        assert!(usb.max_sample_rate.is_none(), "rate comes from the capability probe, not pw-dump");
+        assert!(
+            usb.max_sample_rate.is_none(),
+            "rate comes from the capability probe, not pw-dump"
+        );
 
         let pci = devs
             .iter()
