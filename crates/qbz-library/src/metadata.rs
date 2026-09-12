@@ -35,7 +35,7 @@ impl MetadataExtractor {
             tagged_file
                 .tags()
                 .iter()
-                .filter(move |t| primary.map_or(true, |p| !std::ptr::eq(*t, p))),
+                .filter(move |t| primary.is_none_or(|p| !std::ptr::eq(*t, p))),
         )
     }
 
@@ -55,7 +55,7 @@ impl MetadataExtractor {
         key: &ItemKey,
     ) -> Option<String> {
         tags.find_map(|t| {
-            t.get_string(key.clone())
+            t.get_string(*key)
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string)
@@ -136,10 +136,8 @@ impl MetadataExtractor {
         }
 
         if let Some(last) = tokens.last() {
-            if Self::is_disc_designator(last) {
-                if tokens.len() > 1 {
-                    return tokens[..tokens.len() - 1].join(" ").trim().to_string();
-                }
+            if Self::is_disc_designator(last) && tokens.len() > 1 {
+                return tokens[..tokens.len() - 1].join(" ").trim().to_string();
             }
         }
 
@@ -157,16 +155,13 @@ impl MetadataExtractor {
             .filter(|c| c.is_ascii_alphanumeric())
             .collect();
 
-        if cleaned.starts_with("disc") {
-            let rest = &cleaned[4..];
+        if let Some(rest) = cleaned.strip_prefix("disc") {
             return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
         }
-        if cleaned.starts_with("disk") {
-            let rest = &cleaned[4..];
+        if let Some(rest) = cleaned.strip_prefix("disk") {
             return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
         }
-        if cleaned.starts_with("cd") {
-            let rest = &cleaned[2..];
+        if let Some(rest) = cleaned.strip_prefix("cd") {
             return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
         }
 
@@ -218,8 +213,7 @@ impl MetadataExtractor {
             }
             // Disc+number compounds are fine (disc1, cd02, etc.)
             for prefix in &["disc", "disk", "cd"] {
-                if token.starts_with(prefix) {
-                    let rest = &token[prefix.len()..];
+                if let Some(rest) = token.strip_prefix(prefix) {
                     if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
                         return false;
                     }
@@ -247,7 +241,7 @@ impl MetadataExtractor {
             if (*token == "disc" || *token == "disk" || *token == "cd")
                 && tokens
                     .get(i + 1)
-                    .map_or(false, |t| t.chars().all(|c| c.is_ascii_digit()))
+                    .is_some_and(|t| t.chars().all(|c| c.is_ascii_digit()))
             {
                 if let Some(next) = tokens.get(i + 1) {
                     if let Ok(value) = next.parse::<u32>() {
@@ -259,8 +253,7 @@ impl MetadataExtractor {
             }
 
             for prefix in ["disc", "disk", "cd"] {
-                if token.starts_with(prefix) {
-                    let rest = &token[prefix.len()..];
+                if let Some(rest) = token.strip_prefix(prefix) {
                     if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
                         if let Ok(value) = rest.parse::<u32>() {
                             if value > 0 {
@@ -517,7 +510,7 @@ impl MetadataExtractor {
         let duration_secs = properties.duration().as_secs();
         let sample_rate = properties.sample_rate().unwrap_or(44100) as f64;
         let bit_depth = properties.bit_depth().map(|b| b as u32);
-        let channels = properties.channels().unwrap_or(2) as u8;
+        let channels = properties.channels().unwrap_or(2);
 
         // Get file metadata
         let file_metadata = fs::metadata(file_path).map_err(LibraryError::Io)?;
@@ -584,7 +577,7 @@ impl MetadataExtractor {
                 track_number: Self::track_across_tags(&tagged_file)
                     .or_else(|| Self::infer_track_number_from_filename(file_path)),
                 disc_number: Self::disk_across_tags(&tagged_file)
-                    .and_then(|d| if d > 0 { Some(d) } else { None })
+                    .filter(|&d| d > 0)
                     .or(inferred_disc),
                 year: Self::year_across_tags(&tagged_file),
                 genre: Self::string_across_tags(&tagged_file, &ItemKey::Genre),
@@ -755,7 +748,7 @@ impl MetadataExtractor {
             duration_secs: properties.duration().as_secs(),
             bit_depth: properties.bit_depth().map(|b| b as u32),
             sample_rate: properties.sample_rate().unwrap_or(44100) as f64,
-            channels: properties.channels().unwrap_or(2) as u8,
+            channels: properties.channels().unwrap_or(2),
         })
     }
 
@@ -947,7 +940,7 @@ impl MetadataExtractor {
         const EXACT: &[&str] = &["cover", "folder", "front", "album", "artwork", "art"];
         let mut score = 0;
 
-        if EXACT.iter().any(|name| *name == file_key) {
+        if EXACT.contains(&file_key) {
             score = score.max(100);
         }
         if let Some(key) = album_key {

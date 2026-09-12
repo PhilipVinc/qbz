@@ -166,11 +166,9 @@ fn extract_from_tags(tags: &[Tag], gain_db: &mut Option<f32>, peak: &mut Option<
                     }
                 }
             }
-            "replaygain_track_peak" => {
-                if peak.is_none() {
-                    if let Some(p) = parse_peak_value(&tag.value) {
-                        *peak = Some(p);
-                    }
+            "replaygain_track_peak" if peak.is_none() => {
+                if let Some(p) = parse_peak_value(&tag.value) {
+                    *peak = Some(p);
                 }
             }
             _ => {}

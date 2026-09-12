@@ -61,7 +61,7 @@ pub fn is_dsd_path(path: &std::path::Path) -> bool {
 /// "DSD64" / "DSD128" / … label for a DSD bit rate. Falls back to "DSD" for
 /// non-standard rates.
 pub fn dsd_label(dsd_rate: u32) -> String {
-    if dsd_rate >= DSD64_RATE && dsd_rate % DSD64_RATE == 0 {
+    if dsd_rate >= DSD64_RATE && dsd_rate.is_multiple_of(DSD64_RATE) {
         format!("DSD{}", 64 * (dsd_rate / DSD64_RATE))
     } else {
         "DSD".to_string()

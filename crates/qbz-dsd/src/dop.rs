@@ -232,7 +232,7 @@ mod io_error_tests {
             self.left -= 1;
             let n = max_bytes_per_ch.min(4);
             for ch in out.iter_mut().take(2) {
-                ch.extend(std::iter::repeat(0x69).take(n));
+                ch.extend(std::iter::repeat_n(0x69, n));
             }
             Ok(n)
         }

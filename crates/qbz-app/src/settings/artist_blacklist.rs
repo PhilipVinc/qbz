@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn get_all_sorted_by_name_nocase_with_notes_roundtrip() {
         let s = svc();
-        s.add(2, "zeta", Some("note-z".into())).unwrap();
+        s.add(2, "zeta", Some("note-z")).unwrap();
         s.add(1, "Alpha", None).unwrap();
         let all = s.get_all().unwrap();
         assert_eq!(all.len(), 2);
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn upsert_replaces_name_and_notes() {
         let s = svc();
-        s.add(5, "Old", Some("n".into())).unwrap();
+        s.add(5, "Old", Some("n")).unwrap();
         s.add(5, "New", None).unwrap(); // INSERT OR REPLACE
         let all = s.get_all().unwrap();
         assert_eq!(all.len(), 1);

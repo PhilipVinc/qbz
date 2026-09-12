@@ -1181,7 +1181,7 @@ impl LibraryDatabase {
             ))
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
-        stmt.query_row(params![id], |row| Self::row_to_track(row))
+        stmt.query_row(params![id], Self::row_to_track)
             .optional()
             .map_err(|e| LibraryError::Database(e.to_string()))
     }
@@ -1196,7 +1196,7 @@ impl LibraryDatabase {
             ))
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
-        stmt.query_row(params![path], |row| Self::row_to_track(row))
+        stmt.query_row(params![path], Self::row_to_track)
             .optional()
             .map_err(|e| LibraryError::Database(e.to_string()))
     }
@@ -1513,7 +1513,7 @@ impl LibraryDatabase {
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![group_key], |row| Self::row_to_track(row))
+            .query_map(params![group_key], Self::row_to_track)
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let mut tracks = Vec::new();
@@ -1784,7 +1784,7 @@ impl LibraryDatabase {
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![escaped_prefix], |row| Self::row_to_track(row))
+            .query_map(params![escaped_prefix], Self::row_to_track)
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let mut tracks = Vec::new();
@@ -2510,7 +2510,7 @@ impl LibraryDatabase {
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![metadata_key], |row| Self::row_to_track(row))
+            .query_map(params![metadata_key], Self::row_to_track)
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let mut tracks = Vec::new();
@@ -2904,7 +2904,7 @@ impl LibraryDatabase {
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![&pattern], |row| Self::row_to_track(row))
+            .query_map(params![&pattern], Self::row_to_track)
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let mut tracks = Vec::new();
@@ -3164,17 +3164,13 @@ pub struct PlaylistSettings {
 /// Status of local content availability for a playlist
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LocalContentStatus {
+    #[default]
     Unknown,
     No,
     SomeLocal,
     AllLocal,
-}
-
-impl Default for LocalContentStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl LocalContentStatus {
@@ -4938,7 +4934,7 @@ impl LibraryDatabase {
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map([], |row| Self::row_to_track(row))
+            .query_map([], Self::row_to_track)
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let mut tracks = Vec::new();
@@ -5207,10 +5203,8 @@ impl LibraryDatabase {
             })?;
 
         let mut map = std::collections::HashMap::new();
-        for row in rows {
-            if let Ok((artist_name, custom_image_path)) = row {
-                map.insert(artist_name, custom_image_path);
-            }
+        for (artist_name, custom_image_path) in rows.flatten() {
+            map.insert(artist_name, custom_image_path);
         }
         Ok(map)
     }
@@ -5266,10 +5260,8 @@ impl LibraryDatabase {
             })?;
 
         let mut map = std::collections::HashMap::new();
-        for row in rows {
-            if let Ok((artist_name, canonical_name)) = row {
-                map.insert(artist_name, canonical_name);
-            }
+        for (artist_name, canonical_name) in rows.flatten() {
+            map.insert(artist_name, canonical_name);
         }
         Ok(map)
     }
@@ -5388,10 +5380,8 @@ impl LibraryDatabase {
             })?;
 
         let mut map = std::collections::HashMap::new();
-        for row in rows {
-            if let Ok((album_id, path)) = row {
-                map.insert(album_id, path);
-            }
+        for (album_id, path) in rows.flatten() {
+            map.insert(album_id, path);
         }
         Ok(map)
     }
@@ -5513,10 +5503,8 @@ impl LibraryDatabase {
             .map_err(|e| LibraryError::Database(e.to_string()))?;
 
         let mut result = HashSet::new();
-        for row in rows {
-            if let Ok(id) = row {
-                result.insert(id as u64);
-            }
+        for id in rows.flatten() {
+            result.insert(id as u64);
         }
 
         Ok(result)

@@ -98,7 +98,7 @@ fn pick_most_popular(
                     let blocked = t.album.as_ref().is_some_and(|a| album_bl.contains(&a.id))
                         || t.performer
                             .as_ref()
-                            .map_or(false, |p| blacklist.contains(&p.id));
+                            .is_some_and(|p| blacklist.contains(&p.id));
                     if !blocked {
                         return Some(MostPopularItem::Tracks(t));
                     }
@@ -494,7 +494,7 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
     /// Set repeat mode
     pub async fn set_repeat_mode(&self, mode: RepeatMode) {
         let queue = self.queue.write().await;
-        queue.set_repeat(mode.clone());
+        queue.set_repeat(mode);
         self.emit(CoreEvent::RepeatModeChanged { mode }).await;
     }
 
@@ -1043,31 +1043,27 @@ impl<A: FrontendAdapter + Send + Sync + 'static> QbzCore<A> {
 
     /// Pause playback
     pub fn pause(&self) -> Result<(), CoreError> {
-        self.player.pause().map_err(|e| CoreError::Playback(e))
+        self.player.pause().map_err(CoreError::Playback)
     }
 
     /// Resume playback
     pub fn resume(&self) -> Result<(), CoreError> {
-        self.player.resume().map_err(|e| CoreError::Playback(e))
+        self.player.resume().map_err(CoreError::Playback)
     }
 
     /// Stop playback
     pub fn stop(&self) -> Result<(), CoreError> {
-        self.player.stop().map_err(|e| CoreError::Playback(e))
+        self.player.stop().map_err(CoreError::Playback)
     }
 
     /// Seek to position in seconds
     pub fn seek(&self, position: u64) -> Result<(), CoreError> {
-        self.player
-            .seek(position)
-            .map_err(|e| CoreError::Playback(e))
+        self.player.seek(position).map_err(CoreError::Playback)
     }
 
     /// Set volume (0.0 - 1.0)
     pub fn set_volume(&self, volume: f32) -> Result<(), CoreError> {
-        self.player
-            .set_volume(volume)
-            .map_err(|e| CoreError::Playback(e))
+        self.player.set_volume(volume).map_err(CoreError::Playback)
     }
 
     /// Get current playback state

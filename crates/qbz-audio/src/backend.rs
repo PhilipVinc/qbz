@@ -13,7 +13,7 @@ use rodio::{
 use serde::{Deserialize, Serialize};
 
 /// Supported audio backends
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AudioBackendType {
     /// PipeWire backend (modern, recommended)
     /// - Supports device selection without changing system default
@@ -45,26 +45,18 @@ pub enum AudioBackendType {
     /// System default backend (non-Linux platforms)
     /// - Uses CPAL default host (CoreAudio on macOS, WASAPI on Windows)
     /// - Automatic device selection via OS audio system
+    #[default]
     SystemDefault,
 }
 
-impl Default for AudioBackendType {
-    fn default() -> Self {
-        // "System" everywhere: the OOTB default plays through the OS default
-        // output, shared with other apps (no bit-perfect, no `pactl`). Audiophile
-        // users opt into PipeWire / ALSA explicitly. This was PipeWire on Linux,
-        // which hard-required `pactl` and froze OOTB playback without it (#470).
-        AudioBackendType::SystemDefault
-    }
-}
-
 /// ALSA plugin type (only relevant for ALSA backend)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AlsaPlugin {
     /// Direct hardware access (hw)
     /// - Bit-perfect, exclusive
     /// - No automatic format conversion
     /// - Blocks device for other apps
+    #[default]
     Hw,
 
     /// Plug hardware access (plughw)
@@ -77,13 +69,6 @@ pub enum AlsaPlugin {
     /// - Generic ALSA device
     /// - Most compatible
     Pcm,
-}
-
-impl Default for AlsaPlugin {
-    fn default() -> Self {
-        // Hw is the audiophile choice
-        AlsaPlugin::Hw
-    }
 }
 
 /// Audio device information

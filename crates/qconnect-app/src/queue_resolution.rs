@@ -156,13 +156,9 @@ fn find_cursor_index_by_track_id_before(
         return None;
     }
 
-    for index in (0..end_exclusive).rev() {
-        if queue_item_track_id_for_cursor(queue, cursors[index]) == Some(track_id) {
-            return Some(index);
-        }
-    }
-
-    None
+    (0..end_exclusive)
+        .rev()
+        .find(|&index| queue_item_track_id_for_cursor(queue, cursors[index]) == Some(track_id))
 }
 
 fn resolve_current_cursor_index_from_snapshots(

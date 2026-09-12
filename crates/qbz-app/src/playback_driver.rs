@@ -192,7 +192,10 @@ pub fn plan_tick(
     // 2. Periodic session-position save (playback.rs:4305-4308): ~11 ticks ≈ 5 s
     //    while a track is actually playing.
     let next_save_tick = state.save_pos_tick.wrapping_add(1);
-    if ev.is_playing && ev.track_id != 0 && next_save_tick % SAVE_POSITION_EVERY_N_TICKS == 0 {
+    if ev.is_playing
+        && ev.track_id != 0
+        && next_save_tick.is_multiple_of(SAVE_POSITION_EVERY_N_TICKS)
+    {
         actions.push(DriverAction::SavePosition(ev.position));
     }
 
@@ -249,7 +252,8 @@ pub fn plan_tick(
     if ev.track_id != 0 {
         let transition = ev.track_id != state.last_reported_track_id
             || ev.is_playing != state.last_reported_playing;
-        let periodic = ev.is_playing && next_report_tick % QCONNECT_REPORT_EVERY_N_TICKS == 0;
+        let periodic =
+            ev.is_playing && next_report_tick.is_multiple_of(QCONNECT_REPORT_EVERY_N_TICKS);
         if transition || periodic {
             actions.push(DriverAction::ReportEdge);
         }

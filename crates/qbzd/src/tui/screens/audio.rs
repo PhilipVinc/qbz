@@ -165,10 +165,8 @@ pub fn cascade_on_toggle(a: &mut StagedAudio, field: AField) {
                 a.pw_force_bitperfect = false; // item 2
             }
         }
-        AField::StreamingOnly => {
-            if a.streaming_only {
-                a.gapless_enabled = false; // item 3
-            }
+        AField::StreamingOnly if a.streaming_only => {
+            a.gapless_enabled = false; // item 3
         }
         _ => {}
     }

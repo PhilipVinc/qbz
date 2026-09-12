@@ -127,7 +127,10 @@ impl DsdPcmConverter {
     pub fn new(demux: Box<dyn DsdDemuxer>, gain_db: f32) -> Result<Self, DsdError> {
         let info = demux.info().clone();
         let ratio = info.dsd_rate / OUTPUT_RATE; // 32 / 64 / 128 / 256
-        if info.dsd_rate % OUTPUT_RATE != 0 || !(ratio / 8).is_power_of_two() || ratio < 16 {
+        if !info.dsd_rate.is_multiple_of(OUTPUT_RATE)
+            || !(ratio / 8).is_power_of_two()
+            || ratio < 16
+        {
             return Err(DsdError::UnsupportedRate(info.dsd_rate));
         }
         let n_stages = (ratio / 8).trailing_zeros() as usize; // 2..=5

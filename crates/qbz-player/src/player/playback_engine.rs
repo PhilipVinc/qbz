@@ -560,6 +560,11 @@ impl PlaybackEngine {
                 volume: software_volume,
                 ..
             } => {
+                // `stream` is only read by the Linux hardware-volume path below.
+                // Do NOT let a non-Linux build talk you into binding it as `_`:
+                // that compiles here and breaks the ALSA mixer on the target.
+                #[cfg(not(target_os = "linux"))]
+                let _ = stream;
                 if *hardware_volume {
                     #[cfg(target_os = "linux")]
                     {

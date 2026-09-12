@@ -3304,7 +3304,7 @@ dependencies = [
 
 [[package]]
 name = "qbz-cache"
-version = "0.1.0"
+version = "2.1.0"
 dependencies = [
  "dirs 6.0.0",
  "filetime",
@@ -3379,7 +3379,7 @@ dependencies = [
 
 [[package]]
 name = "qbz-integrations"
-version = "0.1.0"
+version = "2.1.0"
 dependencies = [
  "chrono",
  "discord-rich-presence",
@@ -3395,7 +3395,7 @@ dependencies = [
 
 [[package]]
 name = "qbz-library"
-version = "0.1.0"
+version = "2.1.0"
 dependencies = [
  "dirs 6.0.0",
  "glob",

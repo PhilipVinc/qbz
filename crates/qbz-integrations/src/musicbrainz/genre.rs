@@ -180,7 +180,7 @@ fn is_noisy_tag(tag: &str) -> bool {
 /// Check if a normalized genre is too broad to use as a search query.
 /// These tags are kept for affinity scoring but excluded from MB search queries.
 pub fn is_broad_genre(normalized: &str) -> bool {
-    BROAD_TAGS.iter().any(|broad| normalized == *broad)
+    BROAD_TAGS.contains(&normalized)
 }
 
 /// Minimum vote count to consider a tag as a primary genre

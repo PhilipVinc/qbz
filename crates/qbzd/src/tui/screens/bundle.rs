@@ -353,19 +353,16 @@ impl BundleState {
         let Some(pending) = self.pending.as_mut() else {
             return;
         };
-        match bundle::replan_with_device(
+        if let Ok(plan) = bundle::replan_with_device(
             &pending.bundle,
             &pending.target,
             &pending.opts,
             &pending.live,
             choice.clone(),
         ) {
-            Ok(plan) => {
-                pending.plan = plan;
-                pending.device_choice = Some(choice);
-                self.scroll = 0;
-            }
-            Err(_) => {}
+            pending.plan = plan;
+            pending.device_choice = Some(choice);
+            self.scroll = 0;
         }
     }
 

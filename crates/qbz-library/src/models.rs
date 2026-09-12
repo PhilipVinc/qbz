@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Supported audio formats
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum AudioFormat {
     Flac,
     Alac,
@@ -12,13 +12,8 @@ pub enum AudioFormat {
     Ape,
     Mp3,
     Dsd,
+    #[default]
     Unknown,
-}
-
-impl Default for AudioFormat {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl std::fmt::Display for AudioFormat {

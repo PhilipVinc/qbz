@@ -23,10 +23,11 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// `e^4`, the normalisation constant in MPD's mapping.
 const E4: f32 = 54.598_15;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VolumeCurve {
     /// MPD's exponential mapping. One slider position means the same loudness
     /// here as it does for everything else on a moOde box.
+    #[default]
     Perceptual = 0,
     /// The fraction scales amplitude directly. Kept because it is what this
     /// daemon did before, and because a host that applies its own curve
@@ -67,12 +68,6 @@ impl VolumeCurve {
                 ((fraction * 100.0 / 25.0).exp() - 1.0) / (E4 - 1.0)
             }
         }
-    }
-}
-
-impl Default for VolumeCurve {
-    fn default() -> Self {
-        Self::Perceptual
     }
 }
 

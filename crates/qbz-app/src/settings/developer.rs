@@ -8,17 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeveloperSettings {
     pub force_dmabuf: bool,
-}
-
-impl Default for DeveloperSettings {
-    fn default() -> Self {
-        Self {
-            force_dmabuf: false,
-        }
-    }
 }
 
 pub struct DeveloperSettingsStore {

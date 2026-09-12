@@ -75,7 +75,7 @@ fn resolve_location(
         return Some(ArtistLocation {
             city: Some(ba.name.clone()),
             area_id: Some(ba.id.clone()),
-            country: country.map(|c| country_code_to_name(c)),
+            country: country.map(country_code_to_name),
             country_code: cc,
             display_name: ba.name.clone(),
             precision,
@@ -102,7 +102,7 @@ fn resolve_location(
         }
 
         // Non-country area (could be city without begin_area)
-        let country_name = country.map(|c| country_code_to_name(c));
+        let country_name = country.map(country_code_to_name);
         let display = if let Some(ref cn) = country_name {
             format!("{}, {}", a.name, cn)
         } else {

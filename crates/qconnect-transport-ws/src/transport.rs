@@ -627,7 +627,7 @@ async fn run_native_transport_loop(
                     ) {
                         break "keepalive_timeout".to_string();
                     }
-                    if let Err(err) = ws.send(WsMessage::Ping(Vec::new().into())).await {
+                    if let Err(err) = ws.send(WsMessage::Ping(Vec::new())).await {
                         break format!("keepalive_ping_error:{err}");
                     }
                     outstanding_pings = outstanding_pings.saturating_add(1);
@@ -977,7 +977,7 @@ where
         jwt: Some(jwt_qws.to_string()),
     };
     let frame = encode_qcloud_frame(MSG_TYPE_AUTHENTICATE, &auth.encode_to_vec());
-    ws.send(WsMessage::Binary(frame.into()))
+    ws.send(WsMessage::Binary(frame))
         .await
         .map_err(|err| WsTransportError::Protocol(format!("send authenticate: {err}")))
 }
@@ -999,7 +999,7 @@ where
     };
 
     let frame = encode_qcloud_frame(MSG_TYPE_SUBSCRIBE, &subscribe.encode_to_vec());
-    ws.send(WsMessage::Binary(frame.into()))
+    ws.send(WsMessage::Binary(frame))
         .await
         .map_err(|err| WsTransportError::Protocol(format!("send subscribe: {err}")))
 }
@@ -1026,7 +1026,7 @@ where
     };
 
     let frame = encode_qcloud_frame(MSG_TYPE_PAYLOAD, &payload.encode_to_vec());
-    ws.send(WsMessage::Binary(frame.into()))
+    ws.send(WsMessage::Binary(frame))
         .await
         .map_err(|err| WsTransportError::Protocol(format!("send payload: {err}")))
 }

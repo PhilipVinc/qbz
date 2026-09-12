@@ -1339,7 +1339,7 @@ impl QobuzClient {
         query.push(("limit", limit.to_string()));
 
         // Derive method name from endpoint path: "/discover/newReleases" -> "discovernewReleases"
-        let method_name = endpoint.replace('/', "").replace('.', "");
+        let method_name = endpoint.replace(['/', '.'], "");
         let http_response = self
             .signed_get_auth(
                 &url,
@@ -3102,7 +3102,7 @@ impl QobuzClient {
         limit: u32,
     ) -> Result<ArtistStoryResponse> {
         let url = endpoints::build_url(paths::ARTIST_STORY);
-        let query = vec![
+        let query = [
             ("artist_id", artist_id.to_string()),
             ("offset", offset.to_string()),
             ("limit", limit.to_string()),
@@ -3359,7 +3359,7 @@ mod tests {
         let result = client.get_album_suggest("0060254735180").await;
         let elapsed = started.elapsed();
 
-        let err = result.err().expect("offline gate must fail the request");
+        let err = result.expect_err("offline gate must fail the request");
         assert!(
             matches!(err, ApiError::OfflineMode),
             "expected ApiError::OfflineMode, got: {err}"
@@ -3392,8 +3392,7 @@ mod tests {
         let err = client
             .login("user@example.com", "pw")
             .await
-            .err()
-            .expect("uninitialized client must fail");
+            .expect_err("uninitialized client must fail");
         assert!(
             !matches!(err, ApiError::OfflineMode),
             "login must bypass the offline gate, got: {err}"
@@ -3402,8 +3401,7 @@ mod tests {
         let err = client
             .login_with_oauth_code("code")
             .await
-            .err()
-            .expect("uninitialized client must fail");
+            .expect_err("uninitialized client must fail");
         assert!(
             !matches!(err, ApiError::OfflineMode),
             "login_with_oauth_code must bypass the offline gate, got: {err}"
@@ -3412,8 +3410,7 @@ mod tests {
         let err = client
             .login_with_token("token")
             .await
-            .err()
-            .expect("uninitialized client must fail");
+            .expect_err("uninitialized client must fail");
         assert!(
             !matches!(err, ApiError::OfflineMode),
             "login_with_token must bypass the offline gate, got: {err}"

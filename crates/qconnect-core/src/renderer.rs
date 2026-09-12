@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::QueueItem;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct QConnectRendererState {
     pub active: Option<bool>,
     pub playing_state: Option<i32>,
@@ -24,26 +24,6 @@ pub struct QConnectRendererState {
     pub loop_mode: Option<i32>,
     pub shuffle_mode: Option<bool>,
     pub updated_at_ms: u64,
-}
-
-impl Default for QConnectRendererState {
-    fn default() -> Self {
-        Self {
-            active: None,
-            playing_state: None,
-            current_position_ms: None,
-            current_duration_ms: None,
-            current_track: None,
-            next_track: None,
-            volume: None,
-            volume_delta: None,
-            muted: None,
-            max_audio_quality: None,
-            loop_mode: None,
-            shuffle_mode: None,
-            updated_at_ms: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

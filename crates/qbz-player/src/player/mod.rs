@@ -566,7 +566,7 @@ fn read_tag_head(path: &std::path::Path) -> Option<TrackBytes> {
     use std::io::Read;
     const TAG_HEAD_BYTES: usize = 1024 * 1024;
 
-    let mut file = std::fs::File::open(path).ok()?;
+    let file = std::fs::File::open(path).ok()?;
     let mut head = Vec::with_capacity(TAG_HEAD_BYTES.min(1024 * 64));
     file.take(TAG_HEAD_BYTES as u64)
         .read_to_end(&mut head)
@@ -716,7 +716,7 @@ fn create_output_stream_with_config(
                 .with_error_callback(move |err| {
                     log::error!("Audio stream error: {err}");
                     let now = std::time::Instant::now();
-                    if last_reported.map_or(true, |t| now.duration_since(t).as_secs() >= 5) {
+                    if last_reported.is_none_or(|t| now.duration_since(t).as_secs() >= 5) {
                         last_reported = Some(now);
                         state.record_stream_error(format!("Audio stream error: {err}"));
                     }
@@ -2075,9 +2075,7 @@ impl Player {
 
                                 // Try backend system first (if configured), then fall back to legacy CPAL
                                 // This avoids unnecessary CPAL device enumeration for PipeWire DAC and ALSA Direct
-                                let stream_result = if let Some(settings) =
-                                    thread_settings.lock().ok()
-                                {
+                                let stream_result = if let Ok(settings) = thread_settings.lock() {
                                     match try_init_stream_with_backend(
                                         &settings,
                                         sample_rate,
@@ -2172,7 +2170,7 @@ impl Player {
                                         thread_state.set_stream_error(false);
 
                                         // Set current device name from settings (for backend system)
-                                        if let Some(settings) = thread_settings.lock().ok() {
+                                        if let Ok(settings) = thread_settings.lock() {
                                             if let Some(ref device_name) = settings.output_device {
                                                 thread_state
                                                     .set_current_device(Some(device_name.clone()));
@@ -2266,7 +2264,7 @@ impl Player {
                                 StreamType::Rodio {
                                     sink: mixer_sink, ..
                                 } => {
-                                    match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
+                                    match PlaybackEngine::new_rodio(mixer_sink.mixer()) {
                                         Ok(e) => {
                                             *consecutive_sink_failures = 0;
                                             thread_state.set_stream_error(false);
@@ -2338,7 +2336,7 @@ impl Player {
                             };
 
                             let volume = f32::from_bits(thread_state.volume.load(Ordering::SeqCst));
-                            apply_engine_volume(&stream_opt, &engine, volume);
+                            apply_engine_volume(stream_opt, &engine, volume);
 
                             let decoded = match &audio {
                                 TrackAudio::Memory(data) => decode_with_fallback(data),
@@ -2579,9 +2577,7 @@ impl Player {
                                     .map(StreamType::rodio)
                                 };
 
-                                let stream_result = if let Some(settings) =
-                                    thread_settings.lock().ok()
-                                {
+                                let stream_result = if let Ok(settings) = thread_settings.lock() {
                                     match try_init_stream_with_backend(
                                         &settings,
                                         sample_rate,
@@ -2714,7 +2710,7 @@ impl Player {
                             let mut engine = match stream {
                                 StreamType::Rodio {
                                     sink: mixer_sink, ..
-                                } => match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
+                                } => match PlaybackEngine::new_rodio(mixer_sink.mixer()) {
                                     Ok(e) => {
                                         *consecutive_sink_failures = 0;
                                         thread_state.set_stream_error(false);
@@ -2752,7 +2748,7 @@ impl Player {
                             };
 
                             let volume = f32::from_bits(thread_state.volume.load(Ordering::SeqCst));
-                            apply_engine_volume(&stream_opt, &engine, volume);
+                            apply_engine_volume(stream_opt, &engine, volume);
 
                             // Wait for minimum buffer before starting playback.
                             //
@@ -3553,7 +3549,7 @@ impl Player {
                                 let mut engine = match stream {
                                     StreamType::Rodio {
                                         sink: mixer_sink, ..
-                                    } => match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
+                                    } => match PlaybackEngine::new_rodio(mixer_sink.mixer()) {
                                         Ok(e) => e,
                                         Err(e) => {
                                             log::error!(
@@ -3583,7 +3579,7 @@ impl Player {
 
                                 let volume =
                                     f32::from_bits(thread_state.volume.load(Ordering::SeqCst));
-                                apply_engine_volume(&stream_opt, &engine, volume);
+                                apply_engine_volume(stream_opt, &engine, volume);
 
                                 let resume_pos = thread_state.position.load(Ordering::SeqCst);
                                 let skipped_source: Box<dyn Source<Item = f32> + Send> =
@@ -3780,7 +3776,7 @@ impl Player {
                                 .volume
                                 .store(volume.to_bits(), Ordering::SeqCst);
                             if let Some(ref engine) = *current_engine {
-                                apply_engine_volume(&stream_opt, &engine, volume);
+                                apply_engine_volume(stream_opt, engine, volume);
                             }
                             // debug: a slider drag delivers dozens of these per
                             // second — at info they dominated a field log (#555,
@@ -3952,7 +3948,7 @@ impl Player {
                             let mut engine = match stream {
                                 StreamType::Rodio {
                                     sink: mixer_sink, ..
-                                } => match PlaybackEngine::new_rodio(&mixer_sink.mixer()) {
+                                } => match PlaybackEngine::new_rodio(mixer_sink.mixer()) {
                                     Ok(e) => e,
                                     Err(e) => {
                                         seek_abort(
@@ -3981,7 +3977,7 @@ impl Player {
                             };
 
                             let volume = f32::from_bits(thread_state.volume.load(Ordering::SeqCst));
-                            apply_engine_volume(&stream_opt, &engine, volume);
+                            apply_engine_volume(stream_opt, &engine, volume);
 
                             // Build the decoded source for the seek. Both
                             // streaming and cached paths use Symphonia's native

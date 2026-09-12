@@ -414,7 +414,7 @@ fn fmt_mmss(secs: u64) -> String {
 /// quirk between `playback.sample_rate` and `track.sample_rate`, which is
 /// left as-is on the wire, 02 §2.2).
 fn fmt_khz(hz: u64) -> String {
-    if hz % 1000 == 0 {
+    if hz.is_multiple_of(1000) {
         format!("{}kHz", hz / 1000)
     } else {
         format!("{:.1}kHz", hz as f64 / 1000.0)

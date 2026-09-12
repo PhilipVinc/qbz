@@ -86,7 +86,7 @@ impl RadioEngine {
         }
 
         let r = Self::splitmix64(session.rng_seed ^ (next_index as u64));
-        let mut pick = (r % total_weight) as u64;
+        let mut pick = r % total_weight;
 
         let mut chosen_idx = 0usize;
         for (idx, w) in weights.iter().enumerate() {

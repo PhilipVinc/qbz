@@ -156,11 +156,10 @@ pub fn get_cache_size() -> Result<u64, LibraryError> {
 
     for entry in fs::read_dir(&thumbnails_dir)
         .map_err(|e| LibraryError::Other(format!("Failed to read thumbnails directory: {}", e)))?
+        .flatten()
     {
-        if let Ok(entry) = entry {
-            if let Ok(metadata) = entry.metadata() {
-                total_size += metadata.len();
-            }
+        if let Ok(metadata) = entry.metadata() {
+            total_size += metadata.len();
         }
     }
 

@@ -428,7 +428,7 @@ impl LastFmClient {
                             .and_then(|n| n.as_str())
                             .unwrap_or_default()
                             .to_string();
-                        let artist_mbid = artist_obj.and_then(|a| extract_mbid(a));
+                        let artist_mbid = artist_obj.and_then(extract_mbid);
                         let image = extract_image(item);
 
                         Some(LastFmTrack {
@@ -504,7 +504,7 @@ impl LastFmClient {
                             .and_then(|n| n.as_str())
                             .unwrap_or_default()
                             .to_string();
-                        let artist_mbid = artist_obj.and_then(|a| extract_mbid(a));
+                        let artist_mbid = artist_obj.and_then(extract_mbid);
                         let uts = extract_uts(item);
                         let image = extract_image(item);
 
@@ -601,7 +601,7 @@ impl LastFmClient {
                             })
                             .unwrap_or_default()
                             .to_string();
-                        let artist_mbid = artist_obj.and_then(|a| extract_mbid(a));
+                        let artist_mbid = artist_obj.and_then(extract_mbid);
 
                         let album = item
                             .get("album")
@@ -771,7 +771,7 @@ impl LastFmClient {
                             .and_then(|n| n.as_str())
                             .unwrap_or_default()
                             .to_string();
-                        let artist_mbid = artist_obj.and_then(|a| extract_mbid(a));
+                        let artist_mbid = artist_obj.and_then(extract_mbid);
                         let image = extract_image(item);
                         let playcount = parse_u64(item.get("playcount"));
 
@@ -855,7 +855,7 @@ impl LastFmClient {
                             .and_then(|n| n.as_str())
                             .unwrap_or_default()
                             .to_string();
-                        let artist_mbid = artist_obj.and_then(|a| extract_mbid(a));
+                        let artist_mbid = artist_obj.and_then(extract_mbid);
                         let image = extract_image(item);
                         let playcount = parse_u64(item.get("playcount"));
 

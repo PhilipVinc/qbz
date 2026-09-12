@@ -97,7 +97,7 @@ fn run_fft_loop(tap: VisualizerTap, sink: Arc<dyn VizSink>) {
     let mut samples = vec![0.0f32; FFT_SIZE];
     let mut windowed = vec![0.0f32; FFT_SIZE];
     let mut output = vec![0.0f32; NUM_BARS];
-    let mut smoothed = vec![0.0f32; NUM_BARS];
+    let mut smoothed = [0.0f32; NUM_BARS];
 
     // Waveform: 256 L + 256 R = 512 floats, written straight into the per-frame
     // Box (see the submit site — the Box itself must stay per-frame).
@@ -232,9 +232,7 @@ fn run_fft_loop(tap: VisualizerTap, sink: Arc<dyn VizSink>) {
                     let raw_rms = raw_sum / (NUM_ENERGY_BANDS as f32 + 2.0); // account for extra bass weight
                     let rms_delta = raw_rms - prev_rms;
 
-                    if transient_cooldown > 0 {
-                        transient_cooldown -= 1;
-                    }
+                    transient_cooldown = transient_cooldown.saturating_sub(1);
 
                     if rms_delta > TRANSIENT_THRESHOLD && transient_cooldown == 0 {
                         // Transient detected! Submit intensity (0.0 - 1.0)

@@ -26,7 +26,7 @@ pub struct QueueItem {
     pub queue_item_id: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct QConnectQueueState {
     pub version: QueueVersion,
     pub queue_items: Vec<QueueItem>,
@@ -57,23 +57,6 @@ pub struct QConnectQueueState {
     /// selection never outlives the push that carried it.
     #[serde(default)]
     pub selected_queue_position: Option<u64>,
-}
-
-impl Default for QConnectQueueState {
-    fn default() -> Self {
-        Self {
-            version: QueueVersion::default(),
-            queue_items: Vec::new(),
-            shuffle_mode: false,
-            shuffle_order: None,
-            autoplay_mode: false,
-            autoplay_loading: false,
-            autoplay_items: Vec::new(),
-            updated_at_ms: 0,
-            last_server_queue_hash: None,
-            selected_queue_position: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

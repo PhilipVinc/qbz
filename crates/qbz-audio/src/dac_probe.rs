@@ -43,11 +43,7 @@ pub fn parse_hw_params(content: &str) -> Option<NegotiatedRate> {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("rate:") {
             // "rate: 192000 (192000/1)" -> 192000
-            sample_rate = rest
-                .trim()
-                .split_whitespace()
-                .next()
-                .and_then(|s| s.parse().ok());
+            sample_rate = rest.split_whitespace().next().and_then(|s| s.parse().ok());
         } else if let Some(rest) = line.strip_prefix("format:") {
             format = Some(rest.trim().to_string());
         } else if let Some(rest) = line.strip_prefix("channels:") {

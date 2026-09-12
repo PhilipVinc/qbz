@@ -1109,7 +1109,7 @@ pub async fn align_queue_cursor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::QconnectSessionRendererState;
+
     use std::sync::{Arc, Mutex as StdMutex};
 
     use async_trait::async_trait;

@@ -30,19 +30,15 @@ impl MatchConfidence {
 /// Artist type classification
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ArtistType {
     Person,
     Group,
     Orchestra,
     Choir,
     Character,
+    #[default]
     Other,
-}
-
-impl Default for ArtistType {
-    fn default() -> Self {
-        Self::Other
-    }
 }
 
 impl From<Option<&str>> for ArtistType {
@@ -584,10 +580,12 @@ pub struct DiscoveryResponse {
 /// Musician confidence level for MusicBrainz <-> Qobuz matching
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum MusicianConfidence {
     Confirmed,
     Contextual,
     Weak,
+    #[default]
     None,
 }
 
@@ -599,12 +597,6 @@ impl MusicianConfidence {
             Self::Weak => 1,
             Self::None => 0,
         }
-    }
-}
-
-impl Default for MusicianConfidence {
-    fn default() -> Self {
-        Self::None
     }
 }
 

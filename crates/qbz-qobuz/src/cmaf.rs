@@ -224,8 +224,6 @@ pub async fn download_full_sized(
     on_progress: Option<CmafProgressCallback>,
     choose: impl FnOnce(usize) -> TrackDestination,
 ) -> std::result::Result<DownloadedTrack, String> {
-    use std::io::Write;
-
     let setup = setup_streaming(client, track_id, quality).await?;
     let http = build_cdn_client()?;
 

@@ -211,7 +211,7 @@ impl MusicBrainzClient {
                 let confidence = if recording
                     .isrcs
                     .as_ref()
-                    .map_or(false, |isrcs| isrcs.contains(&isrc.to_string()))
+                    .is_some_and(|isrcs| isrcs.contains(&isrc.to_string()))
                 {
                     MatchConfidence::Exact
                 } else {

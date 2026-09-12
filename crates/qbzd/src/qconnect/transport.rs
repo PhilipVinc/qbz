@@ -722,7 +722,7 @@ pub fn decode_hex_channel(raw: &str) -> Result<Vec<u8>, String> {
         return Err("empty subscribe channel hex value".to_string());
     }
 
-    let needs_padding = normalized.len() % 2 != 0;
+    let needs_padding = !normalized.len().is_multiple_of(2);
     let value = if needs_padding {
         format!("0{normalized}")
     } else {

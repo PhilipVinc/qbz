@@ -16,8 +16,10 @@ use tokio::sync::RwLock;
 /// Canonical runtime states
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", content = "data")]
+#[derive(Default)]
 pub enum RuntimeState {
     /// Initial state - nothing initialized
+    #[default]
     Uninitialized,
     /// Client initialized but no authentication
     InitializedNoAuth,
@@ -27,12 +29,6 @@ pub enum RuntimeState {
     Ready { user_id: u64 },
     /// Degraded state - something is broken
     Degraded { reason: DegradedReason },
-}
-
-impl Default for RuntimeState {
-    fn default() -> Self {
-        Self::Uninitialized
-    }
 }
 
 /// Reasons for degraded state

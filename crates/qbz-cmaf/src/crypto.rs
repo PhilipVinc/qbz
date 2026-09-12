@@ -11,7 +11,7 @@ type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
 /// Strict hex decode for the app seed (HKDF IKM). Fail closed on odd length
 /// or non-hex digits — never zero-fill bad nibbles.
 fn hex_decode(hex: &str) -> Result<Vec<u8>, CmafError> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err(CmafError::InvalidInfos(format!(
             "seed hex must have even length, got {}",
             hex.len()

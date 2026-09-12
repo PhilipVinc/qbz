@@ -483,7 +483,7 @@ impl SharedBuffer {
     fn lock(&self) -> IoResult<std::sync::MutexGuard<'_, BufferState>> {
         self.state
             .lock()
-            .map_err(|_| IoError::new(ErrorKind::Other, "Failed to acquire buffer lock"))
+            .map_err(|_| IoError::other("Failed to acquire buffer lock"))
     }
 
     /// Block until the buffer changes: data pushed, an error recorded, or
@@ -494,7 +494,7 @@ impl SharedBuffer {
     ) -> IoResult<std::sync::MutexGuard<'a, BufferState>> {
         self.ready
             .wait(guard)
-            .map_err(|_| IoError::new(ErrorKind::Other, "Condition variable wait failed"))
+            .map_err(|_| IoError::other("Condition variable wait failed"))
     }
 }
 
@@ -636,7 +636,7 @@ impl BufferedMediaSource {
         }
 
         if let Some(ref err) = state.download_error {
-            return Err(IoError::new(ErrorKind::Other, err.clone()));
+            return Err(IoError::other(err.clone()));
         }
 
         Ok(())
@@ -835,7 +835,7 @@ impl Read for BufferedMediaSource {
 
         loop {
             if let Some(ref err) = state.download_error {
-                return Err(IoError::new(ErrorKind::Other, err.clone()));
+                return Err(IoError::other(err.clone()));
             }
 
             if let Some(idx) = state.segment_at(read_pos) {
@@ -918,7 +918,7 @@ impl Seek for BufferedMediaSource {
         }
 
         if let Some(ref err) = state.download_error {
-            return Err(IoError::new(ErrorKind::Other, err.clone()));
+            return Err(IoError::other(err.clone()));
         }
 
         // After download complete, check bounds
@@ -1812,17 +1812,17 @@ mod tests {
 
         // Read first 5 bytes
         let mut buf = [0u8; 5];
-        source.read(&mut buf).unwrap();
+        source.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"01234");
 
         // Seek back to start
         source.seek(SeekFrom::Start(0)).unwrap();
-        source.read(&mut buf).unwrap();
+        source.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"01234");
 
         // Seek to middle
         source.seek(SeekFrom::Start(3)).unwrap();
-        source.read(&mut buf).unwrap();
+        source.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"34567");
     }
 
@@ -1928,7 +1928,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let mut buf = [0u8; 4];
             reader.seek(SeekFrom::Start(target)).unwrap();
-            reader.read(&mut buf).unwrap();
+            reader.read_exact(&mut buf).unwrap();
             buf
         });
 
@@ -1965,7 +1965,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let mut buf = [0u8; 2];
             reader.seek(SeekFrom::Start(64 * 1024)).unwrap();
-            reader.read(&mut buf).unwrap();
+            reader.read_exact(&mut buf).unwrap();
             buf
         });
 
@@ -2000,7 +2000,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let mut buf = [0u8; 1];
             reader.seek(SeekFrom::Start(35_002_642)).unwrap();
-            reader.read(&mut buf).unwrap();
+            reader.read_exact(&mut buf).unwrap();
             buf[0]
         });
 
@@ -2037,7 +2037,7 @@ mod tests {
         let handle = thread::spawn(move || {
             let mut buf = [0u8; 1];
             reader.seek(SeekFrom::Start(31_475_334)).unwrap();
-            reader.read(&mut buf).unwrap();
+            reader.read_exact(&mut buf).unwrap();
             buf[0]
         });
 

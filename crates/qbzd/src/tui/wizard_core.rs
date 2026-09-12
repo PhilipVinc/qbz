@@ -527,7 +527,7 @@ pub fn seed_for_rate_depth(rate_hz: u32, depth: u32) -> Option<&'static TestSeed
 
 /// "192 kHz" / "44.1 kHz" from Hz (shared by the test read-back rendering).
 pub fn khz(hz: u32) -> String {
-    if hz % 1000 == 0 {
+    if hz.is_multiple_of(1000) {
         format!("{} kHz", hz / 1000)
     } else {
         format!("{:.1} kHz", hz as f64 / 1000.0)

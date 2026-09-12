@@ -9,10 +9,11 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AutoplayMode {
     /// Continue playing within the source (album, playlist, etc.)
     #[serde(rename = "continue")]
+    #[default]
     ContinueWithinSource,
     /// Play only the selected track, then stop.
     #[serde(rename = "track_only")]
@@ -20,12 +21,6 @@ pub enum AutoplayMode {
     /// Create infinite radio when queue ends (based on recent tracks).
     #[serde(rename = "infinite")]
     InfiniteRadio,
-}
-
-impl Default for AutoplayMode {
-    fn default() -> Self {
-        Self::ContinueWithinSource
-    }
 }
 
 impl AutoplayMode {

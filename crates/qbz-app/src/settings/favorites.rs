@@ -140,13 +140,7 @@ impl FavoritesPreferencesStore {
             let icon_background: Option<String> = row.get(2)?;
             let tab_order_str: String = row.get(3)?;
 
-            let custom_icon_path = custom_icon_path.and_then(|value| {
-                if value.trim().is_empty() {
-                    None
-                } else {
-                    Some(value)
-                }
-            });
+            let custom_icon_path = custom_icon_path.filter(|value| !value.trim().is_empty());
 
             let tab_order: Vec<String> =
                 serde_json::from_str(&tab_order_str).unwrap_or_else(|_| {
@@ -293,13 +287,7 @@ pub fn load_preferences(conn: &Connection) -> Result<FavoritesPreferences> {
         let icon_background: Option<String> = row.get(2)?;
         let tab_order_str: String = row.get(3)?;
 
-        let custom_icon_path = custom_icon_path.and_then(|value| {
-            if value.trim().is_empty() {
-                None
-            } else {
-                Some(value)
-            }
-        });
+        let custom_icon_path = custom_icon_path.filter(|value| !value.trim().is_empty());
 
         let tab_order: Vec<String> = serde_json::from_str(&tab_order_str).unwrap_or_else(|_| {
             vec![

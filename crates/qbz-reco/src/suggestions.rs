@@ -367,7 +367,7 @@ impl SuggestionsEngine {
 
             for (_mbid, name) in playlist_artists {
                 // First, find the Qobuz artist ID for this playlist artist
-                if let Some((qobuz_id, _)) = self.validate_qobuz_artist(&client, name).await {
+                if let Some((qobuz_id, _)) = self.validate_qobuz_artist(client, name).await {
                     // Get similar artists from Qobuz (up to 10 per playlist artist)
                     match client.get_similar_artists(qobuz_id, 10, 0).await {
                         Ok(similar_page) => {
@@ -381,7 +381,7 @@ impl SuggestionsEngine {
                                 // Check genre compatibility
                                 if self
                                     .has_incompatible_genre(
-                                        &client,
+                                        client,
                                         similar_artist.id,
                                         &similar_artist.name,
                                     )
@@ -401,7 +401,7 @@ impl SuggestionsEngine {
                                 // Search tracks for this similar artist (use empty MBID since we have Qobuz ID)
                                 let tracks = self
                                     .search_artist_tracks_by_qobuz_id(
-                                        &client,
+                                        client,
                                         similar_artist.id,
                                         &similar_artist.name,
                                         0.8, // High similarity since Qobuz says they're similar
@@ -638,7 +638,7 @@ impl SuggestionsEngine {
 
         // Step 1: Validate artist exists in Qobuz with their own catalog
         // This prevents searching for session musicians who don't have artist pages
-        let validated_artist = self.validate_qobuz_artist(&client, &search_query).await;
+        let validated_artist = self.validate_qobuz_artist(client, &search_query).await;
 
         if validated_artist.is_none() {
             log::info!(

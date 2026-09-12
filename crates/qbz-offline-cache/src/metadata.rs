@@ -311,7 +311,7 @@ pub fn organize_cached_file(
     let root = Path::new(root_dir);
 
     // Build target path: <root>/<artist>/<album>/[Disc N/]NN - Title.flac
-    let artist_dir = sanitize_filename(&metadata.album_artist.as_ref().unwrap_or(&metadata.artist));
+    let artist_dir = sanitize_filename(metadata.album_artist.as_ref().unwrap_or(&metadata.artist));
     let album_dir = sanitize_filename(&metadata.album);
 
     let mut target_dir = root.join(&artist_dir).join(&album_dir);
