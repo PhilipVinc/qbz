@@ -85,7 +85,7 @@ impl JackStream {
                 format!("JACK client open failed (is a JACK/pipewire-jack server running?): {e}")
             })?;
 
-        let sample_rate = client.sample_rate() as u32;
+        let sample_rate = client.sample_rate();
 
         let out_l = client
             .register_port("out_FL", AudioOut::default())

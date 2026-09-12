@@ -826,7 +826,7 @@ impl AlsaDirectStream {
                 Ok(())
             }
             Err(e) => {
-                if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "(DoP)") {
+                if let Err(msg) = recover_write_error(&pcm, e.errno(), "(DoP)") {
                     Err(msg)
                 } else {
                     Ok(())
@@ -862,7 +862,7 @@ impl AlsaDirectStream {
                         Ok(())
                     }
                     Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
+                        if let Err(msg) = recover_write_error(&pcm, e.errno(), "") {
                             Err(msg)
                         } else {
                             Ok(())
@@ -890,7 +890,7 @@ impl AlsaDirectStream {
                         Ok(())
                     }
                     Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
+                        if let Err(msg) = recover_write_error(&pcm, e.errno(), "") {
                             Err(msg)
                         } else {
                             Ok(())
@@ -916,7 +916,7 @@ impl AlsaDirectStream {
                         Ok(())
                     }
                     Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
+                        if let Err(msg) = recover_write_error(&pcm, e.errno(), "") {
                             Err(msg)
                         } else {
                             Ok(())
@@ -954,7 +954,7 @@ impl AlsaDirectStream {
                         Ok(())
                     }
                     Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "(S24_3LE)") {
+                        if let Err(msg) = recover_write_error(&pcm, e.errno(), "(S24_3LE)") {
                             Err(msg)
                         } else {
                             Ok(())
@@ -983,7 +983,7 @@ impl AlsaDirectStream {
                         Ok(())
                     }
                     Err(e) => {
-                        if let Err(msg) = recover_write_error(&pcm, e.errno() as i32, "") {
+                        if let Err(msg) = recover_write_error(&pcm, e.errno(), "") {
                             Err(msg)
                         } else {
                             Ok(())
@@ -1166,7 +1166,7 @@ impl AlsaDirectStream {
                 Err(e) => {
                     // Underrun and friends: recover and re-measure next time
                     // round rather than writing into a broken stream.
-                    recover_write_error(&pcm, e.errno() as i32, "")?;
+                    recover_write_error(&pcm, e.errno(), "")?;
                     continue;
                 }
             };
@@ -1203,7 +1203,7 @@ impl AlsaDirectStream {
                 match pcm.wait(Some(WAIT_MS)) {
                     Ok(_) => {}
                     Err(e) => {
-                        recover_write_error(&pcm, e.errno() as i32, "(wait)")?;
+                        recover_write_error(&pcm, e.errno(), "(wait)")?;
                     }
                 }
                 continue;
@@ -1223,7 +1223,7 @@ impl AlsaDirectStream {
             match io.writei(&data[offset..offset + take]) {
                 Ok(written) => offset += written * frame_bytes,
                 Err(e) => {
-                    recover_write_error(&pcm, e.errno() as i32, "")?;
+                    recover_write_error(&pcm, e.errno(), "")?;
                 }
             }
         }
@@ -1369,7 +1369,7 @@ impl AlsaDirectStream {
         if let Err(e) = PCM::drop(&pcm) {
             // libc::EBADFD — the PCM was not in a running-ish state.
             const EBADFD: i32 = 77;
-            if e.errno() as i32 != EBADFD {
+            if e.errno() != EBADFD {
                 log::warn!(
                     "[ALSA Direct] drop on stop failed (continuing to prepare): {}",
                     e

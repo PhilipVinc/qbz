@@ -40,7 +40,7 @@ pub fn spawn(
 
     #[cfg(target_os = "linux")]
     {
-        return linux::spawn(cb).map(|h| Box::new(h) as Box<dyn MediaIntegration>);
+        linux::spawn(cb).map(|h| Box::new(h) as Box<dyn MediaIntegration>)
     }
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
