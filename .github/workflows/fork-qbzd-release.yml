@@ -1,7 +1,9 @@
 # muqbzd standalone release.
 #
 # This is the only workflow that publishes anything:
-#   - triggers on `qbzd-v*` tags only;
+#   - triggers on `v*` tags (`v2.1.0`). `qbzd-v*` still fires it too, for the
+#     deployed moOde installer that pins `qbzd-v$VERSION`; drop that trigger
+#     once the installer moves to `v$VERSION`;
 #   - releases ONLY from `main`: the `guard` job refuses a tag whose commit is
 #     not an ancestor of main, so a tag pushed on a topic branch fails loudly
 #     instead of publishing a release nobody can reproduce from the trunk;
@@ -10,18 +12,19 @@
 #     qbzd-<version>-linux-<arch>.tar.gz containing qbzd-<version>-linux-<arch>/qbzd);
 #   - publishes a PRERELEASE GitHub Release on the tag.
 #
-# Tag `qbzd-v2.1.0.moode1` -> version `2.1.0.moode1`.
+# Tag `v2.1.0` -> version `2.1.0`. Plain semver: no distro suffixes.
 
 name: "muqbzd standalone release"
 
 on:
   push:
     tags:
-      - "qbzd-v*"
+      - "v*"
+      - "qbzd-v*"   # compatibility: the deployed moOde installer pins this shape
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. qbzd-v2.1.0.moode1). Empty = build HEAD with the Cargo.toml version, no Release publish."
+        description: "Tag to build (e.g. v2.1.0). Empty = build HEAD with the Cargo.toml version, no Release publish."
         required: false
         type: string
 
@@ -77,13 +80,16 @@ jobs:
         id: release
         run: |
           VERSION=""
-          if [[ "${GITHUB_REF}" == refs/tags/qbzd-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/qbzd-v}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${VERSION#qbzd-v}"   # legacy prefix
+            VERSION="${VERSION#v}"
           elif [[ -n "${{ inputs.tag }}" ]]; then
             VERSION="${{ inputs.tag }}"
             VERSION="${VERSION#qbzd-v}"
+            VERSION="${VERSION#v}"
           else
-            VERSION="$(grep -m1 '^version = ' crates/Cargo.toml | sed 's/version = \"\(.*\)\"/\1/')"
+            VERSION="$(grep -m1 '^version = ' Cargo.toml | sed 's/version = \"\(.*\)\"/\1/')"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -96,26 +102,26 @@ jobs:
       - name: slint-free dep-graph gate
         run: |
           set -euo pipefail
-          hits=$(cargo tree --manifest-path crates/Cargo.toml -p qbzd -e normal \
+          hits=$(cargo tree -p qbzd -e normal \
                  | grep -E '\bslint[a-z-]* v' || true)
           [ -z "$hits" ] || { echo "::error::qbzd graph resolves Slint:"; echo "$hits"; exit 1; }
 
       # QBZD_BUILD_ID stamps the release version into the binary, so
       # `qbzd version`, `--version`, /api/status and the Connect device's
-      # softwareVersion all report e.g. 2.1.0.moode1 instead of the bare Cargo
+      # softwareVersion all report the released version instead of the bare Cargo
       # version. A four-part id like that is not valid semver and so cannot live
       # in Cargo.toml.
       - name: build
         env:
           QBZD_BUILD_ID: ${{ steps.release.outputs.version }}
-        run: cargo build --release --manifest-path crates/Cargo.toml -p qbzd
+        run: cargo build --release -p qbzd
 
       # Empirical gate: the binary must run on glibc 2.35
       # boxes (Ubuntu 22.04 / Bookworm-era moOde images).
       - name: glibc floor gate (objdump)
         run: |
           set -euo pipefail
-          floor=$(objdump -T crates/target/release/qbzd \
+          floor=$(objdump -T target/release/qbzd \
                   | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu | tail -1)
           echo "glibc floor: $floor"
           highest=$(printf '%s\n' "$floor" "GLIBC_2.35" | sort -V | tail -1)
@@ -128,7 +134,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          cp crates/target/release/qbzd ./qbzd
+          cp target/release/qbzd ./qbzd
           QBZD_DIR="qbzd-${VERSION}-linux-${ARCH}"
           mkdir -p "qbzd-tarball-staging/${QBZD_DIR}/completions"
           cp qbzd "qbzd-tarball-staging/${QBZD_DIR}/qbzd"

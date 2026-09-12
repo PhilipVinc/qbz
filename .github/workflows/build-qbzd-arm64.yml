@@ -23,9 +23,9 @@ jobs:
         # qbz-app's shell::tests hit a long-standing reqwest TLS-provider
         # panic that predates this tree, so scope qbz-app to its settings tests.
         run: |
-          cargo test --manifest-path crates/Cargo.toml -p qbzd -p qbz-models
-          cargo test --manifest-path crates/Cargo.toml -p qbz-app settings::
+          cargo test -p qbzd -p qbz-models
+          cargo test -p qbz-app settings::
       - name: build
-        run: cargo build --release --manifest-path crates/Cargo.toml -p qbzd
+        run: cargo build --release -p qbzd
       - uses: actions/upload-artifact@v4
-        with: { name: qbzd-linux-aarch64, path: crates/target/release/qbzd }
+        with: { name: qbzd-linux-aarch64, path: target/release/qbzd }

@@ -6,11 +6,12 @@ daemon-only tree — **there is no desktop UI here and none is planned**. Outsid
 `README.md`, the repo does not refer to the project it forked from; keep it that
 way when editing docs and CI.
 
-## Layout, and the one thing that surprises everyone
+## Layout
 
-**There is no `Cargo.toml` at the repo root.** The workspace manifest is
-`crates/Cargo.toml`, and build artifacts land in `crates/target`. Every cargo
-command needs `--manifest-path crates/Cargo.toml`, or `cd crates` first.
+A standard Cargo workspace: manifest at the repo root, members under `crates/`,
+artifacts in `target/`. Plain `cargo build` / `cargo test` from the root work.
+(It was not always so — the manifest used to live in `crates/`, so older commit
+messages and comments may mention `--manifest-path crates/Cargo.toml`.)
 
 The workspace is `qbzd` plus **exactly** its dependency closure — 23 crates, the
 set `cargo tree -p qbzd` resolves. If you find yourself adding a workspace member,
@@ -19,7 +20,7 @@ check whether `qbzd` really needs it.
 ## Commands
 
 ```bash
-cargo build --release --manifest-path crates/Cargo.toml -p qbzd
+cargo build --release -p qbzd
 ./scripts/cargo-test.sh          # whole workspace, same command CI runs
 ./scripts/build-aarch64-qbzd.sh  # Pi binary: native on ARM, cross via Docker on x86-64
 ./scripts/qbzd-to-pi.sh          # copy to the Pi, restart the service
@@ -66,18 +67,20 @@ created rebase conflicts against upstream. Neither applies now.
 
 ## Versioning
 
-`[workspace.package] version` in `crates/Cargo.toml` is the source of truth (2.1.0).
-A four-part build id like `2.1.0.moode1` is not valid semver and cannot live in
-Cargo.toml — packagers stamp it via the `QBZD_BUILD_ID` env var at compile time,
-which `crates/qbzd/src/main.rs` reads into `VERSION`. That is what `qbzd version`,
-`--version` and `/api/status` report.
+Plain semver, no distro suffixes. `[workspace.package] version` in the root
+`Cargo.toml` is the source of truth (2.1.0) and release tags are `vX.Y.Z` matching
+it. The release workflow stamps the tag's version through the `QBZD_BUILD_ID` env
+var at compile time, which `crates/qbzd/src/main.rs` reads into `VERSION` — that is
+what `qbzd version`, `--version` and `/api/status` report. Without it you get the
+Cargo version, so a plain `cargo build` is unchanged.
 
 ## Branches, CI and releases
 
 `main` is the trunk. CI (`test-crates`) runs on PRs into main and pushes to main,
-path-filtered to `crates/**`. Releases are **tags on main**: pushing a `qbzd-v*` tag
+path-filtered to `crates/**`. Releases are **tags on main**: pushing a `vX.Y.Z` tag
 triggers `fork-qbzd-release.yml`, whose first job refuses any tag whose commit is not
-an ancestor of `origin/main`. `build-qbzd-arm64.yml` is manual-dispatch and publishes
+an ancestor of `origin/main`. (`qbzd-v*` also fires it, for the deployed moOde
+installer that still pins that shape.) `build-qbzd-arm64.yml` is manual-dispatch and publishes
 nothing — use it for a Pi test binary without tagging.
 
 ## Stale markers you will run into

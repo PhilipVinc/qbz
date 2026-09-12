@@ -68,12 +68,10 @@ want the application; μqbzd only makes sense if you want a headless box.
 
 ## Building
 
-Pure Rust workspace. The manifest is `crates/Cargo.toml` (there is none at the repo root)
-and build artifacts land in `crates/target`.
+Standard Cargo workspace — manifest at the repo root, members under `crates/`.
 
 ```bash
-cd crates
-cargo build --release -p qbzd        # -> crates/target/release/qbzd
+cargo build --release -p qbzd        # -> target/release/qbzd
 ```
 
 System dependencies (Debian/Ubuntu): `build-essential pkg-config libasound2-dev
@@ -93,7 +91,7 @@ Tests (whole workspace):
 ```
 
 With no UI crate in the graph, a 4 GB Pi can build the daemon natively. The cross path
-uses `crates/Cross.toml` to supply the arm64 dev libs inside the `cross` image.
+uses `Cross.toml` to supply the arm64 dev libs inside the `cross` image.
 
 ## Repository layout
 

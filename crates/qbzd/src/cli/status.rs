@@ -105,7 +105,7 @@ fn render(p: &Value, host: &str) -> String {
 
     let mut out = String::new();
     out.push_str(&format!(
-        "qbzd {version} · api v{api} · up {uptime} · {host} · data {data_root}\n"
+        "μqbzd {version} · api v{api} · up {uptime} · {host} · data {data_root}\n"
     ));
     out.push_str(&format!("auth      : {}\n", render_auth(p)));
     out.push_str(&format!("audio     : {}\n", render_audio(p)));
@@ -393,7 +393,7 @@ mod tests {
     fn render_covers_the_composite_block() {
         let block = render(&logged_in_payload(), "127.0.0.1:8182");
         assert!(
-            block.contains("qbzd 2.1.0 · api v1 · up 3d 0h · 127.0.0.1:8182"),
+            block.contains("μqbzd 2.1.0 · api v1 · up 3d 0h · 127.0.0.1:8182"),
             "{block}"
         );
         assert!(

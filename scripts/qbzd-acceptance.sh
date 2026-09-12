@@ -22,7 +22,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QBZD_BIN="${QBZD_BIN:-$ROOT/crates/target/release/qbzd}"
+QBZD_BIN="${QBZD_BIN:-$ROOT/target/release/qbzd}"
 PORT="${QBZD_TEST_PORT:-28182}"
 
 fail() { echo "FAIL: $1" >&2; exit 1; }

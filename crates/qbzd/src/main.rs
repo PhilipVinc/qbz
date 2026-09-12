@@ -19,11 +19,10 @@ mod tui;
 pub const API_VERSION: u32 = 1; // 02-cli-and-api.md §1.6
 
 /// The version this build reports everywhere (`qbzd version`, `--version`,
-/// `/api/status`). Normally the Cargo version; a packager can stamp a build id
-/// over it with `QBZD_BUILD_ID` at compile time, which is how the moOde builds
-/// identify themselves (`2.1.0.moode1`) — a four-part id like that is not valid
-/// semver, so it cannot live in Cargo.toml. Falls back to the Cargo version, so
-/// a plain `cargo build` is unchanged.
+/// `/api/status`). Normally the Cargo version; the release workflow stamps the
+/// tag's version over it with `QBZD_BUILD_ID` at compile time so a prerelease
+/// tag (`v2.1.0-rc.1`) reports itself accurately. Falls back to the Cargo
+/// version, so a plain `cargo build` is unchanged.
 pub const VERSION: &str = match option_env!("QBZD_BUILD_ID") {
     Some(id) => id,
     None => env!("CARGO_PKG_VERSION"),
@@ -31,7 +30,7 @@ pub const VERSION: &str = match option_env!("QBZD_BUILD_ID") {
 
 #[derive(Parser)]
 #[command(name = "qbzd", version = VERSION, arg_required_else_help = true,
-          about = "QBZ headless Qobuz playback daemon")]
+          about = "μqbzd — headless Qobuz Connect daemon")]
 struct Cli {
     /// Target daemon (default 127.0.0.1:8182; env QBZD_HOST)
     #[arg(long, global = true)]
@@ -470,7 +469,7 @@ async fn main() {
                     VERSION, API_VERSION
                 );
             } else {
-                println!("qbzd {} (api v{})", VERSION, API_VERSION);
+                println!("μqbzd {} (api v{})", VERSION, API_VERSION);
             }
             0
         }

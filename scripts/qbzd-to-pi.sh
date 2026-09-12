@@ -50,7 +50,7 @@ docker info >/dev/null 2>&1 || { echo "docker is not reachable — is colima run
 SHA="$(git -C "$HOST_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 DIRTY=""
 git -C "$HOST_ROOT" diff --quiet 2>/dev/null || DIRTY="-dirty"
-BASE="$(grep -m1 '^version = ' "$HOST_ROOT/crates/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')"
+BASE="$(grep -m1 '^version = ' "$HOST_ROOT/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')"
 export QBZD_BUILD_ID="${BASE}.local-${SHA}${DIRTY}"
 
 say "building qbzd $QBZD_BUILD_ID (release, aarch64) in $IMAGE"

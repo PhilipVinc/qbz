@@ -56,13 +56,16 @@ Releases are tags, not merges. Tag a commit **that is already on `main`**:
 ```bash
 git checkout main
 git pull
-git tag qbzd-v2.1.0.moodeN
-git push origin qbzd-v2.1.0.moodeN
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
+Versions are plain semver — `2.1.0`, `2.1.1`, `2.2.0-rc.1` — with no distro
+suffixes. `Cargo.toml` is the source of truth; tag what it already says.
+
 `fork-qbzd-release.yml` builds the aarch64 + amd64 tarballs and publishes a
-prerelease GitHub Release. Its first job refuses any `qbzd-v*` tag whose commit
-is not an ancestor of `main`, so tagging a topic branch fails loudly instead of
+prerelease GitHub Release. Its first job refuses any release tag whose commit is
+not an ancestor of `main`, so tagging a topic branch fails loudly instead of
 publishing something that is not on the trunk.
 
 `build-qbzd-arm64.yml` (manual dispatch, any ref) is the way to get a test

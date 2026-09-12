@@ -14,7 +14,7 @@
 # Two modes, auto-selected by host arch:
 #
 #   1. NATIVE  (on aarch64 Linux: the Pi itself, an ARM VM/runner)
-#   2. CROSS   (on x86-64 Linux with Docker, via `cross`; crates/Cross.toml
+#   2. CROSS   (on x86-64 Linux with Docker, via `cross`; Cross.toml
 #              supplies the arm64 dev libs inside the image)
 #
 # Output: dist/qbzd-aarch64-linux (an aarch64 ELF — verify with `file`).
@@ -46,8 +46,8 @@ case "$arch" in
     else
       echo "[qbzd-aarch64] non-apt distro: install the equivalents of: ${DEPS[*]}" >&2
     fi
-    ( cd crates && cargo build --release -p qbzd )
-    install -Dm755 "crates/target/release/qbzd" "$OUT"
+    cargo build --release -p qbzd
+    install -Dm755 "target/release/qbzd" "$OUT"
     ;;
   x86_64 | amd64)
     echo "[qbzd-aarch64] CROSS-compile from $arch via cross (Docker)"
@@ -64,8 +64,8 @@ case "$arch" in
     # crates/Cross.toml injects the arm64 dev libs into the image. It installs
     # the desktop's superset (GUI libs included) because it is keyed by TARGET,
     # not by crate — harmless here, and not worth forking a second image.
-    ( cd crates && cross build --release --target "$TARGET" -p qbzd )
-    install -Dm755 "crates/target/$TARGET/release/qbzd" "$OUT"
+    cross build --release --target "$TARGET" -p qbzd
+    install -Dm755 "target/$TARGET/release/qbzd" "$OUT"
     ;;
   *)
     echo "[qbzd-aarch64] ERROR: unsupported build host arch: $arch" >&2

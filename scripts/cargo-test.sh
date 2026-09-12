@@ -15,7 +15,6 @@ cd "$ROOT"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 
 exec cargo test \
-  --manifest-path crates/Cargo.toml \
   --workspace \
   --no-fail-fast \
   "$@"

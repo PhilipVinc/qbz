@@ -1983,7 +1983,7 @@ mod tests {
                 let out = render(&app, 80, 24);
                 // The shell rendered (not the too-small guard).
                 assert!(
-                    out.contains("QBZ Daemon Setup"),
+                    out.contains("μqbzd Setup"),
                     "header missing for {screen:?}/{focus:?}"
                 );
                 assert!(
@@ -2017,7 +2017,7 @@ mod tests {
                 let app = bare_app(screen, focus);
                 let out = render(&app, 120, 30);
                 assert!(
-                    out.contains("QBZ Daemon Setup"),
+                    out.contains("μqbzd Setup"),
                     "header missing {screen:?}/{focus:?}"
                 );
                 assert!(

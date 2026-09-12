@@ -20,7 +20,7 @@ pub fn too_small(w: u16, h: u16) -> String {
 // ============================ shell / navigation ============================
 
 /// Header title (accent-bold, left of the version). One row, always visible.
-pub const APP_TITLE: &str = "QBZ Daemon Setup";
+pub const APP_TITLE: &str = "μqbzd Setup";
 pub const HELP_TITLE: &str = "Help";
 
 /// Breadcrumb root node (dim `Setup ›` prefix). The current node (section or,

@@ -141,14 +141,14 @@ fn detect_init() -> Option<String> {
 
 fn systemd_user(t: &Target) -> String {
     format!(
-        "# qbzd.service — QBZ headless Qobuz playback daemon (systemd USER unit).\n\
+        "# qbzd.service — μqbzd headless Qobuz Connect daemon (systemd USER unit).\n\
          #\n\
          # REQUIRED on a headless box: sudo loginctl enable-linger {user}\n\
          #   Without linger this unit stops when you log out of SSH and the\n\
          #   device vanishes from the Qobuz app. `qbzd status` warns when off.\n\
          # A user unit inherits your session env, so PipeWire/ALSA just work.\n\
          [Unit]\n\
-         Description=QBZ headless Qobuz playback daemon\n\
+         Description=μqbzd headless Qobuz Connect daemon\n\
          \n\
          [Service]\n\
          Type=simple\n\
@@ -166,13 +166,13 @@ fn systemd_user(t: &Target) -> String {
 
 fn systemd_system(t: &Target) -> String {
     format!(
-        "# qbzd.service — QBZ headless Qobuz playback daemon (systemd SYSTEM unit).\n\
+        "# qbzd.service — μqbzd headless Qobuz Connect daemon (systemd SYSTEM unit).\n\
          #\n\
          # Runs as {user}. XDG_RUNTIME_DIR must exist — enable linger so the\n\
          # user's /run/user/{uid} (and PipeWire) come up at boot:\n\
          #   sudo loginctl enable-linger {user}\n\
          [Unit]\n\
-         Description=QBZ headless Qobuz playback daemon\n\
+         Description=μqbzd headless Qobuz Connect daemon\n\
          After=network-online.target sound.target\n\
          Wants=network-online.target\n\
          \n\
@@ -199,14 +199,14 @@ fn systemd_system(t: &Target) -> String {
 fn openrc(t: &Target) -> String {
     format!(
         "#!/sbin/openrc-run\n\
-         # qbzd — QBZ headless Qobuz playback daemon (OpenRC).\n\
+         # qbzd — μqbzd headless Qobuz Connect daemon (OpenRC).\n\
          #\n\
          # Runs as {user} under supervise-daemon (auto-restart on crash). Audio\n\
          # needs the user's runtime dir + HOME; /run/user/{uid} is provided by\n\
          # elogind for a logged-in or LINGERING user. Make sure {user} is in the\n\
          # `audio` group for direct ALSA/bit-perfect access.\n\
          \n\
-         description=\"QBZ headless Qobuz playback daemon\"\n\
+         description=\"μqbzd headless Qobuz Connect daemon\"\n\
          \n\
          supervisor=\"supervise-daemon\"\n\
          command=\"{bin}\"\n\
@@ -238,7 +238,7 @@ fn openrc(t: &Target) -> String {
 fn runit(t: &Target) -> String {
     format!(
         "#!/bin/sh\n\
-         # /etc/sv/qbzd/run — QBZ headless Qobuz playback daemon (runit).\n\
+         # /etc/sv/qbzd/run — μqbzd headless Qobuz Connect daemon (runit).\n\
          #\n\
          # Runs as {user}. Audio needs the user's runtime dir + HOME; /run/user/\n\
          # {uid} must exist (elogind/seatd for a logged-in or lingering user).\n\

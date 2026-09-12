@@ -60,8 +60,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          # Manifest is crates/Cargo.toml → artifacts in crates/target.
-          workspaces: crates -> target
+          workspaces: . -> target
           shared-key: test-crates-linux
           cache-on-failure: true
           # PRs restore only. Pushes to main write, so the trunk keeps the
@@ -71,7 +70,7 @@ jobs:
       # The tree is rustfmt-clean as of the workspace-wide format; keep it that
       # way. Cheap and fails fast, before the compile.
       - name: cargo fmt --check
-        run: cargo fmt --manifest-path crates/Cargo.toml --all --check
+        run: cargo fmt --all --check
 
       - name: cargo test
         env:
@@ -94,7 +93,7 @@ jobs:
       - name: qbzd slint-free dep-graph gate
         run: |
           set -euo pipefail
-          hits=$(cargo tree --manifest-path crates/Cargo.toml -p qbzd -e normal \
+          hits=$(cargo tree -p qbzd -e normal \
                  | grep -E '\bslint[a-z-]* v' || true)
           if [ -n "$hits" ]; then
             echo "::error::qbzd graph resolves Slint crates:"; echo "$hits"; exit 1
