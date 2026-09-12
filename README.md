@@ -135,25 +135,6 @@ The HTTP API is `docs/openapi.yaml`.
 See `CONTRIBUTING.md`. UI changes belong upstream at
 [vicrodh/qbz](https://github.com/vicrodh/qbz).
 
-## Credits
-
-QBZ, and therefore almost all of this code, is the work of
-**[@vicrodh](https://github.com/vicrodh)** and the people who contributed to it:
-
-- [@vorce](https://github.com/vorce)
-- [@boxdot](https://github.com/boxdot)
-- [@arminfelder](https://github.com/arminfelder)
-- [@afonsojramos](https://github.com/afonsojramos) — macOS port
-- [@Vudgekek](https://github.com/Vudgekek) — macOS audio
-- [@GwendalBeaumont](https://github.com/GwendalBeaumont) — i18n
-- [@AdamArstall](https://github.com/AdamArstall)
-- [@DoubleGate](https://github.com/DoubleGate)
-
-Some of that work — the macOS port, the translations, the desktop UI it all hung on — is
-not part of *this* tree any more, having gone with the GUI. It is still in the history
-that got the daemon here, and the credit stands regardless of what this fork happens to
-compile today.
-
 ## License
 
 MIT, as upstream. See `LICENSE`.
